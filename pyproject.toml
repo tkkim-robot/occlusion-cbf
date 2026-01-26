@@ -1,0 +1,27 @@
+[project]
+name = "occlusion-cbf"
+version = "0.1.0"
+description = "Occlusion CBF Safety Control"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy==1.26.4",
+    "scipy",
+    "matplotlib",
+    "cvxpy",
+    "casadi",
+    "do-mpc[full]>=5.1.1",
+    "shapely>=2.0.7",
+    "gurobipy",
+    "safe_control",
+]
+
+[tool.uv.sources]
+safe_control = { path = "safe_control", editable = true }
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["position_control", "examples"]
