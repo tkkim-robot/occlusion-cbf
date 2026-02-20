@@ -26,6 +26,8 @@ class OcclusionCBFQP(BackupCBFQP):
         self.occlusion_scenarios = []
         self.last_num_constraints = None
         self.last_qp_solve_time_ms = None
+        self.last_solver_solve_time_ms = None
+        self.last_total_compute_time_ms = None
         self.last_intervention = None
         self.last_u_ref = None
         self.last_u = None
@@ -187,40 +189,84 @@ class OcclusionCBFQP(BackupCBFQP):
         self.cbf_controller = cp.Problem(objective, constraints)
         self.status = None
 
-    def _ensure_constraint_capacity(self, required_constraints):
-        required = int(required_constraints)
-        current = int(getattr(self, "_max_constraints", 0))
-        if required <= current:
-            return
-
-        u_dim = int(getattr(self.robot, "u_dim", self.robot_spec.get("u_dim", 2)))
-        new_cap = max(required, int(max(1, current) * 1.5))
-        self._max_constraints = int(new_cap)
-
-        self.A_cbf = cp.Parameter((self._max_constraints, u_dim), value=np.zeros((self._max_constraints, u_dim)))
-        self.b_cbf = cp.Parameter((self._max_constraints, 1), value=np.zeros((self._max_constraints, 1)))
-
-        objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
-        constraints = [self.A_cbf @ self.u <= self.b_cbf]
-
-        ic_fn = getattr(self.robot, "input_constraints", None)
-        if callable(ic_fn):
-            constraints.extend(ic_fn(self.u))
-        else:
-            if u_dim == 2 and "a_max" in self.robot_spec:
-                constraints.extend(
-                    [
-                        cp.abs(self.u[0]) <= self.robot_spec["a_max"],
-                        cp.abs(self.u[1]) <= self.robot_spec["a_max"],
-                    ]
-                )
-
-        self.cbf_controller = cp.Problem(objective, constraints)
-        if self.debug:
-            print(f"[OcclusionCBFQP] resized constraint buffer: {current} -> {self._max_constraints}")
-
     def set_occlusion_scenarios(self, scenarios):
         self.occlusion_scenarios = scenarios
+
+    def _obs_type(self, obs):
+        obs = np.asarray(obs, dtype=float).flatten()
+        if obs.size >= 8:
+            try:
+                return int(obs[7])
+            except Exception:
+                return None
+        return None
+
+    def _dynamic_types(self):
+        dyn_types_cfg = self.robot_spec.get("dynamic_obs_types", None)
+        if dyn_types_cfg is None:
+            return {1}
+        return {int(t) for t in dyn_types_cfg}
+
+    def _occlusion_types(self):
+        occ_types_cfg = self.robot_spec.get("occlusion_types", None)
+        if occ_types_cfg is None:
+            return set()
+        return {int(t) for t in occ_types_cfg}
+
+    def _is_dynamic_obs_for_di(self, obs):
+        obs = np.asarray(obs, dtype=float).flatten()
+        obs_type = self._obs_type(obs)
+        dyn_types = self._dynamic_types()
+        if obs_type is not None:
+            return obs_type in dyn_types
+        if bool(self.robot_spec.get("dynamic_obs_from_velocity", False)) and obs.size >= 5:
+            return float(np.hypot(obs[3], obs[4])) > 1e-9
+        return False
+
+    def _build_di_hocbf_constraint(self, robot_state, obs, mode):
+        """
+        Build one HOCBF inequality row for DoubleIntegrator2D in the form:
+            A_row u <= b_row
+        compatible with the OcclusionCBFQP stacked QP.
+        """
+        dt = float(self.robot.dt)
+        try:
+            f_x = self.robot.f(robot_state)
+        except TypeError:
+            f_x = self.robot.f()
+        try:
+            g_x = self.robot.g(robot_state)
+        except TypeError:
+            g_x = self.robot.g()
+
+        h_dot_t = 0.0
+        if self._is_dynamic_obs_for_di(obs):
+            dyn_barrier = getattr(self.robot.robot, "dynamic_agent_barrier", None)
+            if callable(dyn_barrier):
+                res = dyn_barrier(robot_state, obs, self.robot.robot_radius)
+            else:
+                res = self.robot.agent_barrier(obs)
+        else:
+            res = self.robot.agent_barrier(obs)
+
+        if isinstance(res, (tuple, list)) and len(res) >= 4:
+            h, h_dot, dh_dot_dx, h_dot_t = res[:4]
+        else:
+            h, h_dot, dh_dot_dx = res[:3]
+
+        Lfh = float((dh_dot_dx @ f_x).item()) + float(h_dot_t)
+        Lgh = dh_dot_dx @ g_x
+
+        if mode == "hard":
+            rhs = float(h) / (dt ** 2) + 2.0 * float(h_dot) / dt + Lfh
+        else:
+            alpha1 = float(self.robot_spec.get("hocbf_alpha1", 1.5))
+            alpha2 = float(self.robot_spec.get("hocbf_alpha2", 1.5))
+            gamma1 = alpha1 + alpha2
+            gamma2 = alpha1 * alpha2
+            rhs = Lfh + gamma1 * float(h_dot) + gamma2 * float(h)
+
+        return -Lgh, rhs
 
     def solve_control_problem(self, robot_state, control_ref, obs_list):
         t_all0 = time.perf_counter()
@@ -230,32 +276,45 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_u_ref = np.array(self.u_ref.value, dtype=float).reshape(-1, 1)
 
         t0 = time.perf_counter()
+        disable_occ_constraints = bool(self.robot_spec.get("disable_occ_constraints", False))
+        occ_types = self._occlusion_types()
+
         if obs_list is None:
             visible_obs, occlusion_scenarios = [], []
         else:
-            obs_arr = np.asarray(obs_list)
+            obs_arr = np.asarray(obs_list, dtype=float)
             if obs_arr.size == 0:
                 visible_obs, occlusion_scenarios = [], []
             else:
+                # Visibility filtering (including occlusion geometry) is always active.
+                # `disable_occ_constraints` only disables adding occlusion-CBF rows.
                 visible_obs, occlusion_scenarios = self._occ_utils._filter_visible_and_build_occ(
                     robot_state, obs_list
                 )
         if self.num_obs > 0:
             visible_obs = visible_obs[: self.num_obs]
             occlusion_scenarios = occlusion_scenarios[: self.num_obs]
-        self.occlusion_scenarios = occlusion_scenarios
-        no_obs = len(visible_obs) == 0
-        no_occ = len(self.occlusion_scenarios) == 0
+        occ_for_qp = [] if disable_occ_constraints else occlusion_scenarios
+        self.occlusion_scenarios = occ_for_qp
+
+        # HOCBF is applied only to non-occlusion obstacles.
+        if disable_occ_constraints:
+            hocbf_obs = list(visible_obs)
+        else:
+            hocbf_obs = [obs for obs in visible_obs if self._obs_type(obs) not in occ_types]
+
+        no_obs = len(hocbf_obs) == 0
+        no_occ = len(occ_for_qp) == 0
         timings["filter_occ_ms"] = (time.perf_counter() - t0) * 1000.0
 
         if no_obs and no_occ:
             self.status = "optimal"
             self.last_num_constraints = 0
             self.last_qp_solve_time_ms = 0.0
+            self.last_solver_solve_time_ms = 0.0
+            self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
             self.last_u = self.last_u_ref
-            if self.debug:
-                print("[OcclusionCBFQP] no detected obstacle/occlusion -> use u_ref")
             return self.u_ref.value
 
         A_list, b_list = [], []
@@ -266,7 +325,7 @@ class OcclusionCBFQP(BackupCBFQP):
             robot_state,
             self.T_horizon,
             self.dt_backup,
-            occlusion_scenarios=None if no_occ else self.occlusion_scenarios,
+            occlusion_scenarios=None if no_occ else occ_for_qp,
         )
         timings["rollout_stm_ms"] = (time.perf_counter() - t0) * 1000.0
 
@@ -279,53 +338,41 @@ class OcclusionCBFQP(BackupCBFQP):
         except TypeError:
             g_x = self.robot.g()
 
-        # visible obstacle HOCBF (relative-degree 2)
+        # HOCBF constraints from non-occlusion obstacles
         t0 = time.perf_counter()
         if not no_obs:
-            x = float(robot_state[0, 0])
-            y = float(robot_state[1, 0])
-            vx = float(robot_state[2, 0])
-            vy = float(robot_state[3, 0])
-            p = np.array([x, y])
-            v = np.array([vx, vy])
-
-            robot_radius = self.robot_spec["radius"]
-            gamma1 = 1.0
-            gamma2 = 1.0
-
-            for obs_idx, obs in enumerate(visible_obs):
+            mode = str(self.robot_spec.get("cbf_mode", "cbf")).strip().lower()
+            for obs_idx, obs in enumerate(hocbf_obs):
                 obs = np.asarray(obs, dtype=float).flatten()
-                ox, oy, r_obs = obs[:3]
-                if len(obs) >= 5:
-                    vx_o, vy_o = obs[3:5]
+
+                if self.robot_spec.get("model") == "DoubleIntegrator2D":
+                    try:
+                        A_row, b_row = self._build_di_hocbf_constraint(robot_state, obs, mode)
+                    except Exception:
+                        continue
                 else:
-                    vx_o, vy_o = 0.0, 0.0
+                    # Keep previous generic behavior for non-DI models.
+                    try:
+                        h, h_dot, dh_dot_dx = self.robot.agent_barrier(obs)
+                    except Exception:
+                        continue
+                    alpha1 = float(self.robot_spec.get("hocbf_alpha1", 1.5))
+                    alpha2 = float(self.robot_spec.get("hocbf_alpha2", 1.5))
+                    gamma1 = alpha1 + alpha2
+                    gamma2 = alpha1 * alpha2
+                    A_row = -(dh_dot_dx @ g_x)
+                    b_row = float((dh_dot_dx @ f_x).item()) + gamma1 * float(h_dot) + gamma2 * float(h)
 
-                p_obs = np.array([ox, oy])
-                v_obs = np.array([vx_o, vy_o])
-
-                p_rel = p - p_obs
-                v_rel = v - v_obs
-                d_min = r_obs + robot_radius
-
-                h = float(p_rel @ p_rel - d_min**2)
-                h_dot = 2.0 * float(p_rel @ v_rel)
-                v_rel_norm2 = float(v_rel @ v_rel)
-                psi1 = h_dot + gamma1 * h
-
-                A = -2.0 * p_rel.reshape(1, 2)
-                b = 2.0 * v_rel_norm2 + gamma2 * psi1
-
-                if np.all(np.isfinite(A)) and np.isfinite(b):
-                    A_list.append(A)
-                    b_list.append(np.array([[b]]))
-                    meta_list.append({"kind": "obs", "obs_idx": obs_idx})
+                if np.all(np.isfinite(A_row)) and np.isfinite(b_row):
+                    A_list.append(A_row)
+                    b_list.append(np.array([[b_row]]))
+                    meta_list.append({"kind": "obs_hocbf", "obs_idx": obs_idx})
         timings["build_obs_constraints_ms"] = (time.perf_counter() - t0) * 1000.0
 
         # occlusion constraints over backup trajectory
         t0 = time.perf_counter()
         if not no_occ:
-            for sc_idx, scenario in enumerate(self.occlusion_scenarios):
+            for sc_idx, scenario in enumerate(occ_for_qp):
                 for i, tau in enumerate(tau_points):
                     phi_i = phi_b[i].reshape(-1, 1)
                     Phi_i = Phi_b[i]
@@ -362,8 +409,6 @@ class OcclusionCBFQP(BackupCBFQP):
 
                     rhs = float(Lfh + self._alpha(h_tilde))
                     if np.linalg.norm(Lgh) < 1e-9 and rhs < 0.0:
-                        if self.debug:
-                            print(f"[occ] skip degenerate (||Lgh||≈0, rhs={rhs:.3e}<0)")
                         continue
 
                     A_list.append(-Lgh)
@@ -375,7 +420,7 @@ class OcclusionCBFQP(BackupCBFQP):
         t0 = time.perf_counter()
         phi_T = phi_b[-1].reshape(-1, 1)
         Phi_T = Phi_b[-1]
-        term_scenarios = list(self.occlusion_scenarios) if not no_occ else [None]
+        term_scenarios = list(occ_for_qp) if not no_occ else []
 
         state_dim_T = Phi_T.shape[0]
         try:
@@ -393,8 +438,9 @@ class OcclusionCBFQP(BackupCBFQP):
             g_term = np.vstack([g_term, np.zeros((state_dim_T - g_term.shape[0], g_term.shape[1]))])
 
         for sc_idx, term_scn in enumerate(term_scenarios):
+            rho_term = self._resolve_terminal_rho()
             self.occlusion_backup.set_terminal_backup_context(
-                term_scn, self.T_horizon, kappa=self.kappa, rho_T=0.05
+                term_scn, self.T_horizon, kappa=self.kappa, rho_T=rho_term
             )
             h_b_T = self.occlusion_backup._occ_terminal_set(phi_T)
             grad_h_b_T = self.occlusion_backup.grad_occ_terminal(phi_T)
@@ -416,10 +462,10 @@ class OcclusionCBFQP(BackupCBFQP):
             self.status = "optimal"
             self.last_num_constraints = 0
             self.last_qp_solve_time_ms = 0.0
+            self.last_solver_solve_time_ms = 0.0
+            self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
             self.last_u = self.last_u_ref
-            if self.debug:
-                print("[OcclusionCBFQP] no constraints -> use u_ref")
             return self.u_ref.value
 
         t0 = time.perf_counter()
@@ -437,14 +483,12 @@ class OcclusionCBFQP(BackupCBFQP):
             a_max = float(self.robot_spec.get("a_max", np.inf))
             input_ok = bool(np.all(np.abs(u_ref.flatten()) <= a_max + tol))
 
-        if self.debug:
-            max_idx = int(np.argmax(violation))
-            _ = meta_list[max_idx] if max_idx < len(meta_list) else None
-
         if max_violation <= tol and input_ok:
             self.status = "optimal"
             self.last_num_constraints = num_constraints
             self.last_qp_solve_time_ms = 0.0
+            self.last_solver_solve_time_ms = 0.0
+            self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
             self.last_u = u_ref
             # if self.debug:
@@ -452,7 +496,36 @@ class OcclusionCBFQP(BackupCBFQP):
             return self.u_ref.value
 
         t0 = time.perf_counter()
-        self._ensure_constraint_capacity(num_constraints)
+        # Match baseline spirit (build/use constraints each solve): if current
+        # preallocated buffers are too small, reallocate and rebuild the QP here.
+        current_capacity = int(self.A_cbf.shape[0])
+        if num_constraints > current_capacity:
+            u_dim = int(getattr(self.robot, "u_dim", self.robot_spec.get("u_dim", 2)))
+            self._max_constraints = int(num_constraints)
+            self.A_cbf = cp.Parameter(
+                (self._max_constraints, u_dim),
+                value=np.zeros((self._max_constraints, u_dim)),
+            )
+            self.b_cbf = cp.Parameter(
+                (self._max_constraints, 1),
+                value=np.zeros((self._max_constraints, 1)),
+            )
+
+            objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
+            constraints = [self.A_cbf @ self.u <= self.b_cbf]
+            ic_fn = getattr(self.robot, "input_constraints", None)
+            if callable(ic_fn):
+                constraints.extend(ic_fn(self.u))
+            else:
+                if u_dim == 2 and "a_max" in self.robot_spec:
+                    constraints.extend(
+                        [
+                            cp.abs(self.u[0]) <= self.robot_spec["a_max"],
+                            cp.abs(self.u[1]) <= self.robot_spec["a_max"],
+                        ]
+                    )
+            self.cbf_controller = cp.Problem(objective, constraints)
+
         self.A_cbf.value[:, :] = 0.0
         self.b_cbf.value[:, :] = 1e6
         self.A_cbf.value[:num_constraints, :] = A_cbf_val
@@ -480,13 +553,17 @@ class OcclusionCBFQP(BackupCBFQP):
         timings["total_ms"] = (time.perf_counter() - t_all0) * 1000.0
         self.last_profile = timings
 
-        if self.debug:
-            print("[PROFILE]", timings)
-
         _ = (t_end_qp - t_start_qp) * 1000.0
 
         self.last_num_constraints = num_constraints
-        self.last_qp_solve_time_ms = timings["total_ms"]
+        # QP-only wall time (cvxpy solve call scope, plotting excluded)
+        self.last_qp_solve_time_ms = float(timings["qp_wall_ms"])
+        solver_s = timings.get("solver_solve_time_s", None)
+        self.last_solver_solve_time_ms = (
+            float(solver_s) * 1000.0 if solver_s is not None else None
+        )
+        # Keep full control-cycle compute time separately for profiling.
+        self.last_total_compute_time_ms = float(timings["total_ms"])
 
         qp_status = self.cbf_controller.status
         qp_ok = (
@@ -510,7 +587,7 @@ class OcclusionCBFQP(BackupCBFQP):
             return u_safe
 
         # Baseline fallback: QP 실패/비최적이면 backup control 사용
-        fallback_scenarios = None if no_occ else self.occlusion_scenarios
+        fallback_scenarios = None if no_occ else occ_for_qp
         u_safe = np.array(
             self.occlusion_backup.backup_input_at(
                 np.asarray(robot_state, dtype=float).reshape(4, 1),

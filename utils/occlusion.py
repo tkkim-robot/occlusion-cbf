@@ -90,6 +90,18 @@ class OcclusionUtils:
         path = Path(poly)
         return path.contains_point((float(pt[0]), float(pt[1])), radius=1e-12)
     
+    def _circle_fully_in_halfspaces(self, center, radius, A, b0, eps=1e-9):
+        """
+        Return True if a circle is fully inside the convex polygon A z <= b0.
+        Assumes rows of A are unit normals (as constructed in _polygon_to_halfspaces).
+        """
+        if A is None or b0 is None:
+            return False
+        center = np.asarray(center, dtype=float).reshape(2,)
+        radius = float(radius)
+        vals = A @ center
+        return np.all(vals <= (b0 - radius + eps))
+    
     def _build_occlusion_scenario(self, robot_state, obs, is_static=False):
         """
         Build an occlusion scenario for a single circular obstacle.
@@ -275,57 +287,6 @@ class OcclusionUtils:
                 occl_scenarios.append(sc)
 
         return visible_obs, occl_scenarios
-        
-    # def _filter_visible_and_build_occ(self, robot_state, obs_list):
-        
-    #     visible_obs = []
-    #     occl_scenarios = []
-
-    #     if obs_list is None:
-    #         return visible_obs, occl_scenarios
-
-    #     obs_arr = np.array(obs_list, dtype=float)
-    #     if obs_arr.ndim == 1:
-    #         obs_arr = obs_arr.reshape(1, -1)
-
-    #     px, py = float(robot_state[0, 0]), float(robot_state[1, 0])
-    #     p = np.array([px, py])
-    #     R_sense2 = self.sensing_range ** 2
-
-    #     keep = []
-    #     for k, o in enumerate(obs_arr):
-    #         if (o[0]-px)**2 + (o[1]-py)**2 <= R_sense2:
-    #             keep.append(k)
-    #     if not keep:
-    #         return visible_obs, occl_scenarios
-
-    #     obs_arr = obs_arr[keep]
-
-    #     dists = np.linalg.norm(obs_arr[:, :2] - p[None, :], axis=1)
-    #     order = np.argsort(dists)
-
-    #     for idx in order:
-    #         obs = obs_arr[idx]
-    #         c = obs[:2]
-
-    #         occluded = any(self._point_in_poly(c, sc['poly']) for sc in occl_scenarios)
-    #         if occluded:
-    #             continue
-
-    #         visible_obs.append(obs)
-
-    #         # verify type flag
-    #         if len(obs) >= 8:
-    #             obs_type = int(obs[7])
-    #             is_static_obs = (obs_type == 0) # 0: Static, 1: Dynamic
-    #         else:
-    #             is_static_obs = False
-
-    #         sc = self._build_occlusion_scenario(robot_state, obs, is_static=is_static_obs)
-    #         if sc is not None and sc.get('poly') is not None:
-    #             occl_scenarios.append(sc)
-
-    #     return visible_obs, occl_scenarios
     
     def _u_pi_at(self, x, scenarios, t=0.0):
         if hasattr(self.robot, "backup_input_at"):
