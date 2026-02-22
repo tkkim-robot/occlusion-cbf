@@ -1,4 +1,4 @@
-# Occlusion-CBF (Collaborator Quick Start)
+# Occlusion-CBF
 
 This document is a practical setup and run guide for collaborators who are receiving this
 `occlusion-cbf` repository for the first time.
@@ -74,6 +74,12 @@ uv run python examples/test_crowd.py --help
 
 ### 3.2 Common run examples
 
+`DI` model test (default random obs=50):
+
+```bash
+uv run python examples/test_crowd.py --model di --idx 7 --save-ani false
+```
+
 `DU` + occlusion CBF, 30 random moving obstacles, deterministic case selection:
 
 ```bash
@@ -84,12 +90,6 @@ Headless run (recommended for measuring computation time):
 
 ```bash
 uv run python examples/test_crowd.py --model du --n-rand 30 --idx 32 --disable-plot --save-ani false
-```
-
-`DI` model test:
-
-```bash
-uv run python examples/test_crowd.py --model di --n-rand 30 --idx 7 --save-ani false
 ```
 
 Algorithm comparison (`cbf_qp`, `backup_cbf_qp`):
@@ -122,7 +122,7 @@ uv run python examples/test_crowd.py --model du --algo backup_cbf_qp --n-rand 30
 - `--disable-plot`
   - Disable animation rendering (recommended for compute profiling).
 
-- `--save-ani` / `--save_ani` / `--save-animation`
+- `--save-ani`
   - Enable/disable animation saving.
   - Accepts `true` / `false`.
   - Example: `--save-ani false`

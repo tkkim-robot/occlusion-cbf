@@ -90,7 +90,7 @@ def run_crowd_scenario(
     seed=42,
     case_idx=None,
     rand_obs=True,
-    n_rand=10,
+    n_rand=50,
 ):
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
