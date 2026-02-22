@@ -178,15 +178,18 @@ class OcclusionUtils:
         if A is None:
             return None
 
-        # generate expand velocity vetors (default is all v_adv)
+        # generate expand velocity vectors (default is all v_adv)
         v_expand_vec = np.full(len(b0), v_adv)
 
-        if is_static:
-            # vec_robot_to_obs = c - p
-            # vec_robot_to_obs /= np.linalg.norm(vec_robot_to_obs)
+        # Optional experiment mode:
+        # disable expansion only on the front facet (edge t1->t2), i.e., row 0.
+        # This facet is the one facing the robot along the current LoS geometry.
+        if bool(self.robot_spec.get("occ_disable_front_facet_expand", False)):
+            if len(v_expand_vec) > 0:
+                v_expand_vec[0] = 0.0
 
-            # for i in range(len(A)):
-            #     pass
+        if is_static:
+            # Keep legacy behavior for static occluders.
             v_expand_vec[0] = 0.0
         
         scenario = {

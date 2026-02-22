@@ -23,6 +23,27 @@ if REPO_ROOT_STR in sys.path:
 sys.path.insert(0, REPO_ROOT_STR)
 
 
+def _install_position_controller_shims():
+    """
+    Allow LocalTrackingControllerDyn to resolve controller modules from this
+    repo layout where `position_control/` may not include all baseline files.
+    """
+    shim_map = {
+        "position_control.cbf_qp": "safe_control.position_control.cbf_qp",
+        "position_control.backup_cbf_qp": "safe_control.position_control.backup_cbf_qp",
+    }
+    for dst_name, src_name in shim_map.items():
+        if dst_name in sys.modules:
+            continue
+        try:
+            sys.modules[dst_name] = importlib.import_module(src_name)
+        except Exception:
+            pass
+
+
+_install_position_controller_shims()
+
+
 def _load_local_occ_controller():
     """
     Load LocalTrackingControllerDyn_OCC from this repo's dynamic_env/main.py.
@@ -49,20 +70,41 @@ def _load_local_occ_controller():
 LocalTrackingControllerDyn_OCC = _load_local_occ_controller()
 
 
+def _str2bool(value):
+    if isinstance(value, bool):
+        return value
+    v = str(value).strip().lower()
+    if v in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if v in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def run_crowd_scenario(
     controller_type=None,
+    model_key="di",
     show_animation=True,
     save_animation=False,
     tf=300.0,
     seed=42,
+    case_idx=None,
     rand_obs=True,
-    n_rand=50,
+    n_rand=10,
 ):
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
 
     dt = 0.05
-    model = "DoubleIntegrator2D"
+    mk = str(model_key).strip().lower()
+    if mk in {"di", "doubleintegrator2d"}:
+        model = "DoubleIntegrator2D"
+    elif mk in {"du", "dynamicunicycle2d"}:
+        model = "DynamicUnicycle2ssD"
+    elif mk in {"uni", "unicycle2d", "un"}:
+        model = "Unicycle2D"
+    else:
+        raise ValueError(f"Unsupported model `{model_key}`. Use `di`, `du`, or `uni`.")
 
     waypoints = np.array(
         [
@@ -94,6 +136,19 @@ def run_crowd_scenario(
         dynamic_obs.append([ox, oy, r, vx, vy, y_min, y_max, obs_type])
     known_obs = np.array(dynamic_obs, dtype=float)
 
+    # Case-indexed reproducibility (1-based), similar to crosswalk scenario usage.
+    # With fixed `seed`, changing `case_idx` deterministically selects a different
+    # random crowd configuration.
+    if case_idx is not None:
+        if int(case_idx) < 1:
+            raise ValueError("case_idx must be >= 1 (1-based).")
+        rng_case = np.random.default_rng(int(seed))
+        case_seed = int(seed)
+        for _ in range(int(case_idx)):
+            case_seed = int(rng_case.integers(0, 2**31 - 1))
+    else:
+        case_seed = int(seed)
+
     # Random moving obstacles
     rand_rows, rand_meta = LocalTrackingControllerDyn_OCC.make_random_obstacles7(
         n_rand=int(n_rand),
@@ -102,7 +157,7 @@ def run_crowd_scenario(
         y_spawn_range=(0.0, 15.0),
         r_range=(0.3, 0.4),
         y_bounds=(0.0, 15.0),
-        seed=int(seed),
+        seed=case_seed,
         rand_obs=bool(rand_obs),
     )
     if rand_rows.size > 0:
@@ -113,21 +168,51 @@ def run_crowd_scenario(
     env_width = 24.0
     env_height = 15.0
 
-    if model != "DoubleIntegrator2D":
-        raise ValueError("Crowd scenario currently supports only DoubleIntegrator2D.")
-
-    robot_spec = {
-        "model": "DoubleIntegrator2D",
-        "v_max": 1.0,
-        "a_max": 1.0,
-        "radius": 0.25,
-        "debug_backup_qp": False,
-        "sensing_range": 10.0,
-        "backup_cbf": {"T_horizon": 2.0},
-        "show_backup_rollout": True,
-        "backup_rollout_every": 1,
-        "use_occ": True,
-    }
+    if model == "DoubleIntegrator2D":
+        robot_spec = {
+            "model": "DoubleIntegrator2D",
+            "v_max": 1.5,
+            "a_max": 1.5,
+            "radius": 0.25,
+            "debug_backup_qp": False,
+            "sensing_range": 10.0,
+            "backup_cbf": {"T_horizon": 1.5},
+            "show_backup_rollout": True,
+            "backup_rollout_every": 1,
+            "use_occ": True,
+            "dynamic_obs_types": [1],
+        }
+    elif model == "DynamicUnicycle2D":
+        robot_spec = {
+            "model": "DynamicUnicycle2D",
+            "v_max": 1.5,
+            "a_max": 1.5,
+            "w_max": 1.5,
+            "radius": 0.25,
+            "debug_backup_qp": False,
+            "sensing_range": 10.0,
+            "fov_angle": 360.0,
+            "backup_cbf": {"T_horizon": 1.5},
+            "show_backup_rollout": True,
+            "backup_rollout_every": 1,
+            "use_occ": True,
+            "dynamic_obs_types": [1],
+        }
+    else:
+        robot_spec = {
+            "model": "Unicycle2D",
+            "v_max": 1.0,
+            "w_max": 0.8,
+            "radius": 0.25,
+            "debug_backup_qp": False,
+            "sensing_range": 10.0,
+            "fov_angle": 360.0,
+            "backup_cbf": {"T_horizon": 1.5},
+            "show_backup_rollout": True,
+            "backup_rollout_every": 1,
+            "use_occ": True,
+            "dynamic_obs_types": [1],
+        }
 
     x_init = waypoints[0]
 
@@ -151,7 +236,7 @@ def run_crowd_scenario(
         ax=ax,
         fig=fig,
         env=env_handler,
-        rand_seed=int(seed),
+        rand_seed=case_seed,
     )
 
     tracking_controller.obs = known_obs.astype(float)
@@ -175,8 +260,8 @@ def main():
         "--model",
         type=str,
         default="di",
-        choices=["di"],
-        help="Robot model alias. Only `di` is supported for this scenario.",
+        choices=["di", "du", "uni"],
+        help="Robot model alias (`di`, `du`, or `uni`).",
     )
     parser.add_argument(
         "--algo",
@@ -187,19 +272,40 @@ def main():
     )
     parser.add_argument("--tf", type=float, default=300.0, help="Simulation final time [s].")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for crowd generation.")
+    parser.add_argument(
+        "--idx",
+        "--case-idx",
+        dest="case_idx",
+        type=int,
+        default=None,
+        help="Case index (1-based) for deterministic random scenario selection with fixed seed.",
+    )
     parser.add_argument("--n-rand", type=int, default=50, help="Number of random moving obstacles.")
     parser.add_argument("--no-rand-obs", action="store_true", help="Disable random moving obstacles.")
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
-    parser.add_argument("--save-anim", action="store_true", help="Save animation frames/video (controller setting).")
+    parser.add_argument(
+        "--save_ani",
+        "--save-ani",
+        "--save-anim",
+        "--save-animation",
+        dest="save_anim",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=True,
+        help="Save animation frames/video. Accepts true/false or can be passed as a flag.",
+    )
     args = parser.parse_args()
 
     controller_type = {"pos": args.algo}
     run_crowd_scenario(
         controller_type=controller_type,
+        model_key=args.model,
         show_animation=not args.disable_plot,
         save_animation=args.save_anim,
         tf=args.tf,
         seed=args.seed,
+        case_idx=args.case_idx,
         rand_obs=(not args.no_rand_obs),
         n_rand=args.n_rand,
     )
@@ -207,4 +313,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

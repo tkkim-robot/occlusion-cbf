@@ -57,6 +57,17 @@ from safe_control.utils import env, plotting
 BUS_TYPES = [0, 1]  # 0: bus occlusion off, 1: bus occlusion on
 
 
+def _str2bool(value):
+    if isinstance(value, bool):
+        return value
+    v = str(value).strip().lower()
+    if v in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if v in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def crosswalk_scenario_v3(
     controller_type=None,
     enable_plot=True,
@@ -88,12 +99,12 @@ def crosswalk_scenario_v3(
     env_height = 30.0
     waypoints = np.array(
         [
-            [20.0, 5.5, 0.0],
+            [20.0, 4.5, 0.0],
             [20.0, 23.0, 0.0],
         ],
         dtype=np.float64,
     )
-    x_init = np.array([waypoints[0][0], waypoints[0][1], 0.0, 0.0, np.pi / 2.0])
+    x_init = np.array([waypoints[0][0], waypoints[0][1], 0.0, 1.0, np.pi / 2.0])
 
     # 1) Bus obstacle block (2 x 6 layout)
     bus_r = 1.1
@@ -106,14 +117,69 @@ def crosswalk_scenario_v3(
     x_limit = -200.0
 
     def make_car_specs(rng):
+        """
+        Build periodic 3-car sets on one lane.
+
+        Each set:
+        - 3 cars arrive together (close intra-set spacing, randomized)
+        - Set-to-set gap is randomized and larger than intra-set spacing
+        - Rear car speed is sampled <= front car speed to avoid rear-end catch-up
+        - Globally, every newly spawned rear car has speed <= nearest front car
+          (prevents inter-set catch-up/overlap as well)
+        """
         specs = []
         current_x = x_start
+
+        set_size = 3
+        set_gap_min, set_gap_max = 25.0, 25.1   # between sets
+        intra_gap_min, intra_gap_max = 6.0, 6.01  # within one 3-car set
+        # Randomize the very first visible set anchor so initial cars are
+        # distributed differently inside the current plotting view (x in [0, 40]).
+        # first_set_gap_min, first_set_gap_max = 15.0, 15.1
+        first_set_gap_min, first_set_gap_max = 18.0, 18.1
+        speed_drop_max = 1.2
+        min_speed = 0.6 * max_car_speed
+        prev_global_speed = None
+
         while current_x > x_limit:
-            gap = 5.0 + rng.uniform(5.0, 20.0)
-            current_x -= gap
-            c_speed = rng.uniform(max_car_speed * 0.8, max_car_speed)
-            c_speed = float(np.clip(c_speed, 0.0, max_car_speed))
-            specs.append((gap, c_speed))
+            # Front car of the next set
+            if prev_global_speed is None:
+                set_gap = float(rng.uniform(first_set_gap_min, first_set_gap_max))
+            else:
+                set_gap = float(rng.uniform(set_gap_min, set_gap_max))
+            current_x -= set_gap
+            if current_x <= x_limit:
+                break
+            front_high = max_car_speed if prev_global_speed is None else min(max_car_speed, prev_global_speed)
+            front_low = max(min_speed, front_high - speed_drop_max)
+            if front_low > front_high:
+                front_low = front_high
+            front_speed = float(rng.uniform(front_low, front_high))
+            front_speed = float(np.clip(front_speed, 0.0, max_car_speed))
+            specs.append((set_gap, front_speed))
+            prev_global_speed = front_speed
+
+            # Remaining cars in the same set (rear cars), with non-increasing speed
+            prev_speed = front_speed
+            for _ in range(set_size - 1):
+                intra_gap = float(rng.uniform(intra_gap_min, intra_gap_max))
+                current_x -= intra_gap
+                if current_x <= x_limit:
+                    return specs
+
+                v_high = prev_speed
+                v_low = max(min_speed, prev_speed - speed_drop_max)
+                if v_low > v_high:
+                    v_low = v_high
+                # Also enforce global non-increasing speed along the lane.
+                if prev_global_speed is not None:
+                    v_high = min(v_high, prev_global_speed)
+                    v_low = min(v_low, v_high)
+                c_speed = float(rng.uniform(v_low, v_high))
+                c_speed = float(np.clip(c_speed, 0.0, max_car_speed))
+                specs.append((intra_gap, c_speed))
+                prev_speed = c_speed
+                prev_global_speed = c_speed
         return specs
 
     def build_known_obs(bus_type, car_specs):
@@ -146,17 +212,17 @@ def crosswalk_scenario_v3(
         robot_spec = {
             "model": "DoubleIntegrator2D",
             "radius": 0.3,
-            "v_max": 1.5,
+            "v_max": 2.0,
             "a_max": 2.0,
             "sensing_range": 25.0,
             "fov_angle": 360,
-            "occ_visible_scale": 0.7,
+            "occ_visible_scale": 0.5,
             "debug_backup_qp": False,
             "v_adv_max_occ": max_car_speed,
             "backup_cbf": {
                 "T_horizon": 1.0,
                 "dt_backup": 0.05,
-                "alpha": 1.0,
+                "alpha": 100.0,
                 "rho_T": "stopping_distance",
             },
             "occlusion_types": [int(bus_type)],
@@ -166,6 +232,8 @@ def crosswalk_scenario_v3(
             "dynamic_obs_rect_collision": True,
             "disable_occ_constraints": (bus_type == 0),
             "continue_on_infeasible": True,
+            # Show infeasible marker and keep previous input when QP fails.
+            "mark_qp_fail_infeasible": True,
             "use_occ": True,
         }
 
@@ -434,8 +502,25 @@ def main():
     parser.add_argument("--batch-eval", action="store_true", help="Run batch search mode.")
     parser.add_argument("--num-trials", type=int, default=100, help="Number of batch trials.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
-    parser.add_argument("--case-idx", type=int, default=None, help="Run only the N-th generated case (1-based).")
-    parser.add_argument("--save-animation", action="store_true", help="Save animation frames.")
+    parser.add_argument(
+        "--idx",
+        "--case-idx",
+        dest="case_idx",
+        type=int,
+        default=None,
+        help="Run only the N-th generated case (1-based).",
+    )
+    parser.add_argument(
+        "--save_ani",
+        "--save-ani",
+        "--save-animation",
+        dest="save_animation",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Save animation frames. Accepts true/false or can be passed as a flag.",
+    )
     args = parser.parse_args()
 
     model_key = str(args.model).strip().lower()

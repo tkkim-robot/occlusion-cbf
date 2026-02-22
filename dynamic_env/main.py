@@ -71,6 +71,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         
         self._rng = np.random.default_rng(rand_seed)
         self.obs_meta = None
+        # Ensure fallback path can be used even if first step is infeasible.
+        if not hasattr(self, "u_pos"):
+            self.u_pos = None
+        self.att_controller = None
 
     def is_collide_unknown(self):
         robot_radius = self.robot.robot_radius
@@ -430,6 +434,22 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             self._infeasible_text.set_position(pos)
             self._infeasible_text.set_visible(True)
 
+    def draw_infeasible(self):
+        """
+        Draw/refresh infeasible marker with high z-order so it stays visible
+        above scenario overlays (bus/car patches), then force one render.
+        """
+        self._infeasible_active = True
+        self._infeasible_seen = True
+        if not self.show_animation:
+            return
+        self.robot.render_plot()
+        self._update_infeasible_marker()
+        pause = float(self.robot_spec.get("infeasible_pause", 0.5))
+        if pause < 0.0:
+            pause = 0.0
+        self.draw_plot(pause=pause, force_save=True)
+
     def _update_backup_rollout_plot(self):
         if not self.show_animation or not self.show_backup_rollout:
             return
@@ -495,29 +515,50 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         if pos_controller is None:
             return
         num_constraints = getattr(pos_controller, "last_num_constraints", None)
-        qp_ms = getattr(pos_controller, "last_qp_solve_time_ms", None)
-        solver_ms = getattr(pos_controller, "last_solver_solve_time_ms", None)
         total_ms = getattr(pos_controller, "last_total_compute_time_ms", None)
-        intervention = getattr(pos_controller, "last_intervention", None)
-        if num_constraints is None or qp_ms is None:
+        qp_ms = getattr(pos_controller, "last_qp_solve_time_ms", None)
+        if num_constraints is None:
             return
+
+        # Compute time excluding plotting:
+        # prefer controller-reported total (preprocess + solver), fallback to profile/qp only.
+        if total_ms is None:
+            prof = getattr(pos_controller, "last_profile", None)
+            if isinstance(prof, dict):
+                total_ms = prof.get("total_ms", None)
+        if total_ms is None:
+            total_ms = qp_ms
+
+        intervention = getattr(pos_controller, "last_intervention", None)
         if intervention is None:
-            intervention = "unknown"
-        if solver_ms is not None:
-            solve_text = f"Solve time: {qp_ms:.3f} ms (solver {solver_ms:.3f} ms)"
+            # Fallback for controllers that only expose boolean intervention flags.
+            int_flag = getattr(pos_controller, "_last_intervention", None)
+            if isinstance(int_flag, (bool, np.bool_)):
+                intervention = "backup_qp" if bool(int_flag) else "u_ref"
+
+        if intervention == "u_ref":
+            policy_text = "u_ref (nominal)"
+        elif intervention == "backup_qp":
+            policy_text = "backup_qp (QP)"
+        elif intervention == "backup_fallback":
+            policy_text = "backup_fallback"
+        elif intervention is None:
+            policy_text = "unknown"
         else:
-            solve_text = f"Solve time: {qp_ms:.3f} ms"
-        if total_ms is not None:
-            solve_text = f"{solve_text}, Total: {total_ms:.3f} ms"
+            policy_text = str(intervention)
+
+        constraints_text = f"{int(num_constraints)}"
+        time_text = f"{float(total_ms):.3f} ms" if total_ms is not None else "n/a"
+        value_width = 18
         text = (
-            f"QP constraints: {num_constraints}, "
-            f"{solve_text}, "
-            f"Mode: {intervention}"
+            f"QP Constraints: {constraints_text:<{value_width}}\n"
+            f"Computation   : {time_text:<{value_width}}\n"
+            f"Control Policy: {policy_text:<{value_width}}"
         )
         if self.qp_stats_text is None:
             self.qp_stats_text = self.ax.text(
                 0.02, 0.98, text, transform=self.ax.transAxes,
-                ha='left', va='top', fontsize=9,
+                ha='left', va='top', fontsize=9, family='monospace',
                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2.0))
         else:
             self.qp_stats_text.set_text(text)
@@ -592,8 +633,9 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 self.pos_controller.status = 'infeasible'
             except Exception:
                 pass
-            if self.continue_on_infeasible and self.u_pos is not None:
-                u = self.u_pos
+            prev_u = getattr(self, "u_pos", None)
+            if self.continue_on_infeasible and prev_u is not None:
+                u = prev_u
                 self._infeasible_active = True
                 self._infeasible_seen = True
             else:
@@ -620,6 +662,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         
         if self.pos_controller.status != 'optimal' or collide:
             if collide:
+                self._infeasible_active = True
+                self._infeasible_seen = True
                 self.draw_infeasible()
                 # cause = "Collision" if collide else "Infeasible"
                 # self.draw_infeasible()
@@ -628,9 +672,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                     raise InfeasibleError("Collision detected !!")
                 return -2
             if self.continue_on_infeasible:
-                if self.u_pos is not None:
-                    u = self.u_pos
-                self._infeasbiel_active = True
+                prev_u = getattr(self, "u_pos", None)
+                if prev_u is not None:
+                    u = prev_u
+                self._infeasible_active = True
                 self._infeasible_seen = True
             else:
                 self.draw_infeasible()

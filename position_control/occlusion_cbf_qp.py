@@ -2,23 +2,183 @@ import time
 
 import cvxpy as cp
 import numpy as np
+from functools import partial
 
 from position_control.backup_controller import OcclusionController
 from safe_control.position_control.backup_cbf_qp import BackupCBFQP
 from utils.occlusion import OcclusionUtils
 
-"""
-Occlusion CBF - BackupCBFQP 기반의 Occlusion-aware 확장 구현.
-"""
+try:
+    import jax
+    import jax.numpy as jnp
 
+    _JAX_AVAILABLE = True
+except Exception:
+    jax = None
+    jnp = None
+    _JAX_AVAILABLE = False
+
+_JAX_OCC_WARNED_MISSING = False
+
+
+if _JAX_AVAILABLE:
+    @partial(jax.jit, static_argnums=(14,))
+    def _jax_occ_constraints_kernel_di(
+        phi_b,           # (N,4)
+        Phi_b,           # (N,4,4)
+        fcl_traj,        # (N,4)
+        tau_points,      # (N,)
+        A_pad,           # (S,K,2)
+        b0_pad,          # (S,K)
+        v_expand_pad,    # (S,K)
+        valid_mask,      # (S,K)
+        sc_present,      # (S,)
+        f_x_vec,         # (4,)
+        g_x_mat,         # (4,2)
+        kappa,
+        alpha,
+        radius,
+        n_tau,           # static: avoid re-trace on Python loop
+    ):
+        """
+        Build occlusion CBF rows in a vectorized manner.
+        Returns:
+            A_occ: (S,N,2), b_occ: (S,N), keep_mask: (S,N)
+        """
+        phi = phi_b[:n_tau, :]
+        Phi = Phi_b[:n_tau, :, :]
+        fcl = fcl_traj[:n_tau, :]
+        tau = tau_points[:n_tau]
+
+        pos = phi[:, :2]  # (N,2)
+
+        # h(s,n,k) = A(s,k,:)·p(n,:) - b0(s,k) - (R + v_expand(s,k)*tau(n))
+        h = (
+            jnp.einsum("skd,nd->snk", A_pad, pos)
+            - b0_pad[:, None, :]
+            - (radius + v_expand_pad[:, None, :] * tau[None, :, None])
+        )
+
+        valid_bool = valid_mask[:, None, :] > 0.5
+        neg_inf = jnp.full_like(h, -jnp.inf)
+        h_valid = jnp.where(valid_bool, h, neg_inf)
+
+        max_h = jnp.max(h_valid, axis=2)              # (S,N)
+        finite_row = jnp.isfinite(max_h)
+        max_h_safe = jnp.where(finite_row, max_h, 0.0)
+
+        z = jnp.where(
+            valid_bool,
+            jnp.exp(kappa * (h - max_h_safe[:, :, None])),
+            0.0,
+        )
+        Z = jnp.sum(z, axis=2)                        # (S,N)
+        Z_safe = jnp.maximum(Z, 1e-12)
+        lam = z / Z_safe[:, :, None]                  # (S,N,K)
+
+        # Number of valid halfspaces per scenario (for log(K) term)
+        K_count = jnp.sum(valid_mask, axis=1)         # (S,)
+        K_safe = jnp.maximum(K_count, 1.0)
+
+        h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)[:, None]) / kappa
+        grad_pos = jnp.einsum("snk,skd->snd", lam, A_pad)                  # (S,N,2)
+        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)               # (S,N)
+
+        zeros2 = jnp.zeros((grad_pos.shape[0], grad_pos.shape[1], 2), dtype=grad_pos.dtype)
+        grad_h_phi = jnp.concatenate([grad_pos, zeros2], axis=2)           # (S,N,4)
+
+        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                      # (N,4)
+        delta_f = Phi_f - fcl                                              # (N,4)
+        Lfh = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + (-dh_ds)    # (S,N)
+
+        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                    # (N,4,2)
+        Lgh = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)                # (S,N,2)
+
+        rhs = Lfh + alpha * h_tilde
+        norm_lgh = jnp.linalg.norm(Lgh, axis=2)
+
+        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(Lgh), axis=2)
+        active_mask = sc_present[:, None] & finite_mask
+        degenerate = (norm_lgh < 1e-9) & (rhs < 0.0)
+        keep = active_mask & (~degenerate)
+
+        return -Lgh, rhs, keep
+
+    @partial(jax.jit, static_argnums=(14,))
+    def _jax_occ_constraints_kernel_uni(
+        phi_b,           # (N,3)
+        Phi_b,           # (N,3,3)
+        fcl_traj,        # (N,3)
+        tau_points,      # (N,)
+        A_pad,           # (S,K,2)
+        b0_pad,          # (S,K)
+        v_expand_pad,    # (S,K)
+        valid_mask,      # (S,K)
+        sc_present,      # (S,)
+        f_x_vec,         # (3,)
+        g_x_mat,         # (3,2)
+        kappa,
+        alpha,
+        radius,
+        n_tau,           # static
+    ):
+        phi = phi_b[:n_tau, :]
+        Phi = Phi_b[:n_tau, :, :]
+        fcl = fcl_traj[:n_tau, :]
+        tau = tau_points[:n_tau]
+
+        pos = phi[:, :2]  # (N,2)
+        h = (
+            jnp.einsum("skd,nd->snk", A_pad, pos)
+            - b0_pad[:, None, :]
+            - (radius + v_expand_pad[:, None, :] * tau[None, :, None])
+        )
+
+        valid_bool = valid_mask[:, None, :] > 0.5
+        neg_inf = jnp.full_like(h, -jnp.inf)
+        h_valid = jnp.where(valid_bool, h, neg_inf)
+
+        max_h = jnp.max(h_valid, axis=2)
+        finite_row = jnp.isfinite(max_h)
+        max_h_safe = jnp.where(finite_row, max_h, 0.0)
+
+        z = jnp.where(
+            valid_bool,
+            jnp.exp(kappa * (h - max_h_safe[:, :, None])),
+            0.0,
+        )
+        Z = jnp.sum(z, axis=2)
+        Z_safe = jnp.maximum(Z, 1e-12)
+        lam = z / Z_safe[:, :, None]
+
+        K_count = jnp.sum(valid_mask, axis=1)
+        K_safe = jnp.maximum(K_count, 1.0)
+
+        h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)[:, None]) / kappa
+        grad_pos = jnp.einsum("snk,skd->snd", lam, A_pad)                  # (S,N,2)
+        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)               # (S,N)
+
+        zeros1 = jnp.zeros((grad_pos.shape[0], grad_pos.shape[1], 1), dtype=grad_pos.dtype)
+        grad_h_phi = jnp.concatenate([grad_pos, zeros1], axis=2)           # (S,N,3)
+
+        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                      # (N,3)
+        delta_f = Phi_f - fcl                                              # (N,3)
+        Lfh = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + (-dh_ds)    # (S,N)
+
+        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                    # (N,3,2)
+        Lgh = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)                # (S,N,2)
+
+        rhs = Lfh + alpha * h_tilde
+        norm_lgh = jnp.linalg.norm(Lgh, axis=2)
+
+        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(Lgh), axis=2)
+        active_mask = sc_present[:, None] & finite_mask
+        degenerate = (norm_lgh < 1e-9) & (rhs < 0.0)
+        keep = active_mask & (~degenerate)
+
+        return -Lgh, rhs, keep
 
 class OcclusionCBFQP(BackupCBFQP):
-    """
-    Occlusion-aware Backup CBF-QP.
-
-    - 상속: BackupCBFQP (base backup CBF 메커니즘/공통 상태)
-    - 조합: OcclusionUtils (가시성/occlusion scenario 빌드 유틸)
-    """
 
     def __init__(self, robot, robot_spec, num_obs=10, kappa=10.0, ax=None):
         self.num_obs = num_obs
@@ -32,6 +192,8 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_u_ref = None
         self.last_u = None
         self.last_profile = {}
+        self.last_fallback_min_h = None
+        self.last_fallback_allowed = None
 
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
         self.debug = bool(robot_spec.get("debug_backup_qp", False))
@@ -41,6 +203,30 @@ class OcclusionCBFQP(BackupCBFQP):
         self.dt_backup = float(cfg.get("dt_backup", 0.05))
         alpha = float(cfg.get("alpha", 1.0))
         cfg.update({"T_horizon": self.T_horizon, "dt_backup": self.dt_backup, "alpha": alpha})
+        model_name = str(robot_spec.get("model", "")).strip()
+        self._model_name = model_name
+
+        # Optional JAX acceleration for occlusion-constraint construction.
+        self.use_jax_occ_constraints = bool(cfg.get("use_jax_occ_constraints", True))
+        # JAX occ kernels support DI/DU(4-state) and Unicycle(3-state) rollouts.
+        self._jax_occ_enabled = bool(
+            self.use_jax_occ_constraints
+            and _JAX_AVAILABLE
+            and model_name in {"DoubleIntegrator2D", "DynamicUnicycle2D", "Unicycle2D"}
+        )
+        self._jax_occ_max_scenarios = int(cfg.get("jax_occ_max_scenarios", 64))
+        self._jax_occ_max_halfspaces = int(cfg.get("jax_occ_max_halfspaces", 16))
+        self._jax_occ_warm_n_tau = int(np.floor(self.T_horizon / self.dt_backup)) + 1
+        self._jax_occ_warmed = False
+
+        cfg["use_jax_occ_constraints"] = self.use_jax_occ_constraints
+        cfg["jax_occ_max_scenarios"] = self._jax_occ_max_scenarios
+        cfg["jax_occ_max_halfspaces"] = self._jax_occ_max_halfspaces
+
+        global _JAX_OCC_WARNED_MISSING
+        if self.use_jax_occ_constraints and (not _JAX_AVAILABLE) and (not _JAX_OCC_WARNED_MISSING):
+            print("[OcclusionCBFQP][WARN] JAX not installed; falling back to NumPy occ-constraint build.")
+            _JAX_OCC_WARNED_MISSING = True
 
         super().__init__(
             robot=robot,
@@ -60,6 +246,9 @@ class OcclusionCBFQP(BackupCBFQP):
             barrier_fn=self._occlusion_barrier_smax_curved,
         )
 
+        if self._jax_occ_enabled:
+            self._warm_start_jax_occ_constraints(self._jax_occ_warm_n_tau)
+
         self.setup_control_problem()
 
         target = self.robot
@@ -74,7 +263,120 @@ class OcclusionCBFQP(BackupCBFQP):
         except Exception as e:
             print(f"[OcclusionCBFQP][WARN] Failed to inject occ barrier callback: {e}")
 
+    def _pack_occ_scenarios_for_jax(self, occ_for_qp):
+        S = int(self._jax_occ_max_scenarios)
+        K = int(self._jax_occ_max_halfspaces)
+
+        if len(occ_for_qp) > S:
+            return None
+
+        A_pad = np.zeros((S, K, 2), dtype=np.float32)
+        b0_pad = np.zeros((S, K), dtype=np.float32)
+        v_expand_pad = np.zeros((S, K), dtype=np.float32)
+        valid_mask = np.zeros((S, K), dtype=np.float32)
+        sc_present = np.zeros((S,), dtype=bool)
+
+        for s, sc in enumerate(occ_for_qp):
+            if not isinstance(sc, dict):
+                continue
+            A = np.asarray(sc.get("A", []), dtype=np.float32)
+            b0 = np.asarray(sc.get("b0", []), dtype=np.float32).reshape(-1)
+            if A.ndim != 2 or A.shape[1] != 2:
+                continue
+            if A.shape[0] < 2 or b0.size < 2:
+                continue
+            if A.shape[0] > K or b0.size > K:
+                # Preserve exact behavior: overflow falls back to NumPy path.
+                return None
+            m = min(int(A.shape[0]), int(b0.size))
+            if m < 2:
+                continue
+
+            v_expand = sc.get("v_expand_vec", None)
+            if v_expand is None:
+                v_adv = float(sc.get("v_adv_max", 0.0))
+                v_expand_arr = np.full((m,), v_adv, dtype=np.float32)
+            else:
+                v_expand_arr = np.asarray(v_expand, dtype=np.float32).reshape(-1)
+                if v_expand_arr.size == 1:
+                    v_expand_arr = np.full((m,), float(v_expand_arr.item()), dtype=np.float32)
+                elif v_expand_arr.size != m:
+                    return None
+
+            A_pad[s, :m, :] = A[:m, :]
+            b0_pad[s, :m] = b0[:m]
+            v_expand_pad[s, :m] = v_expand_arr[:m]
+            valid_mask[s, :m] = 1.0
+            sc_present[s] = True
+
+        return A_pad, b0_pad, v_expand_pad, valid_mask, sc_present
+
+    def _warm_start_jax_occ_constraints(self, n_tau):
+        if not self._jax_occ_enabled:
+            return
+        try:
+            N = int(n_tau)
+            S = int(self._jax_occ_max_scenarios)
+            K = int(self._jax_occ_max_halfspaces)
+            state_dim = 4 if self._model_name in {"DoubleIntegrator2D", "DynamicUnicycle2D"} else 3
+            phi = np.zeros((N, state_dim), dtype=np.float32)
+            Phi = np.zeros((N, state_dim, state_dim), dtype=np.float32)
+            fcl = np.zeros((N, state_dim), dtype=np.float32)
+            tau = (self.dt_backup * np.arange(N)).astype(np.float32)
+            A = np.zeros((S, K, 2), dtype=np.float32)
+            b0 = np.zeros((S, K), dtype=np.float32)
+            v_expand = np.zeros((S, K), dtype=np.float32)
+            valid = np.zeros((S, K), dtype=np.float32)
+            sc_present = np.zeros((S,), dtype=bool)
+            f_x = np.zeros((state_dim,), dtype=np.float32)
+            g_x = np.zeros((state_dim, 2), dtype=np.float32)
+
+            if self._model_name in {"DoubleIntegrator2D", "DynamicUnicycle2D"}:
+                A_out, _, _ = _jax_occ_constraints_kernel_di(
+                    jnp.asarray(phi),
+                    jnp.asarray(Phi),
+                    jnp.asarray(fcl),
+                    jnp.asarray(tau),
+                    jnp.asarray(A),
+                    jnp.asarray(b0),
+                    jnp.asarray(v_expand),
+                    jnp.asarray(valid),
+                    jnp.asarray(sc_present),
+                    jnp.asarray(f_x),
+                    jnp.asarray(g_x),
+                    np.float32(self.kappa),
+                    np.float32(self.alpha),
+                    np.float32(self.robot_spec.get("radius", 0.25)),
+                    int(N),
+                )
+            else:
+                A_out, _, _ = _jax_occ_constraints_kernel_uni(
+                    jnp.asarray(phi),
+                    jnp.asarray(Phi),
+                    jnp.asarray(fcl),
+                    jnp.asarray(tau),
+                    jnp.asarray(A),
+                    jnp.asarray(b0),
+                    jnp.asarray(v_expand),
+                    jnp.asarray(valid),
+                    jnp.asarray(sc_present),
+                    jnp.asarray(f_x),
+                    jnp.asarray(g_x),
+                    np.float32(self.kappa),
+                    np.float32(self.alpha),
+                    np.float32(self.robot_spec.get("radius", 0.25)),
+                    int(N),
+                )
+            _ = np.asarray(A_out[0, 0, 0])
+            self._jax_occ_warm_n_tau = N
+            self._jax_occ_warmed = True
+        except Exception as e:
+            print(f"[OcclusionCBFQP][WARN] JAX occ warm-start failed, fallback to NumPy: {e}")
+            self._jax_occ_enabled = False
+
     def _terminal_rho(self):
+        if str(self.robot_spec.get("model", "")).strip() == "Unicycle2D":
+            return 0.0
         a_lim = float(self.robot_spec.get('a_max', 1.0))
         v_max = float(self.robot_spec.get('v_max', 1.0))
         if a_lim <= 0.0:
@@ -93,7 +395,7 @@ class OcclusionCBFQP(BackupCBFQP):
             return self._terminal_rho()
         return float(rho_cfg)
     
-    def _occ_smax_details(self, pos, scenario, tau=0.0):
+    def _occ_smax(self, pos, scenario, tau=0.0):
         """
         Returns:
             h_tilde (float),
@@ -151,10 +453,30 @@ class OcclusionCBFQP(BackupCBFQP):
         return float(h_tilde), grad_pos, lam, dh_ds, risk_normal_vec
 
     def _occlusion_barrier_smax_curved(self, pos, scenario, tau=0.0):
-        h_tilde, grad_pos, _, _, risk_normal_vec = self._occ_smax_details(pos, scenario, tau)
+        h_tilde, grad_pos, _, _, risk_normal_vec = self._occ_smax(pos, scenario, tau)
         if h_tilde is None:
             return None, None, None
         return h_tilde, grad_pos, risk_normal_vec
+
+    def _build_qp_objective(self):
+        """
+        Build QP objective.
+        For DoubleIntegrator2D, apply anisotropic control penalty so that
+        a_x is penalized more than a_y by default.
+        """
+        err = self.u - self.u_ref
+        model_name = str(self.robot_spec.get("model", "")).strip()
+        u_dim = int(getattr(self.robot, "u_dim", self.robot_spec.get("u_dim", 2)))
+        if model_name == "DoubleIntegrator2D" and u_dim == 2:
+            w_ax = float(self.robot_spec.get("qp_weight_ax", 5.0))
+            w_ay = float(self.robot_spec.get("qp_weight_ay", 1.0))
+            if (not np.isfinite(w_ax)) or (w_ax <= 0.0):
+                w_ax = 2.0
+            if (not np.isfinite(w_ay)) or (w_ay <= 0.0):
+                w_ay = 1.0
+            w_sqrt = np.array([[np.sqrt(w_ax)], [np.sqrt(w_ay)]], dtype=float)
+            return cp.Minimize(cp.sum_squares(cp.multiply(w_sqrt, err)))
+        return cp.Minimize(cp.sum_squares(err))
 
     def setup_control_problem(self):
         u_dim = int(getattr(self.robot, "u_dim", self.robot_spec.get("u_dim", 2)))
@@ -171,14 +493,29 @@ class OcclusionCBFQP(BackupCBFQP):
         self.A_cbf = cp.Parameter((self._max_constraints, u_dim), value=np.zeros((self._max_constraints, u_dim)))
         self.b_cbf = cp.Parameter((self._max_constraints, 1), value=np.zeros((self._max_constraints, 1)))
 
-        objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
+        objective = self._build_qp_objective()
         constraints = [self.A_cbf @ self.u <= self.b_cbf]
 
         ic_fn = getattr(self.robot, "input_constraints", None)
         if callable(ic_fn):
             constraints.extend(ic_fn(self.u))
         else:
-            if u_dim == 2 and "a_max" in self.robot_spec:
+            model_name = str(self.robot_spec.get("model", "")).strip()
+            if model_name == "Unicycle2D" and u_dim == 2:
+                constraints.extend(
+                    [
+                        cp.abs(self.u[0]) <= float(self.robot_spec.get("v_max", 1.0)),
+                        cp.abs(self.u[1]) <= float(self.robot_spec.get("w_max", 0.5)),
+                    ]
+                )
+            elif model_name == "DynamicUnicycle2D" and u_dim == 2:
+                constraints.extend(
+                    [
+                        cp.abs(self.u[0]) <= float(self.robot_spec.get("a_max", 1.0)),
+                        cp.abs(self.u[1]) <= float(self.robot_spec.get("w_max", 0.5)),
+                    ]
+                )
+            elif u_dim == 2 and "a_max" in self.robot_spec:
                 constraints.extend(
                     [
                         cp.abs(self.u[0]) <= self.robot_spec["a_max"],
@@ -260,13 +597,56 @@ class OcclusionCBFQP(BackupCBFQP):
         if mode == "hard":
             rhs = float(h) / (dt ** 2) + 2.0 * float(h_dot) / dt + Lfh
         else:
-            alpha1 = float(self.robot_spec.get("hocbf_alpha1", 1.5))
-            alpha2 = float(self.robot_spec.get("hocbf_alpha2", 1.5))
+            alpha1 = float(self.robot_spec.get("hocbf_alpha1", 1.0))
+            alpha2 = float(self.robot_spec.get("hocbf_alpha2", 1.0))
             gamma1 = alpha1 + alpha2
             gamma2 = alpha1 * alpha2
             rhs = Lfh + gamma1 * float(h_dot) + gamma2 * float(h)
 
-        return -Lgh, rhs
+        return -Lgh, rhs, float(h)
+
+    def _fallback_h_tol(self):
+        cfg = self.robot_spec.get("backup_cbf", {})
+        if "fallback_h_tol" in cfg:
+            return float(cfg["fallback_h_tol"])
+        return float(self.robot_spec.get("fallback_h_tol", 0.0))
+
+    def _is_fallback_safe(self, min_barrier_now, has_barrier_value):
+        if not has_barrier_value:
+            return True
+        if min_barrier_now is None or not np.isfinite(min_barrier_now):
+            return True
+        return float(min_barrier_now) >= -self._fallback_h_tol()
+
+    def _clip_du_input_for_speed(self, robot_state, u_val):
+        model_name = str(self.robot_spec.get("model", "")).strip()
+        if model_name != "DynamicUnicycle2D":
+            return np.asarray(u_val, dtype=float).reshape(-1, 1)
+
+        u = np.asarray(u_val, dtype=float).reshape(-1, 1)
+        if u.shape[0] < 2:
+            return u
+
+        try:
+            v_cur = float(np.asarray(robot_state, dtype=float).reshape(-1, 1)[3, 0])
+        except Exception:
+            return u
+
+        dt = float(getattr(self.robot, "dt", self.dt_backup))
+        dt = max(dt, 1e-6)
+        a_max = float(self.robot_spec.get("a_max", 1.0))
+        w_max = float(self.robot_spec.get("w_max", 0.5))
+        v_max = float(self.robot_spec.get("v_max", 1.0))
+
+        a_lb = max(-a_max, -v_cur / dt)
+        a_ub = min(a_max, (v_max - v_cur) / dt)
+        if a_lb > a_ub:
+            a_mid = 0.5 * (a_lb + a_ub)
+            a_lb, a_ub = a_mid, a_mid
+
+        u[0, 0] = float(np.clip(u[0, 0], a_lb, a_ub))
+        u[1, 0] = float(np.clip(u[1, 0], -w_max, w_max))
+        return u
 
     def solve_control_problem(self, robot_state, control_ref, obs_list):
         t_all0 = time.perf_counter()
@@ -305,6 +685,22 @@ class OcclusionCBFQP(BackupCBFQP):
 
         no_obs = len(hocbf_obs) == 0
         no_occ = len(occ_for_qp) == 0
+        min_barrier_now = np.inf
+        has_barrier_value = False
+
+        if not no_occ:
+            try:
+                pos_now = np.asarray(robot_state, dtype=float).reshape(-1, 1)[0:2, 0]
+            except Exception:
+                pos_now = np.asarray(robot_state, dtype=float).reshape(-1)[:2]
+            for scenario in occ_for_qp:
+                h_occ_now, _, _, _, _ = self._occ_smax(pos_now, scenario, tau=0.0)
+                if h_occ_now is None:
+                    continue
+                h_occ_now = float(h_occ_now)
+                if np.isfinite(h_occ_now):
+                    min_barrier_now = min(min_barrier_now, h_occ_now)
+                    has_barrier_value = True
         timings["filter_occ_ms"] = (time.perf_counter() - t0) * 1000.0
 
         if no_obs and no_occ:
@@ -314,8 +710,9 @@ class OcclusionCBFQP(BackupCBFQP):
             self.last_solver_solve_time_ms = 0.0
             self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
-            self.last_u = self.last_u_ref
-            return self.u_ref.value
+            u_out = self._clip_du_input_for_speed(robot_state, self.u_ref.value)
+            self.last_u = u_out
+            return u_out
 
         A_list, b_list = [], []
         meta_list = []
@@ -347,21 +744,46 @@ class OcclusionCBFQP(BackupCBFQP):
 
                 if self.robot_spec.get("model") == "DoubleIntegrator2D":
                     try:
-                        A_row, b_row = self._build_di_hocbf_constraint(robot_state, obs, mode)
+                        A_row, b_row, h_now = self._build_di_hocbf_constraint(robot_state, obs, mode)
+                        if np.isfinite(h_now):
+                            min_barrier_now = min(min_barrier_now, float(h_now))
+                            has_barrier_value = True
                     except Exception:
                         continue
                 else:
                     # Keep previous generic behavior for non-DI models.
                     try:
-                        h, h_dot, dh_dot_dx = self.robot.agent_barrier(obs)
+                        res = self.robot.agent_barrier(obs)
                     except Exception:
                         continue
-                    alpha1 = float(self.robot_spec.get("hocbf_alpha1", 1.5))
-                    alpha2 = float(self.robot_spec.get("hocbf_alpha2", 1.5))
-                    gamma1 = alpha1 + alpha2
-                    gamma2 = alpha1 * alpha2
-                    A_row = -(dh_dot_dx @ g_x)
-                    b_row = float((dh_dot_dx @ f_x).item()) + gamma1 * float(h_dot) + gamma2 * float(h)
+                    if not isinstance(res, (tuple, list)):
+                        continue
+                    if len(res) >= 3:
+                        h, h_dot, dh_dot_dx = res[:3]
+                        if np.isfinite(float(h)):
+                            min_barrier_now = min(min_barrier_now, float(h))
+                            has_barrier_value = True
+                        alpha1 = float(self.robot_spec.get("hocbf_alpha1", 1.0))
+                        alpha2 = float(self.robot_spec.get("hocbf_alpha2", 1.0))
+                        gamma1 = alpha1 + alpha2
+                        gamma2 = alpha1 * alpha2
+                        A_row = -(dh_dot_dx @ g_x)
+                        b_row = float((dh_dot_dx @ f_x).item()) + gamma1 * float(h_dot) + gamma2 * float(h)
+                    elif len(res) >= 2:
+                        # Relative-degree-1 CBF path (e.g., Unicycle2D).
+                        h, dh_dx = res[:2]
+                        if np.isfinite(float(h)):
+                            min_barrier_now = min(min_barrier_now, float(h))
+                            has_barrier_value = True
+                        dt = float(self.robot.dt)
+                        A_row = -(dh_dx @ g_x)
+                        if mode == "hard":
+                            b_row = float(h) / dt + float((dh_dx @ f_x).item())
+                        else:
+                            alpha_cbf = float(self.robot_spec.get("cbf_alpha", 1.5))
+                            b_row = float((dh_dx @ f_x).item()) + alpha_cbf * float(h)
+                    else:
+                        continue
 
                 if np.all(np.isfinite(A_row)) and np.isfinite(b_row):
                     A_list.append(A_row)
@@ -372,48 +794,131 @@ class OcclusionCBFQP(BackupCBFQP):
         # occlusion constraints over backup trajectory
         t0 = time.perf_counter()
         if not no_occ:
-            for sc_idx, scenario in enumerate(occ_for_qp):
-                for i, tau in enumerate(tau_points):
-                    phi_i = phi_b[i].reshape(-1, 1)
-                    Phi_i = Phi_b[i]
-                    pos_i = phi_i[0:2]
+            used_jax_occ = False
+            if (
+                self._jax_occ_enabled
+                and self._jax_occ_warmed
+                and len(tau_points) == self._jax_occ_warm_n_tau
+            ):
+                packed = self._pack_occ_scenarios_for_jax(occ_for_qp)
+                if packed is not None:
+                    try:
+                        phi_arr = np.asarray(phi_b, dtype=np.float32)
+                        Phi_arr = np.asarray(Phi_b, dtype=np.float32)
+                        fcl_arr = np.asarray(fcl_traj, dtype=np.float32)
+                        tau_arr = np.asarray(tau_points, dtype=np.float32).reshape(-1)
+                        f_x_vec = np.asarray(f_x, dtype=np.float32).reshape(-1)
+                        g_x_mat = np.asarray(g_x, dtype=np.float32)
+                        state_dim = 4 if self._model_name in {"DoubleIntegrator2D", "DynamicUnicycle2D"} else 3
 
-                    h_tilde, grad_pos, _, dh_ds, _ = self._occ_smax_details(pos_i.flatten(), scenario, tau)
-                    if h_tilde is None or grad_pos is None:
-                        continue
+                        shape_ok = (
+                            phi_arr.ndim == 2 and phi_arr.shape[1] == state_dim
+                            and Phi_arr.ndim == 3 and Phi_arr.shape[1:] == (state_dim, state_dim)
+                            and fcl_arr.ndim == 2 and fcl_arr.shape[1] == state_dim
+                            and f_x_vec.shape[0] == state_dim
+                            and g_x_mat.shape == (state_dim, 2)
+                        )
+                    except Exception:
+                        shape_ok = False
 
-                    state_dim = Phi_i.shape[0]
-                    pad_cols = max(0, state_dim - grad_pos.shape[1])
-                    grad_h_phi = np.hstack([grad_pos, np.zeros((1, pad_cols))])
+                    if shape_ok:
+                        A_pad, b0_pad, v_expand_pad, valid_mask, sc_present = packed
+                        try:
+                            if self._model_name in {"DoubleIntegrator2D", "DynamicUnicycle2D"}:
+                                A_occ, b_occ, keep_mask = _jax_occ_constraints_kernel_di(
+                                    jnp.asarray(phi_arr),
+                                    jnp.asarray(Phi_arr),
+                                    jnp.asarray(fcl_arr),
+                                    jnp.asarray(tau_arr),
+                                    jnp.asarray(A_pad),
+                                    jnp.asarray(b0_pad),
+                                    jnp.asarray(v_expand_pad),
+                                    jnp.asarray(valid_mask),
+                                    jnp.asarray(sc_present),
+                                    jnp.asarray(f_x_vec),
+                                    jnp.asarray(g_x_mat),
+                                    np.float32(self.kappa),
+                                    np.float32(self.alpha),
+                                    np.float32(self.robot_spec.get("radius", 0.25)),
+                                    int(len(tau_arr)),
+                                )
+                            else:
+                                A_occ, b_occ, keep_mask = _jax_occ_constraints_kernel_uni(
+                                    jnp.asarray(phi_arr),
+                                    jnp.asarray(Phi_arr),
+                                    jnp.asarray(fcl_arr),
+                                    jnp.asarray(tau_arr),
+                                    jnp.asarray(A_pad),
+                                    jnp.asarray(b0_pad),
+                                    jnp.asarray(v_expand_pad),
+                                    jnp.asarray(valid_mask),
+                                    jnp.asarray(sc_present),
+                                    jnp.asarray(f_x_vec),
+                                    jnp.asarray(g_x_mat),
+                                    np.float32(self.kappa),
+                                    np.float32(self.alpha),
+                                    np.float32(self.robot_spec.get("radius", 0.25)),
+                                    int(len(tau_arr)),
+                                )
 
-                    f_pi_phi = fcl_traj[i].reshape(-1, 1)
-                    if f_pi_phi.shape[0] < state_dim:
-                        f_pi_pad = np.vstack([f_pi_phi, np.zeros((state_dim - f_pi_phi.shape[0], 1))])
-                    else:
-                        f_pi_pad = f_pi_phi
-                    if f_x.shape[0] < state_dim:
-                        f_x_pad = np.vstack([f_x, np.zeros((state_dim - f_x.shape[0], 1))])
-                    else:
-                        f_x_pad = f_x
-                    if g_x.shape[0] < state_dim:
-                        g_x_pad = np.vstack([g_x, np.zeros((state_dim - g_x.shape[0], g_x.shape[1]))])
-                    else:
-                        g_x_pad = g_x
+                            A_occ_np = np.asarray(A_occ, dtype=float)
+                            b_occ_np = np.asarray(b_occ, dtype=float)
+                            keep_np = np.asarray(keep_mask, dtype=bool)
 
-                    time_term = -float(dh_ds)
-                    Lfh = grad_h_phi @ (Phi_i @ f_x_pad - f_pi_pad) + time_term
-                    Lgh = grad_h_phi @ Phi_i @ g_x_pad
+                            if np.any(keep_np):
+                                idx = np.argwhere(keep_np)
+                                A_valid = A_occ_np[idx[:, 0], idx[:, 1], :]
+                                b_valid = b_occ_np[idx[:, 0], idx[:, 1]].reshape(-1, 1)
+                                A_list.append(A_valid)
+                                b_list.append(b_valid)
+                                meta_list.extend([{"kind": "occ"}] * int(idx.shape[0]))
+                            used_jax_occ = True
+                        except Exception:
+                            used_jax_occ = False
 
-                    if not (np.all(np.isfinite(Lgh)) and np.all(np.isfinite(Lfh))):
-                        continue
+            if not used_jax_occ:
+                for sc_idx, scenario in enumerate(occ_for_qp):
+                    for i, tau in enumerate(tau_points):
+                        phi_i = phi_b[i].reshape(-1, 1)
+                        Phi_i = Phi_b[i]
+                        pos_i = phi_i[0:2]
 
-                    rhs = float(Lfh + self._alpha(h_tilde))
-                    if np.linalg.norm(Lgh) < 1e-9 and rhs < 0.0:
-                        continue
+                        h_tilde, grad_pos, _, dh_ds, _ = self._occ_smax(pos_i.flatten(), scenario, tau)
+                        if h_tilde is None or grad_pos is None:
+                            continue
 
-                    A_list.append(-Lgh)
-                    b_list.append(np.array([[rhs]]))
-                    meta_list.append({"kind": "occ", "sc_idx": sc_idx, "tau": float(tau)})
+                        state_dim = Phi_i.shape[0]
+                        pad_cols = max(0, state_dim - grad_pos.shape[1])
+                        grad_h_phi = np.hstack([grad_pos, np.zeros((1, pad_cols))])
+
+                        f_pi_phi = fcl_traj[i].reshape(-1, 1)
+                        if f_pi_phi.shape[0] < state_dim:
+                            f_pi_pad = np.vstack([f_pi_phi, np.zeros((state_dim - f_pi_phi.shape[0], 1))])
+                        else:
+                            f_pi_pad = f_pi_phi
+                        if f_x.shape[0] < state_dim:
+                            f_x_pad = np.vstack([f_x, np.zeros((state_dim - f_x.shape[0], 1))])
+                        else:
+                            f_x_pad = f_x
+                        if g_x.shape[0] < state_dim:
+                            g_x_pad = np.vstack([g_x, np.zeros((state_dim - g_x.shape[0], g_x.shape[1]))])
+                        else:
+                            g_x_pad = g_x
+
+                        time_term = -float(dh_ds)
+                        Lfh = grad_h_phi @ (Phi_i @ f_x_pad - f_pi_pad) + time_term
+                        Lgh = grad_h_phi @ Phi_i @ g_x_pad
+
+                        if not (np.all(np.isfinite(Lgh)) and np.all(np.isfinite(Lfh))):
+                            continue
+
+                        rhs = float(Lfh + self._alpha(h_tilde))
+                        if np.linalg.norm(Lgh) < 1e-9 and rhs < 0.0:
+                            continue
+
+                        A_list.append(-Lgh)
+                        b_list.append(np.array([[rhs]]))
+                        meta_list.append({"kind": "occ", "sc_idx": sc_idx, "tau": float(tau)})
         timings["build_occ_constraints_ms"] = (time.perf_counter() - t0) * 1000.0
 
         # terminal backup-set constraints
@@ -457,20 +962,21 @@ class OcclusionCBFQP(BackupCBFQP):
             meta_list.append({"kind": "terminal", "tau": float(self.T_horizon), "sc_idx": sc_idx})
         timings["build_terminal_ms"] = (time.perf_counter() - t0) * 1000.0
 
-        num_constraints = len(A_list)
-        if num_constraints == 0:
+        if len(A_list) == 0:
             self.status = "optimal"
             self.last_num_constraints = 0
             self.last_qp_solve_time_ms = 0.0
             self.last_solver_solve_time_ms = 0.0
             self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
-            self.last_u = self.last_u_ref
-            return self.u_ref.value
+            u_out = self._clip_du_input_for_speed(robot_state, self.u_ref.value)
+            self.last_u = u_out
+            return u_out
 
         t0 = time.perf_counter()
-        A_cbf_val = np.vstack(A_list).reshape(num_constraints, 2)
-        b_cbf_val = np.vstack(b_list).reshape(num_constraints, 1)
+        A_cbf_val = np.vstack(A_list).reshape(-1, 2)
+        b_cbf_val = np.vstack(b_list).reshape(-1, 1)
+        num_constraints = int(A_cbf_val.shape[0])
         timings["stack_constraints_ms"] = (time.perf_counter() - t0) * 1000.0
 
         tol = float(self.robot_spec.get("intervention_tol", 1e-3))
@@ -479,9 +985,31 @@ class OcclusionCBFQP(BackupCBFQP):
         max_violation = float(np.max(violation))
 
         input_ok = True
-        if u_ref is not None and "a_max" in self.robot_spec:
-            a_max = float(self.robot_spec.get("a_max", np.inf))
-            input_ok = bool(np.all(np.abs(u_ref.flatten()) <= a_max + tol))
+        if u_ref is not None:
+            model_name = str(self.robot_spec.get("model", "")).strip()
+            u_flat = np.asarray(u_ref, dtype=float).reshape(-1)
+            if model_name == "Unicycle2D" and u_flat.size >= 2:
+                v_max = float(self.robot_spec.get("v_max", np.inf))
+                w_max = float(self.robot_spec.get("w_max", np.inf))
+                input_ok = bool(abs(u_flat[0]) <= v_max + tol and abs(u_flat[1]) <= w_max + tol)
+            elif model_name == "DynamicUnicycle2D" and u_flat.size >= 2:
+                a_max = float(self.robot_spec.get("a_max", np.inf))
+                w_max = float(self.robot_spec.get("w_max", np.inf))
+                try:
+                    v_cur = float(np.asarray(robot_state, dtype=float).reshape(-1, 1)[3, 0])
+                except Exception:
+                    v_cur = 0.0
+                dt_du = max(float(getattr(self.robot, "dt", self.dt_backup)), 1e-6)
+                v_max = float(self.robot_spec.get("v_max", np.inf))
+                a_lb = max(-a_max, -v_cur / dt_du)
+                a_ub = min(a_max, (v_max - v_cur) / dt_du)
+                input_ok = bool(
+                    (a_lb - tol) <= float(u_flat[0]) <= (a_ub + tol)
+                    and abs(u_flat[1]) <= w_max + tol
+                )
+            elif "a_max" in self.robot_spec:
+                a_max = float(self.robot_spec.get("a_max", np.inf))
+                input_ok = bool(np.all(np.abs(u_flat) <= a_max + tol))
 
         if max_violation <= tol and input_ok:
             self.status = "optimal"
@@ -490,10 +1018,11 @@ class OcclusionCBFQP(BackupCBFQP):
             self.last_solver_solve_time_ms = 0.0
             self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
-            self.last_u = u_ref
+            u_out = self._clip_du_input_for_speed(robot_state, self.u_ref.value)
+            self.last_u = u_out
             # if self.debug:
                 # print(f"[OcclusionCBFQP] u_ref feasible (max_violation={max_violation:.3e}) -> use u_ref")
-            return self.u_ref.value
+            return u_out
 
         t0 = time.perf_counter()
         # Match baseline spirit (build/use constraints each solve): if current
@@ -511,13 +1040,28 @@ class OcclusionCBFQP(BackupCBFQP):
                 value=np.zeros((self._max_constraints, 1)),
             )
 
-            objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
+            objective = self._build_qp_objective()
             constraints = [self.A_cbf @ self.u <= self.b_cbf]
             ic_fn = getattr(self.robot, "input_constraints", None)
             if callable(ic_fn):
                 constraints.extend(ic_fn(self.u))
             else:
-                if u_dim == 2 and "a_max" in self.robot_spec:
+                model_name = str(self.robot_spec.get("model", "")).strip()
+                if model_name == "Unicycle2D" and u_dim == 2:
+                    constraints.extend(
+                        [
+                            cp.abs(self.u[0]) <= float(self.robot_spec.get("v_max", 1.0)),
+                            cp.abs(self.u[1]) <= float(self.robot_spec.get("w_max", 0.5)),
+                        ]
+                    )
+                elif model_name == "DynamicUnicycle2D" and u_dim == 2:
+                    constraints.extend(
+                        [
+                            cp.abs(self.u[0]) <= float(self.robot_spec.get("a_max", 1.0)),
+                            cp.abs(self.u[1]) <= float(self.robot_spec.get("w_max", 0.5)),
+                        ]
+                    )
+                elif u_dim == 2 and "a_max" in self.robot_spec:
                     constraints.extend(
                         [
                             cp.abs(self.u[0]) <= self.robot_spec["a_max"],
@@ -535,10 +1079,10 @@ class OcclusionCBFQP(BackupCBFQP):
         t_start_qp = time.perf_counter()
         t0 = time.perf_counter()
         solve_exception = None
+        osqp_kwargs = dict(warm_start=True, verbose=False)
         try:
-            # Baseline policy: OSQP 우선, 실패 시 GUROBI fallback
             try:
-                self.cbf_controller.solve(solver=cp.OSQP, warm_start=True, verbose=False)
+                self.cbf_controller.solve(solver=cp.OSQP, **osqp_kwargs)
             except Exception:
                 self.cbf_controller.solve(solver=cp.GUROBI, verbose=False)
         except Exception as e:
@@ -566,6 +1110,8 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_total_compute_time_ms = float(timings["total_ms"])
 
         qp_status = self.cbf_controller.status
+        self.last_qp_status_raw = qp_status
+        self.last_qp_exception = None if solve_exception is None else str(solve_exception)
         qp_ok = (
             solve_exception is None
             and qp_status in ["optimal", "optimal_inaccurate"]
@@ -574,31 +1120,48 @@ class OcclusionCBFQP(BackupCBFQP):
 
         if qp_ok:
             u_safe = np.array(self.u.value, dtype=float).reshape(-1, 1)
+            u_safe = self._clip_du_input_for_speed(robot_state, u_safe)
             self.last_u = u_safe
             if self.last_u_ref is not None:
                 delta = float(np.linalg.norm(self.last_u - self.last_u_ref))
             else:
                 delta = float("inf")
             self.last_intervention = "u_ref" if delta <= tol else "backup_qp"
-            # Baseline은 optimal_inaccurate도 허용하므로 실행 상태는 optimal로 맞춤
-            self.status = "optimal"
+            self.status = qp_status if isinstance(qp_status, str) else "optimal"
             self._last_intervention = self.last_intervention != "u_ref"
             self._using_backup = self._last_intervention
             return u_safe
 
-        # Baseline fallback: QP 실패/비최적이면 backup control 사용
         fallback_scenarios = None if no_occ else occ_for_qp
         u_safe = np.array(
             self.occlusion_backup.backup_input_at(
-                np.asarray(robot_state, dtype=float).reshape(4, 1),
+                np.asarray(robot_state, dtype=float).reshape(-1, 1),
                 scenarios=fallback_scenarios,
                 t=0.0,
             ),
             dtype=float,
         ).reshape(-1, 1)
+        u_safe = self._clip_du_input_for_speed(robot_state, u_safe)
+        model_name = str(self.robot_spec.get("model", "")).strip()
+        if model_name == "DynamicUnicycle2D":
+            try:
+                v_cur = float(np.asarray(robot_state, dtype=float).reshape(-1, 1)[3, 0])
+            except Exception:
+                v_cur = 0.0
+            v_spin_eps = float(self.robot_spec.get("du_fallback_spin_v_thresh", 0.05))
+            a_eps = float(self.robot_spec.get("du_fallback_spin_a_thresh", 1e-3))
+            if abs(v_cur) <= v_spin_eps and abs(float(u_safe[0, 0])) <= a_eps:
+                u_safe[1, 0] = 0.0
         self.last_u = u_safe
-        self.last_intervention = "backup_fallback"
-        self.status = "optimal"
+        self.last_fallback_min_h = float(min_barrier_now) if has_barrier_value else None
+        fallback_safe = self._is_fallback_safe(min_barrier_now, has_barrier_value)
+        self.last_fallback_allowed = bool(fallback_safe)
+        if fallback_safe:
+            self.last_intervention = "backup_fallback"
+            self.status = "optimal"
+        else:
+            self.last_intervention = "infeasible"
+            self.status = "infeasible"
         self._last_intervention = True
         self._using_backup = True
         return u_safe
