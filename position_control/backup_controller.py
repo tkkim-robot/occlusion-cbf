@@ -1,6 +1,6 @@
 """
-Created on December 17th, 2025
-@author: Taekyung Kim
+Created on February 19th, 2026
+@author: Hun Kuk Park
 
 @description:
 Backup Controller - Abstract base class and implementations for backup control strategies.
@@ -34,6 +34,54 @@ def angle_normalize(x):
 
 
 if _JAX_AVAILABLE:
+    def _jax_occ_vref_from_pos_strict(
+        p,
+        A_pad,
+        b0_pad,
+        v_expand_pad,
+        v_adv_vec,
+        valid_mask,
+        tau,
+        radius,
+    ):
+        """
+        Strict-active occlusion v_ref (legacy DI behavior):
+        - Per scenario: average active facets (h_k >= 0)
+        - If no active facet: use argmax(h_k)
+        - Then average per-scenario v_target across scenarios
+        """
+        h = (
+            jnp.einsum("skd,d->sk", A_pad, p)
+            - b0_pad
+            - (radius + v_expand_pad * tau)
+        )
+
+        valid_bool = valid_mask > 0.5
+        neg_inf = jnp.full_like(h, -jnp.inf)
+        h_valid = jnp.where(valid_bool, h, neg_inf)
+
+        active_bool = jnp.logical_and(valid_bool, h_valid >= 0.0)
+        active_count = jnp.sum(active_bool.astype(A_pad.dtype), axis=1, keepdims=True)
+        active_sum = jnp.einsum("sk,skd->sd", active_bool.astype(A_pad.dtype), A_pad)
+        active_mean = active_sum / jnp.maximum(active_count, 1.0)
+
+        best_idx = jnp.argmax(h_valid, axis=1)
+        best_normal = A_pad[jnp.arange(A_pad.shape[0]), best_idx, :]
+
+        use_active = active_count[:, 0] > 0.0
+        normal = jnp.where(use_active[:, None], active_mean, best_normal)
+
+        norm = jnp.linalg.norm(normal, axis=1)
+        direction = normal / jnp.maximum(norm[:, None], 1e-9)
+        scenario_present = jnp.any(valid_bool, axis=1)
+        use_target = jnp.logical_and(scenario_present, norm > 1e-9)
+        targets = jnp.where(use_target[:, None], direction * v_adv_vec[:, None], 0.0)
+
+        count = jnp.sum(use_target.astype(A_pad.dtype))
+        v_sum = jnp.sum(targets, axis=0)
+        v_ref = v_sum / jnp.maximum(count, 1.0)
+        return jnp.where(count > 0.0, v_ref, jnp.zeros((2,), dtype=A_pad.dtype))
+
     def _jax_occ_vref_from_pos(
         p,
         A_pad,
@@ -82,6 +130,7 @@ if _JAX_AVAILABLE:
         return jnp.where(count > 0.0, v_ref, jnp.zeros((2,), dtype=A_pad.dtype))
 
 
+    _jax_occ_vref_pos_jac_strict = jax.jacfwd(_jax_occ_vref_from_pos_strict, argnums=0)
     _jax_occ_vref_pos_jac = jax.jacfwd(_jax_occ_vref_from_pos, argnums=0)
 
 
@@ -100,7 +149,7 @@ if _JAX_AVAILABLE:
         radius,
     ):
         v = x[2:4]
-        v_ref = _jax_occ_vref_from_pos(
+        v_ref = _jax_occ_vref_from_pos_strict(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
         )
         e = v - v_ref
@@ -130,7 +179,7 @@ if _JAX_AVAILABLE:
         eps_fd,
     ):
         del eps_fd
-        Jp = _jax_occ_vref_pos_jac(
+        Jp = _jax_occ_vref_pos_jac_strict(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
         )
 
@@ -219,6 +268,80 @@ if _JAX_AVAILABLE:
         return ((x + jnp.pi) % (2.0 * jnp.pi)) - jnp.pi
 
 
+    def _jax_scale_occ_vref(
+        pos,
+        A_pad,
+        b0_pad,
+        v_expand_pad,
+        v_adv_vec,
+        valid_mask,
+        tau,
+        ref_speed,
+        radius,
+        use_strict,
+    ):
+        v_ref = jax.lax.cond(
+            use_strict,
+            lambda _: _jax_occ_vref_from_pos_strict(
+                pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
+            ),
+            lambda _: _jax_occ_vref_from_pos(
+                pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
+            ),
+            operand=None,
+        )
+        v_ref_norm = jnp.linalg.norm(v_ref)
+        use_norm = ref_speed > 0.0
+        scale = jnp.where(use_norm, ref_speed / jnp.maximum(v_ref_norm, 1e-9), 1.0)
+        v_ref = jnp.where(v_ref_norm > 1e-9, v_ref * scale, v_ref)
+        return v_ref, jnp.linalg.norm(v_ref)
+
+
+    def _jax_uni_virtual_cmd_from_vref(
+        theta,
+        v_ref,
+        v_ref_prev,
+        dt,
+        v_max,
+        w_max,
+        k_theta_p,
+        k_theta_d,
+        k_v_p,
+        k_v_d,
+        k_turn_boost,
+        turn_boost_angle,
+        v_min_cmd,
+    ):
+        v_ref_norm = jnp.linalg.norm(v_ref)
+        v_ref_prev_norm = jnp.linalg.norm(v_ref_prev)
+        theta_ref = jnp.arctan2(v_ref[1], v_ref[0])
+        theta_ref_prev = jnp.arctan2(v_ref_prev[1], v_ref_prev[0])
+        e_theta = _jax_angle_normalize(theta_ref - theta)
+        e_theta_prev = _jax_angle_normalize(theta_ref_prev - theta)
+
+        dt_safe = jnp.maximum(dt, 1e-6)
+        theta_ref_dot = _jax_angle_normalize(theta_ref - theta_ref_prev) / dt_safe
+        e_theta_dot = theta_ref_dot
+
+        boost = 1.0 + k_turn_boost * jnp.minimum(
+            1.0, jnp.abs(e_theta) / jnp.maximum(turn_boost_angle, 1e-3)
+        )
+        omega_unsat = boost * (k_theta_p * e_theta + k_theta_d * e_theta_dot)
+        omega = jnp.clip(omega_unsat, -w_max, w_max)
+
+        gate = jnp.maximum(0.0, jnp.cos(e_theta))
+        gate_prev = jnp.maximum(0.0, jnp.cos(e_theta_prev))
+        v_des = jnp.clip(v_ref_norm * gate, 0.0, v_max)
+        v_des_prev = jnp.clip(v_ref_prev_norm * gate_prev, 0.0, v_max)
+        v_des_dot = (v_des - v_des_prev) / dt_safe
+
+        v_cmd_unsat = k_v_p * v_des + k_v_d * v_des_dot
+        v_cmd = jnp.clip(v_cmd_unsat, 0.0, v_max)
+        v_cmd = jnp.where(v_ref_norm > 1e-9, jnp.maximum(v_cmd, v_min_cmd), 0.0)
+
+        omega = jnp.where(v_ref_norm < 1e-9, 0.0, omega)
+        return jnp.array([v_cmd, omega], dtype=v_ref.dtype)
+
     def _jax_uni_backup_input_occ(
         x,
         A_pad,
@@ -239,53 +362,31 @@ if _JAX_AVAILABLE:
         v_min_cmd,
         uni_vref_speed,
         radius,
+        use_strict_vref,
     ):
         theta = x[2]
-        v_ref = _jax_occ_vref_from_pos(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
-        )
-        v_ref_norm = jnp.linalg.norm(v_ref)
         tau_prev = jnp.maximum(tau - dt, 0.0)
-        v_ref_prev = _jax_occ_vref_from_pos(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev, radius
+        v_ref, _ = _jax_scale_occ_vref(
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, uni_vref_speed, radius, use_strict_vref
         )
-        v_ref_prev_norm = jnp.linalg.norm(v_ref_prev)
-        use_norm = uni_vref_speed > 0.0
-        scale = jnp.where(use_norm, uni_vref_speed / jnp.maximum(v_ref_norm, 1e-9), 1.0)
-        scale_prev = jnp.where(use_norm, uni_vref_speed / jnp.maximum(v_ref_prev_norm, 1e-9), 1.0)
-        v_ref = jnp.where(v_ref_norm > 1e-9, v_ref * scale, v_ref)
-        v_ref_prev = jnp.where(v_ref_prev_norm > 1e-9, v_ref_prev * scale_prev, v_ref_prev)
-        v_ref_norm = jnp.linalg.norm(v_ref)
-
-        theta_ref = jnp.arctan2(v_ref[1], v_ref[0])
-        theta_ref_prev = jnp.arctan2(v_ref_prev[1], v_ref_prev[0])
-        e_theta = _jax_angle_normalize(theta_ref - theta)
-        e_theta_prev = _jax_angle_normalize(theta_ref_prev - theta)
-
-        dt_safe = jnp.maximum(dt, 1e-6)
-        theta_ref_dot = _jax_angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-        e_theta_dot = theta_ref_dot
-
-        boost = 1.0 + k_turn_boost * jnp.minimum(
-            1.0, jnp.abs(e_theta) / jnp.maximum(turn_boost_angle, 1e-3)
+        v_ref_prev, _ = _jax_scale_occ_vref(
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev, uni_vref_speed, radius, use_strict_vref
         )
-        omega_unsat = boost * (k_theta_p * e_theta + k_theta_d * e_theta_dot)
-        omega = jnp.clip(omega_unsat, -w_max, w_max)
-
-        gate = jnp.maximum(0.0, jnp.cos(e_theta))
-        gate_prev = jnp.maximum(0.0, jnp.cos(e_theta_prev))
-        v_des = jnp.clip(v_ref_norm * gate, 0.0, v_max)
-        v_des_prev = jnp.clip(jnp.linalg.norm(v_ref_prev) * gate_prev, 0.0, v_max)
-        v_des_dot = (v_des - v_des_prev) / dt_safe
-
-        v_cmd_unsat = k_v_p * v_des + k_v_d * v_des_dot
-        v_cmd = jnp.clip(v_cmd_unsat, 0.0, v_max)
-        v_cmd = jnp.where(v_ref_norm > 1e-9, jnp.maximum(v_cmd, v_min_cmd), 0.0)
-
-        # No active facet direction -> stop command.
-        omega = jnp.where(v_ref_norm < 1e-9, 0.0, omega)
-        return jnp.array([v_cmd, omega], dtype=x.dtype)
-
+        return _jax_uni_virtual_cmd_from_vref(
+            theta,
+            v_ref,
+            v_ref_prev,
+            dt,
+            v_max,
+            w_max,
+            k_theta_p,
+            k_theta_d,
+            k_v_p,
+            k_v_d,
+            k_turn_boost,
+            turn_boost_angle,
+            v_min_cmd,
+        )
 
     def _jax_du_backup_input_occ(
         x,
@@ -296,105 +397,88 @@ if _JAX_AVAILABLE:
         valid_mask,
         tau,
         dt,
+        v_min,
         v_max,
         w_max,
         a_max,
         k_theta_p,
         k_theta_d,
-        k_theta_ff,
-        k_a_p,
-        k_a_d,
         k_turn_boost,
         turn_boost_angle,
-        turn_hard_angle,
-        turn_lock_angle,
-        turn_speed_ratio,
-        k_turn_brake,
+        k_a_p,
+        k_a_d,
         k_brake,
-        theta_ref_dot_max,
-        theta_deadzone,
-        pi_switch_eps,
-        theta_speed_gate_ratio,
+        k_vemu_p,
+        k_vemu_d,
+        v_min_cmd_emu,
+        du_nonnegative_speed,
         du_vref_speed,
         radius,
+        use_strict_vref,
     ):
-        theta = x[2]
         v_cur = x[3]
-
-        v_ref = _jax_occ_vref_from_pos(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
-        )
-        v_ref_norm = jnp.linalg.norm(v_ref)
         tau_prev = jnp.maximum(tau - dt, 0.0)
-        v_ref_prev = _jax_occ_vref_from_pos(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev, radius
-        )
-        v_ref_prev_norm = jnp.linalg.norm(v_ref_prev)
-
-        use_norm = du_vref_speed > 0.0
-        scale = jnp.where(use_norm, du_vref_speed / jnp.maximum(v_ref_norm, 1e-9), 1.0)
-        scale_prev = jnp.where(use_norm, du_vref_speed / jnp.maximum(v_ref_prev_norm, 1e-9), 1.0)
-        v_ref = jnp.where(v_ref_norm > 1e-9, v_ref * scale, v_ref)
-        v_ref_prev = jnp.where(v_ref_prev_norm > 1e-9, v_ref_prev * scale_prev, v_ref_prev)
-        v_ref_norm = jnp.linalg.norm(v_ref)
-
+        tau_prev2 = jnp.maximum(tau_prev - dt, 0.0)
         dt_safe = jnp.maximum(dt, 1e-6)
-        a_stop = jnp.clip(-k_brake * v_cur, -a_max, a_max)
+        v_floor = jnp.where(du_nonnegative_speed > 0.5, 0.0, v_min)
+        a_lb_base = jnp.maximum(-a_max, (v_floor - v_cur) / dt_safe)
+        a_ub_base = jnp.minimum(a_max, (v_max - v_cur) / dt_safe)
+        a_stop = jnp.clip(-k_brake * v_cur, a_lb_base, a_ub_base)
+
+        v_ref, v_ref_norm = _jax_scale_occ_vref(
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, du_vref_speed, radius, use_strict_vref
+        )
+        v_ref_prev, _ = _jax_scale_occ_vref(
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev, du_vref_speed, radius, use_strict_vref
+        )
+        v_ref_prev2, _ = _jax_scale_occ_vref(
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev2, du_vref_speed, radius, use_strict_vref
+        )
+
+        theta = x[2]
+        # Build UNI-like virtual (v, omega), then DU tracks v via acceleration.
+        u_uni = _jax_uni_virtual_cmd_from_vref(
+            theta,
+            v_ref,
+            v_ref_prev,
+            dt,
+            v_max,
+            w_max,
+            k_theta_p,
+            k_theta_d,
+            k_vemu_p,
+            k_vemu_d,
+            k_turn_boost,
+            turn_boost_angle,
+            v_min_cmd_emu,
+        )
+        u_uni_prev = _jax_uni_virtual_cmd_from_vref(
+            theta,
+            v_ref_prev,
+            v_ref_prev2,
+            dt,
+            v_max,
+            w_max,
+            k_theta_p,
+            k_theta_d,
+            k_vemu_p,
+            k_vemu_d,
+            k_turn_boost,
+            turn_boost_angle,
+            v_min_cmd_emu,
+        )
+        v_cmd = u_uni[0]
+        omega = u_uni[1]
+        v_cmd_prev = u_uni_prev[0]
+        v_cmd_dot = (v_cmd - v_cmd_prev) / dt_safe
+
+        a_cmd_unsat = k_a_p * (v_cmd - v_cur) + k_a_d * v_cmd_dot
+        a_cmd = jnp.clip(a_cmd_unsat, a_lb_base, a_ub_base)
+
         no_ref = v_ref_norm < 1e-9
-
-        theta_ref = jnp.arctan2(v_ref[1], v_ref[0])
-        theta_ref_prev = jnp.arctan2(v_ref_prev[1], v_ref_prev[0])
-        # Shortest-turn heading error in [-pi, pi].
-        e_theta = _jax_angle_normalize(theta_ref - theta)
-        e_theta_prev = _jax_angle_normalize(theta_ref_prev - theta)
-
-        theta_ref_dot = _jax_angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-        theta_ref_dot = jnp.clip(theta_ref_dot, -theta_ref_dot_max, theta_ref_dot_max)
-        e_theta = jnp.where(jnp.abs(e_theta) < theta_deadzone, 0.0, e_theta)
-        e_theta_dot = (e_theta - e_theta_prev) / dt_safe
-
-        boost = 1.0 + k_turn_boost * jnp.minimum(
-            1.0, jnp.abs(e_theta) / jnp.maximum(turn_boost_angle, 1e-3)
-        )
-        omega_pd = k_theta_p * e_theta + k_theta_d * e_theta_dot + k_theta_ff * theta_ref_dot
-        omega = jnp.clip(boost * omega_pd, -w_max, w_max)
-
-        # Speed policy:
-        # - If heading error is outside gate_angle, stop first (v_des=0).
-        # - Otherwise, track |v_ref| with gate-angle-aware alignment scaling.
-        #   This makes theta_speed_gate_ratio meaningful even when gate_angle > pi/2.
-        gate_angle = jnp.clip(theta_speed_gate_ratio, 0.1, 1.0) * jnp.pi
-        cos_gate = jnp.cos(gate_angle)
-        den_gate = jnp.maximum(1.0 - cos_gate, 1e-6)
-        abs_e = jnp.abs(e_theta)
-        abs_e_prev = jnp.abs(e_theta_prev)
-        gate_scale = jnp.clip((jnp.cos(abs_e) - cos_gate) / den_gate, 0.0, 1.0)
-        gate_scale_prev = jnp.clip((jnp.cos(abs_e_prev) - cos_gate) / den_gate, 0.0, 1.0)
-        v_des = jnp.where(
-            abs_e > gate_angle,
-            0.0,
-            jnp.clip(v_ref_norm * gate_scale, 0.0, v_max),
-        )
-        v_des_prev = jnp.where(
-            abs_e_prev > gate_angle,
-            0.0,
-            jnp.clip(jnp.linalg.norm(v_ref_prev) * gate_scale_prev, 0.0, v_max),
-        )
-        v_des_dot = (v_des - v_des_prev) / dt_safe
-
-        a_cmd_track = k_a_p * (v_des - v_cur) + k_a_d * v_des_dot
-        a_cmd_stop = -k_brake * v_cur
-        a_cmd_unsat = jnp.where(abs_e > gate_angle, a_cmd_stop, a_cmd_track)
-        a_cmd = jnp.clip(a_cmd_unsat, -a_max, a_max)
-
-        eps = 1e-6
-        a_cmd = jnp.where(jnp.logical_and(v_cur >= (v_max - eps), a_cmd > 0.0), 0.0, a_cmd)
-        a_cmd = jnp.where(jnp.logical_and(v_cur <= eps, a_cmd < 0.0), 0.0, a_cmd)
-
-        omega = jnp.where(no_ref, 0.0, omega)
         a_cmd = jnp.where(no_ref, a_stop, a_cmd)
+        omega = jnp.where(no_ref, 0.0, omega)
         return jnp.array([a_cmd, omega], dtype=x.dtype)
-
 
     def _jax_uni_f_cl(
         x,
@@ -416,6 +500,7 @@ if _JAX_AVAILABLE:
         v_min_cmd,
         uni_vref_speed,
         radius,
+        use_strict_vref,
     ):
         u = _jax_uni_backup_input_occ(
             x,
@@ -437,6 +522,7 @@ if _JAX_AVAILABLE:
             v_min_cmd,
             uni_vref_speed,
             radius,
+            use_strict_vref,
         )
         theta = x[2]
         v_cmd = u[0]
@@ -445,7 +531,6 @@ if _JAX_AVAILABLE:
             [v_cmd * jnp.cos(theta), v_cmd * jnp.sin(theta), w_cmd],
             dtype=x.dtype,
         )
-
 
     def _jax_du_f_cl(
         x,
@@ -456,27 +541,24 @@ if _JAX_AVAILABLE:
         valid_mask,
         tau,
         dt,
+        v_min,
         v_max,
         w_max,
         a_max,
         k_theta_p,
         k_theta_d,
-        k_theta_ff,
-        k_a_p,
-        k_a_d,
         k_turn_boost,
         turn_boost_angle,
-        turn_hard_angle,
-        turn_lock_angle,
-        turn_speed_ratio,
-        k_turn_brake,
+        k_a_p,
+        k_a_d,
         k_brake,
-        theta_ref_dot_max,
-        theta_deadzone,
-        pi_switch_eps,
-        theta_speed_gate_ratio,
+        k_vemu_p,
+        k_vemu_d,
+        v_min_cmd_emu,
+        du_nonnegative_speed,
         du_vref_speed,
         radius,
+        use_strict_vref,
     ):
         u = _jax_du_backup_input_occ(
             x,
@@ -487,27 +569,24 @@ if _JAX_AVAILABLE:
             valid_mask,
             tau,
             dt,
+            v_min,
             v_max,
             w_max,
             a_max,
             k_theta_p,
             k_theta_d,
-            k_theta_ff,
-            k_a_p,
-            k_a_d,
             k_turn_boost,
             turn_boost_angle,
-            turn_hard_angle,
-            turn_lock_angle,
-            turn_speed_ratio,
-            k_turn_brake,
+            k_a_p,
+            k_a_d,
             k_brake,
-            theta_ref_dot_max,
-            theta_deadzone,
-            pi_switch_eps,
-            theta_speed_gate_ratio,
+            k_vemu_p,
+            k_vemu_d,
+            v_min_cmd_emu,
+            du_nonnegative_speed,
             du_vref_speed,
             radius,
+            use_strict_vref,
         )
         theta = x[2]
         v = x[3]
@@ -544,6 +623,7 @@ if _JAX_AVAILABLE:
         v_min_cmd,
         uni_vref_speed,
         radius,
+        use_strict_vref,
     ):
         I = jnp.eye(3, dtype=x0.dtype)
 
@@ -554,22 +634,22 @@ if _JAX_AVAILABLE:
             k1 = _jax_uni_f_cl(
                 x, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 t, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius
+                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
             )
             k2 = _jax_uni_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 t + 0.5 * dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius
+                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
             )
             k3 = _jax_uni_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 t + 0.5 * dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius
+                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
             )
             k4 = _jax_uni_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 t + dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius
+                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -577,7 +657,7 @@ if _JAX_AVAILABLE:
             A_mid = _jax_uni_F_cl_jac(
                 x_mid, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 t + 0.5 * dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius
+                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -594,7 +674,7 @@ if _JAX_AVAILABLE:
         f_last = _jax_uni_f_cl(
             x_final, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             t_last, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-            k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius
+            k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -614,27 +694,24 @@ if _JAX_AVAILABLE:
         valid_mask,
         dt,
         n_steps,
+        v_min,
         v_max,
         w_max,
         a_max,
         k_theta_p,
         k_theta_d,
-        k_theta_ff,
-        k_a_p,
-        k_a_d,
         k_turn_boost,
         turn_boost_angle,
-        turn_hard_angle,
-        turn_lock_angle,
-        turn_speed_ratio,
-        k_turn_brake,
+        k_a_p,
+        k_a_d,
         k_brake,
-        theta_ref_dot_max,
-        theta_deadzone,
-        pi_switch_eps,
-        theta_speed_gate_ratio,
+        k_vemu_p,
+        k_vemu_d,
+        v_min_cmd_emu,
+        du_nonnegative_speed,
         du_vref_speed,
         radius,
+        use_strict_vref,
     ):
         I = jnp.eye(4, dtype=x0.dtype)
 
@@ -644,36 +721,41 @@ if _JAX_AVAILABLE:
 
             k1 = _jax_du_f_cl(
                 x, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t, dt, v_max, w_max, a_max, k_theta_p, k_theta_d, k_theta_ff, k_a_p, k_a_d,
-                k_turn_boost, turn_boost_angle, turn_hard_angle, turn_lock_angle, turn_speed_ratio, k_turn_brake,
-                k_brake, theta_ref_dot_max, theta_deadzone, pi_switch_eps, theta_speed_gate_ratio, du_vref_speed, radius
+                t, dt, v_min, v_max, w_max, a_max,
+                k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
+                k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
+                du_vref_speed, radius, use_strict_vref
             )
             k2 = _jax_du_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, dt, v_max, w_max, a_max, k_theta_p, k_theta_d, k_theta_ff, k_a_p, k_a_d,
-                k_turn_boost, turn_boost_angle, turn_hard_angle, turn_lock_angle, turn_speed_ratio, k_turn_brake,
-                k_brake, theta_ref_dot_max, theta_deadzone, pi_switch_eps, theta_speed_gate_ratio, du_vref_speed, radius
+                t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
+                k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
+                k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
+                du_vref_speed, radius, use_strict_vref
             )
             k3 = _jax_du_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, dt, v_max, w_max, a_max, k_theta_p, k_theta_d, k_theta_ff, k_a_p, k_a_d,
-                k_turn_boost, turn_boost_angle, turn_hard_angle, turn_lock_angle, turn_speed_ratio, k_turn_brake,
-                k_brake, theta_ref_dot_max, theta_deadzone, pi_switch_eps, theta_speed_gate_ratio, du_vref_speed, radius
+                t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
+                k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
+                k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
+                du_vref_speed, radius, use_strict_vref
             )
             k4 = _jax_du_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + dt, dt, v_max, w_max, a_max, k_theta_p, k_theta_d, k_theta_ff, k_a_p, k_a_d,
-                k_turn_boost, turn_boost_angle, turn_hard_angle, turn_lock_angle, turn_speed_ratio, k_turn_brake,
-                k_brake, theta_ref_dot_max, theta_deadzone, pi_switch_eps, theta_speed_gate_ratio, du_vref_speed, radius
+                t + dt, dt, v_min, v_max, w_max, a_max,
+                k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
+                k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
+                du_vref_speed, radius, use_strict_vref
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
             x_mid = x + 0.5 * dt * k2
             A_mid = _jax_du_F_cl_jac(
                 x_mid, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, dt, v_max, w_max, a_max, k_theta_p, k_theta_d, k_theta_ff, k_a_p, k_a_d,
-                k_turn_boost, turn_boost_angle, turn_hard_angle, turn_lock_angle, turn_speed_ratio, k_turn_brake,
-                k_brake, theta_ref_dot_max, theta_deadzone, pi_switch_eps, theta_speed_gate_ratio, du_vref_speed, radius
+                t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
+                k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
+                k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
+                du_vref_speed, radius, use_strict_vref
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -689,9 +771,10 @@ if _JAX_AVAILABLE:
         t_last = dt * (n_steps - 1)
         f_last = _jax_du_f_cl(
             x_final, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-            t_last, dt, v_max, w_max, a_max, k_theta_p, k_theta_d, k_theta_ff, k_a_p, k_a_d,
-            k_turn_boost, turn_boost_angle, turn_hard_angle, turn_lock_angle, turn_speed_ratio, k_turn_brake,
-            k_brake, theta_ref_dot_max, theta_deadzone, pi_switch_eps, theta_speed_gate_ratio, du_vref_speed, radius
+            t_last, dt, v_min, v_max, w_max, a_max,
+            k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
+            k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
+            du_vref_speed, radius, use_strict_vref
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -932,86 +1015,89 @@ class OcclusionController(BackupController):
 
     def _du_occ_gains(self):
         cfg = self.robot_spec.get("backup_cbf", {})
-        k_theta_p = float(cfg.get("k_theta_occ_du_p", cfg.get("k_theta_occ_du", 3.9)))
-        k_theta_d = float(cfg.get("k_theta_occ_du_d", 1.37))
-        k_theta_ff = float(cfg.get("k_theta_occ_du_ff", 0.55))
-        k_a_p = float(cfg.get("k_a_occ_du_p", 1.71))
-        k_a_d = float(cfg.get("k_a_occ_du_d", 0.69))
-        k_turn_boost = float(cfg.get("k_turn_boost_occ_du", 2.96))
-        turn_boost_angle = float(cfg.get("turn_boost_angle_occ_du", 0.95))
-        turn_hard_angle = float(cfg.get("turn_hard_angle_occ_du", np.pi / 3.0))
-        turn_lock_angle = float(cfg.get("turn_lock_angle_occ_du", 2.7))
-        turn_unlock_angle = float(cfg.get("turn_unlock_angle_occ_du", 2.2))
-        turn_speed_ratio = float(cfg.get("turn_speed_ratio_occ_du", 0.75))
-        k_turn_brake = float(cfg.get("k_turn_brake_occ_du", 0.4))
-        k_brake = float(cfg.get("k_brake_occ_du", 0.34))
-        theta_ref_dot_max = float(cfg.get("theta_ref_dot_max_occ_du", 20.0))
-        theta_deadzone = float(cfg.get("theta_deadzone_occ_du", 0.0))
-        pi_switch_eps = float(cfg.get("pi_switch_eps_occ_du", 0.15))
-        theta_speed_gate_ratio = float(cfg.get("theta_speed_gate_ratio_occ_du", 0.5))
-        if not np.isfinite(k_theta_p):
-            k_theta_p = 3.9
-        if not np.isfinite(k_theta_d):
-            k_theta_d = 1.37
-        if not np.isfinite(k_theta_ff):
-            k_theta_ff = 0.55
+        # Global DU emulation defaults (rounded to 2 decimals).
+        k_a_p = float(cfg.get("k_a_occ_du_p", 2.99))
+        k_a_d = float(cfg.get("k_a_occ_du_d", 0.98))
+        k_brake = float(cfg.get("k_brake_occ_du", 0.31))
+        # In emulation mode, default heading gains are synchronized to UNI defaults.
+        # Optional *_emu_* keys allow explicit override.
+        k_theta_emu_p = float(cfg.get("k_theta_emu_occ_du_p", 2.96))
+        k_theta_emu_d = float(cfg.get("k_theta_emu_occ_du_d", 0.42))
+        k_turn_boost_emu = float(cfg.get("k_turn_boost_emu_occ_du", 1.67))
+        turn_boost_angle_emu = float(cfg.get("turn_boost_angle_emu_occ_du", 0.54))
+        # UNI-emulation virtual-speed gains (for generating v_cmd_uni).
+        k_vemu_p = float(cfg.get("k_v_emu_occ_du_p", 1.07))
+        k_vemu_d = float(cfg.get("k_v_emu_occ_du_d", 0.22))
+        # DU acceleration-tracking gains (track v_cmd_uni with acceleration).
+        k_a_track_p = float(cfg.get("k_a_track_occ_du_p", k_a_p))
+        k_a_track_d = float(cfg.get("k_a_track_occ_du_d", k_a_d))
+        # UNI-equivalent minimum crawl speed at virtual-command level.
+        v_min_cmd_emu = float(cfg.get("v_min_occ_du_cmd", 0.03))
+        # Comparison-friendly option: keep DU speed nonnegative in emulation mode.
+        du_nonnegative_speed = bool(cfg.get("du_nonnegative_speed_occ_du", True))
+
         if not np.isfinite(k_a_p):
-            k_a_p = 1.71
+            k_a_p = 2.99
         if not np.isfinite(k_a_d):
-            k_a_d = 0.69
-        if not np.isfinite(k_turn_boost):
-            k_turn_boost = 2.96
-        if (not np.isfinite(turn_boost_angle)) or (turn_boost_angle <= 1e-3):
-            turn_boost_angle = 0.95
-        if (not np.isfinite(turn_hard_angle)) or (turn_hard_angle <= 1e-3):
-            turn_hard_angle = np.pi / 3.0
-        if (not np.isfinite(turn_lock_angle)) or (turn_lock_angle <= 1e-3):
-            turn_lock_angle = 2.7
-        if (not np.isfinite(turn_unlock_angle)) or (turn_unlock_angle <= 1e-3):
-            turn_unlock_angle = 2.2
-        if turn_unlock_angle > turn_lock_angle:
-            turn_unlock_angle = 0.8 * turn_lock_angle
-        if (not np.isfinite(turn_speed_ratio)) or (turn_speed_ratio < 0.0):
-            turn_speed_ratio = 0.75
-        turn_speed_ratio = min(max(turn_speed_ratio, 0.0), 1.0)
-        if (not np.isfinite(k_turn_brake)) or (k_turn_brake < 0.0):
-            k_turn_brake = 0.4
+            k_a_d = 0.98
         if (not np.isfinite(k_brake)) or (k_brake < 0.0):
-            k_brake = 0.34
-        if (not np.isfinite(theta_ref_dot_max)) or (theta_ref_dot_max <= 0.0):
-            theta_ref_dot_max = 20.0
-        if (not np.isfinite(theta_deadzone)) or (theta_deadzone < 0.0):
-            theta_deadzone = 0.0
-        if (not np.isfinite(pi_switch_eps)) or (pi_switch_eps < 0.0):
-            pi_switch_eps = 0.15
-        if (not np.isfinite(theta_speed_gate_ratio)) or (theta_speed_gate_ratio <= 0.0):
-            theta_speed_gate_ratio = 0.5
-        theta_speed_gate_ratio = min(max(theta_speed_gate_ratio, 0.1), 1.0)
+            k_brake = 0.31
+        if not np.isfinite(k_theta_emu_p):
+            k_theta_emu_p = 2.96
+        if not np.isfinite(k_theta_emu_d):
+            k_theta_emu_d = 0.42
+        if not np.isfinite(k_turn_boost_emu):
+            k_turn_boost_emu = 1.67
+        if (not np.isfinite(turn_boost_angle_emu)) or (turn_boost_angle_emu <= 1e-3):
+            turn_boost_angle_emu = 0.54
+        if not np.isfinite(k_vemu_p):
+            k_vemu_p = 1.07
+        if not np.isfinite(k_vemu_d):
+            k_vemu_d = 0.22
+        if not np.isfinite(k_a_track_p):
+            k_a_track_p = k_a_p
+        if not np.isfinite(k_a_track_d):
+            k_a_track_d = k_a_d
+        if (not np.isfinite(v_min_cmd_emu)) or (v_min_cmd_emu < 0.0):
+            v_min_cmd_emu = 0.0
+
         return {
-            "k_theta_p": k_theta_p,
-            "k_theta_d": k_theta_d,
-            "k_theta_ff": k_theta_ff,
-            "k_a_p": k_a_p,
-            "k_a_d": k_a_d,
-            "k_turn_boost": k_turn_boost,
-            "turn_boost_angle": turn_boost_angle,
-            "turn_hard_angle": turn_hard_angle,
-            "turn_lock_angle": turn_lock_angle,
-            "turn_unlock_angle": turn_unlock_angle,
-            "turn_speed_ratio": turn_speed_ratio,
-            "k_turn_brake": k_turn_brake,
+            "k_theta_emu_p": k_theta_emu_p,
+            "k_theta_emu_d": k_theta_emu_d,
+            "k_a_track_p": k_a_track_p,
+            "k_a_track_d": k_a_track_d,
+            "k_turn_boost_emu": k_turn_boost_emu,
+            "turn_boost_angle_emu": turn_boost_angle_emu,
+            "k_vemu_p": k_vemu_p,
+            "k_vemu_d": k_vemu_d,
+            "v_min_cmd_emu": v_min_cmd_emu,
+            "du_nonnegative_speed": du_nonnegative_speed,
             "k_brake": k_brake,
-            "theta_ref_dot_max": theta_ref_dot_max,
-            "theta_deadzone": theta_deadzone,
-            "pi_switch_eps": pi_switch_eps,
-            "theta_speed_gate_ratio": theta_speed_gate_ratio,
         }
 
     def _du_occ_vref_speed(self):
         cfg = self.robot_spec.get("backup_cbf", {})
-        # Dynamic unicycle uses |v_ref| as speed target by default.
-        # Set backup_cbf.v_ref_norm_occ_du > 0 only when fixed-speed normalization is desired.
-        s = cfg.get("v_ref_norm_occ_du", 0.0)
+        # Emulation-first default:
+        # 1) explicit DU override: v_ref_norm_occ_du
+        # 2) default (when no compatibility flag is set): follow UNI speed policy
+        # 3) compatibility / legacy override:
+        #    - use_uni_vref_norm_default_occ_du=True  -> follow UNI speed policy
+        #    - use_uni_vref_norm_default_occ_du=False -> use environment speed hints
+        if "v_ref_norm_occ_du" in cfg:
+            s = cfg.get("v_ref_norm_occ_du", 0.0)
+        else:
+            compat_key = "use_uni_vref_norm_default_occ_du"
+            if compat_key in cfg:
+                use_uni_default = bool(cfg.get(compat_key, True))
+            else:
+                use_uni_default = True
+
+            if use_uni_default:
+                # Match UNI behavior exactly (including fallback handling).
+                s = self._uni_occ_vref_speed()
+            else:
+                # Legacy DU behavior: environment speed hint fallback.
+                s = self.robot_spec.get("v_obs_max", self.robot_spec.get("v_adv_max_occ", 0.0))
         try:
             s = float(s)
         except Exception:
@@ -1019,6 +1105,88 @@ class OcclusionController(BackupController):
         if (not np.isfinite(s)) or s <= 1e-9:
             return 0.0
         return s
+
+    def _du_speed_bounds(self):
+        v_max = float(self.robot_spec.get("v_max", 1.0))
+        if not np.isfinite(v_max):
+            v_max = 1.0
+        # If v_min is not explicitly set, allow symmetric reverse speed by default.
+        if "v_min" in self.robot_spec:
+            v_min = float(self.robot_spec.get("v_min", -v_max))
+        else:
+            v_min = -v_max
+        if not np.isfinite(v_min):
+            v_min = -v_max
+        if v_min > v_max:
+            v_min = v_max
+        return v_min, v_max
+
+    def _occ_vref_mode(self):
+        if self.model == "DoubleIntegrator2D":
+            return "strict"
+        cfg = self.robot_spec.get("backup_cbf", {})
+        if self.model == "Unicycle2D":
+            mode = cfg.get("vref_mode_occ_uni", cfg.get("vref_mode_occ", "strict"))
+        elif self.model == "DynamicUnicycle2D":
+            mode = cfg.get("vref_mode_occ_du", cfg.get("vref_mode_occ", "strict"))
+        else:
+            mode = cfg.get("vref_mode_occ", "strict")
+        mode = str(mode).strip().lower()
+        if mode not in {"soft", "strict"}:
+            mode = "strict"
+        return mode
+
+    def _use_strict_occ_vref(self):
+        return self._occ_vref_mode() == "strict"
+
+    def _scale_occ_vref_rollout(self, X, occlusion_scenarios, tau, ref_speed):
+        v_ref = self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, tau)
+        v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
+        v_ref_norm = float(np.linalg.norm(v_ref))
+        if ref_speed > 1e-9 and v_ref_norm > 1e-9:
+            v_ref = v_ref * (float(ref_speed) / max(v_ref_norm, 1e-9))
+        return v_ref
+
+    def _uni_virtual_cmd_from_vref(self, theta, v_ref, v_ref_prev, gains=None, v_max=None, w_max=None):
+        v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
+        v_ref_prev = np.asarray(v_ref_prev, dtype=float).reshape(2,)
+        v_ref_norm = float(np.linalg.norm(v_ref))
+        if v_ref_norm < 1e-9:
+            return 0.0, 0.0
+
+        theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
+        theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
+        if w_max is None:
+            w_max = float(self.robot_spec.get("w_max", 0.8))
+        else:
+            w_max = float(w_max)
+        if v_max is None:
+            v_max = float(self.robot_spec.get("v_max", 1.0))
+        else:
+            v_max = float(v_max)
+        if gains is None:
+            gains = self._uni_occ_gains()
+        e_theta = angle_normalize(theta_ref - float(theta))
+        e_theta_prev = angle_normalize(theta_ref_prev - float(theta))
+        dt_safe = max(float(self.dt), 1e-6)
+        theta_ref_dot = angle_normalize(theta_ref - theta_ref_prev) / dt_safe
+        e_theta_dot = theta_ref_dot
+
+        boost = 1.0 + gains["k_turn_boost"] * min(
+            1.0, abs(e_theta) / max(gains["turn_boost_angle"], 1e-3)
+        )
+        omega_unsat = boost * (gains["k_theta_p"] * e_theta + gains["k_theta_d"] * e_theta_dot)
+        omega = float(np.clip(omega_unsat, -w_max, w_max))
+
+        gate = max(0.0, np.cos(e_theta))
+        gate_prev = max(0.0, np.cos(e_theta_prev))
+        v_des = float(np.clip(v_ref_norm * gate, 0.0, v_max))
+        v_des_prev = float(np.clip(np.linalg.norm(v_ref_prev) * gate_prev, 0.0, v_max))
+        v_des_dot = (v_des - v_des_prev) / dt_safe
+        v_cmd_unsat = gains["k_v_p"] * v_des + gains["k_v_d"] * v_des_dot
+        v_cmd = float(np.clip(v_cmd_unsat, 0.0, v_max))
+        v_cmd = max(v_cmd, min(gains["v_min_cmd"], v_max))
+        return v_cmd, omega
 
     def set_occ_barrier_fn(self, fn):
         self._occ_barrier_fn = fn
@@ -1044,62 +1212,99 @@ class OcclusionController(BackupController):
         
         p = np.array([float(X[0,0]), float(X[1,0])], dtype=float)
         R     = self.robot_spec['radius']
-        kappa_vref = float(
-            self.robot_spec.get("backup_cbf", {}).get("vref_softmax_kappa", 8.0)
-        )
-        if (not np.isfinite(kappa_vref)) or (kappa_vref <= 1e-6):
-            kappa_vref = 8.0
 
-        v_entries = []
-        for sc in scenarios:
-            A    = sc['A']
-            b0   = sc['b0']
-            vadv = sc['v_adv_max']
+        use_strict = self._use_strict_occ_vref()
 
-            # classify static or dynamic obstacles
-            if 'v_expand_vec' in sc:
-                v_expand = sc['v_expand_vec'] # Shape (K,)
-            else:
-                v_expand = np.full(len(b0), sc['v_adv_max'])
+        if use_strict:
+            v_targets = []
+            for sc in scenarios:
+                A = sc["A"]
+                b0 = sc["b0"]
+                vadv = float(sc["v_adv_max"])
 
-            tau = float(t) if t is not None else 0.0
-            tau = self.clamp_tau(tau)
+                if "v_expand_vec" in sc:
+                    v_expand = sc["v_expand_vec"]
+                else:
+                    v_expand = np.full(len(b0), vadv)
 
-            delta = R + v_expand * tau
-            h_vec = (A @ p) - b0 - delta
+                tau = float(t) if t is not None else 0.0
+                tau = self.clamp_tau(tau)
 
-            if h_vec.size == 0:
-                continue
-            max_h = float(np.max(h_vec))
-            z = np.exp(kappa_vref * (h_vec - max_h))
-            z_sum = float(np.sum(z))
-            if (not np.isfinite(z_sum)) or z_sum <= 1e-12:
-                continue
-            lam = z / z_sum
-            avg_normal = (lam[:, None] * A).sum(axis=0)
-            norm = float(np.linalg.norm(avg_normal))
-            if norm > 1e-9:
-                direction = avg_normal / norm
-                v_target = direction * vadv
-                risk = float(np.max(h_vec))
-                v_entries.append((v_target, risk))
+                delta = R + v_expand * tau
+                h_vec = (A @ p) - b0 - delta
+                if h_vec.size == 0:
+                    continue
 
-        if len(v_entries) == 0:
-            return np.zeros(2, dtype=float)
+                active = h_vec >= 0.0
+                if np.any(active):
+                    avg_normal = A[active].mean(axis=0)
+                else:
+                    best_idx = int(np.argmax(h_vec))
+                    avg_normal = A[best_idx]
 
-        A_all = np.vstack([item[0] for item in v_entries])
+                n = float(np.linalg.norm(avg_normal))
+                if n <= 1e-9:
+                    continue
+                direction = avg_normal / n
+                v_targets.append(direction * vadv)
 
-        v_avg = A_all.mean(axis=0)
+            if len(v_targets) == 0:
+                return np.zeros(2, dtype=float)
+
+            v_avg = np.vstack(v_targets).mean(axis=0)
+        else:
+            kappa_vref = float(
+                self.robot_spec.get("backup_cbf", {}).get("vref_softmax_kappa", 8.0)
+            )
+            if (not np.isfinite(kappa_vref)) or (kappa_vref <= 1e-6):
+                kappa_vref = 8.0
+
+            v_targets = []
+            for sc in scenarios:
+                A    = sc['A']
+                b0   = sc['b0']
+                vadv = sc['v_adv_max']
+
+                if 'v_expand_vec' in sc:
+                    v_expand = sc['v_expand_vec']
+                else:
+                    v_expand = np.full(len(b0), sc['v_adv_max'])
+
+                tau = float(t) if t is not None else 0.0
+                tau = self.clamp_tau(tau)
+
+                delta = R + v_expand * tau
+                h_vec = (A @ p) - b0 - delta
+
+                if h_vec.size == 0:
+                    continue
+                max_h = float(np.max(h_vec))
+                z = np.exp(kappa_vref * (h_vec - max_h))
+                z_sum = float(np.sum(z))
+                if (not np.isfinite(z_sum)) or z_sum <= 1e-12:
+                    continue
+                lam = z / z_sum
+                avg_normal = (lam[:, None] * A).sum(axis=0)
+                norm = float(np.linalg.norm(avg_normal))
+                if norm > 1e-9:
+                    direction = avg_normal / norm
+                    v_targets.append(direction * vadv)
+
+            if len(v_targets) == 0:
+                return np.zeros(2, dtype=float)
+
+            v_avg = np.vstack(v_targets).mean(axis=0)
+
         if self.model == "Unicycle2D":
             s = self._uni_occ_vref_speed()
             n = float(np.linalg.norm(v_avg))
             if s > 0.0 and n > 1e-9:
                 v_avg = (v_avg / n) * s
-        # elif self.model == "DynamicUnicycle2D":
-        #     s = self._du_occ_vref_speed()
-        #     n = float(np.linalg.norm(v_avg))
-        #     if s > 0.0 and n > 1e-9:
-        #         v_avg = (v_avg / n) * s
+        elif self.model == "DynamicUnicycle2D":
+            s = self._du_occ_vref_speed()
+            n = float(np.linalg.norm(v_avg))
+            if s > 0.0 and n > 1e-9:
+                v_avg = (v_avg / n) * s
         
         return v_avg
 
@@ -1205,9 +1410,7 @@ class OcclusionController(BackupController):
             rho_T = self._terminal_rho()
 
         if scenario is not None:
-            # print("loop in h_b_stop")
             h_tilde, grad_pos, _ = self._occ_barrier(p_T.reshape(2, 1), scenario, tau=T)
-            # print(f"h_tilde: {h_tilde} | rho_T: {rho_T}")
             self._term_grad_cache = (grad_pos.reshape(1,2) if grad_pos is not None else None)
             return float(h_tilde) - float(rho_T)
 
@@ -1215,6 +1418,7 @@ class OcclusionController(BackupController):
         return self.h_b_stop(X)
 
     def grad_h_b_stop(self, X):
+        del X
         gp = getattr(self, "_term_grad_cache", None)
         if gp is not None:
             if gp.shape == (1,2):
@@ -1228,12 +1432,12 @@ class OcclusionController(BackupController):
 
     def backup_input_occlusion(self, X, occlusion_scenarios, t=None,
                             k_d=1.0, k_occ=1.0):
-        # print(f"DEBUG: backup_input_occlusion CALLED with t={t}")
+        del k_occ
 
         X = np.asarray(X, dtype=float).reshape(self._n_state, 1)
-        v_ref = self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, t)
 
         if self.model == "DoubleIntegrator2D":
+            v_ref = self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, t)
             a_lim = float(self.robot_spec.get("a_max", 1.0))
             v_max = float(self.robot_spec.get("v_max", 1.0))
             Kp = float(self.pid_occ_gains.get("Kp", 1.0))
@@ -1255,125 +1459,64 @@ class OcclusionController(BackupController):
         if self.model == "Unicycle2D":
             # Unicycle2D: map facet-normal velocity reference to (v, omega)
             theta = float(X[2, 0])
-            v_ref_norm = float(np.linalg.norm(v_ref))
-            if v_ref_norm < 1e-9:
-                return np.zeros((2, 1), dtype=float)
-
             tau_now = self.clamp_tau(float(t) if t is not None else 0.0)
             tau_prev = self.clamp_tau(max(0.0, float(tau_now) - float(self.dt)))
-            v_ref_prev = self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, tau_prev)
-
-            theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
-            theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
-            w_max = float(self.robot_spec.get("w_max", 0.8))
-            v_max = float(self.robot_spec.get("v_max", 1.0))
-            gains = self._uni_occ_gains()
-            e_theta = angle_normalize(theta_ref - theta)
-            e_theta_prev = angle_normalize(theta_ref_prev - theta)
-            dt_safe = max(float(self.dt), 1e-6)
-            theta_ref_dot = angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-            e_theta_dot = theta_ref_dot
-
-            boost = 1.0 + gains["k_turn_boost"] * min(
-                1.0, abs(e_theta) / max(gains["turn_boost_angle"], 1e-3)
-            )
-            omega_unsat = boost * (gains["k_theta_p"] * e_theta + gains["k_theta_d"] * e_theta_dot)
-            omega = float(np.clip(omega_unsat, -w_max, w_max))
-
-            gate = max(0.0, np.cos(e_theta))
-            gate_prev = max(0.0, np.cos(e_theta_prev))
-            v_des = float(np.clip(v_ref_norm * gate, 0.0, v_max))
-            v_des_prev = float(np.clip(np.linalg.norm(v_ref_prev) * gate_prev, 0.0, v_max))
-            v_des_dot = (v_des - v_des_prev) / dt_safe
-            v_cmd_unsat = gains["k_v_p"] * v_des + gains["k_v_d"] * v_des_dot
-            v_cmd = float(np.clip(v_cmd_unsat, 0.0, v_max))
-            v_cmd = max(v_cmd, min(gains["v_min_cmd"], v_max))
+            v_ref = self._scale_occ_vref_rollout(X, occlusion_scenarios, tau_now, self._uni_occ_vref_speed())
+            v_ref_prev = self._scale_occ_vref_rollout(X, occlusion_scenarios, tau_prev, self._uni_occ_vref_speed())
+            v_cmd, omega = self._uni_virtual_cmd_from_vref(theta, v_ref, v_ref_prev)
             return np.array([[v_cmd], [omega]], dtype=float)
 
         if self.model == "DynamicUnicycle2D":
-            theta = float(X[2, 0])
             v_cur = float(X[3, 0])
-            v_ref_norm = float(np.linalg.norm(v_ref))
             tau_now = self.clamp_tau(float(t) if t is not None else 0.0)
             tau_prev = self.clamp_tau(max(0.0, float(tau_now) - float(self.dt)))
-            v_ref_prev = self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, tau_prev)
+            tau_prev2 = self.clamp_tau(max(0.0, float(tau_prev) - float(self.dt)))
 
             a_max = float(self.robot_spec.get("a_max", 1.0))
-            w_max = float(self.robot_spec.get("w_max", 0.8))
-            v_max = float(self.robot_spec.get("v_max", 1.0))
+            v_min, v_max = self._du_speed_bounds()
             gains = self._du_occ_gains()
             dt_safe = max(float(self.dt), 1e-6)
+            v_floor = 0.0 if gains.get("du_nonnegative_speed", True) else v_min
+            a_lb_base = max(-a_max, (v_floor - v_cur) / dt_safe)
+            a_ub_base = min(a_max, (v_max - v_cur) / dt_safe)
+            if a_lb_base > a_ub_base:
+                a_mid = 0.5 * (a_lb_base + a_ub_base)
+                a_lb_base, a_ub_base = a_mid, a_mid
+
+            v_ref = self._scale_occ_vref_rollout(X, occlusion_scenarios, tau_now, self._du_occ_vref_speed())
+            v_ref_prev = self._scale_occ_vref_rollout(X, occlusion_scenarios, tau_prev, self._du_occ_vref_speed())
+            v_ref_prev2 = self._scale_occ_vref_rollout(X, occlusion_scenarios, tau_prev2, self._du_occ_vref_speed())
+            v_ref_norm = float(np.linalg.norm(v_ref))
 
             if v_ref_norm < 1e-9:
-                a_stop = float(np.clip(-gains["k_brake"] * v_cur, -a_max, a_max))
+                a_stop = float(np.clip(-gains["k_brake"] * v_cur, a_lb_base, a_ub_base))
                 return np.array([[a_stop], [0.0]], dtype=float)
 
-            theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
-            theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
-            # Shortest-turn heading error in [-pi, pi].
-            e_theta = angle_normalize(theta_ref - theta)
-            e_theta_prev = angle_normalize(theta_ref_prev - theta)
-
-            theta_ref_dot = angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-            theta_ref_dot = float(
-                np.clip(
-                    theta_ref_dot,
-                    -gains["theta_ref_dot_max"],
-                    gains["theta_ref_dot_max"],
-                )
+            theta = float(X[2, 0])
+            emu_gains = {
+                "k_theta_p": gains["k_theta_emu_p"],
+                "k_theta_d": gains["k_theta_emu_d"],
+                "k_v_p": gains["k_vemu_p"],
+                "k_v_d": gains["k_vemu_d"],
+                "k_turn_boost": gains["k_turn_boost_emu"],
+                "turn_boost_angle": gains["turn_boost_angle_emu"],
+                "v_min_cmd": gains["v_min_cmd_emu"],
+            }
+            v_cmd, omega = self._uni_virtual_cmd_from_vref(
+                theta, v_ref, v_ref_prev, gains=emu_gains, v_max=v_max, w_max=float(self.robot_spec.get("w_max", 0.8))
             )
-            if abs(e_theta) < gains["theta_deadzone"]:
-                e_theta = 0.0
-            e_theta_dot = (e_theta - e_theta_prev) / dt_safe
-
-            boost = 1.0 + gains["k_turn_boost"] * min(
-                1.0, abs(e_theta) / max(gains["turn_boost_angle"], 1e-3)
+            v_cmd_prev, _ = self._uni_virtual_cmd_from_vref(
+                theta, v_ref_prev, v_ref_prev2, gains=emu_gains, v_max=v_max, w_max=float(self.robot_spec.get("w_max", 0.8))
             )
-            omega_pd = (
-                gains["k_theta_p"] * e_theta
-                + gains["k_theta_d"] * e_theta_dot
-                + gains["k_theta_ff"] * theta_ref_dot
-            )
-            omega = float(np.clip(boost * omega_pd, -w_max, w_max))
-
-            # Speed policy:
-            # - If heading error is outside gate_angle, stop first (v_des=0).
-            # - Otherwise, track |v_ref| with gate-angle-aware alignment scaling.
-            #   This makes theta_speed_gate_ratio meaningful even when gate_angle > pi/2.
-            gate_angle = float(gains["theta_speed_gate_ratio"]) * np.pi
-            cos_gate = float(np.cos(gate_angle))
-            den_gate = max(1.0 - cos_gate, 1e-6)
-            abs_e = abs(e_theta)
-            abs_e_prev = abs(e_theta_prev)
-            gate_scale = float(np.clip((np.cos(abs_e) - cos_gate) / den_gate, 0.0, 1.0))
-            gate_scale_prev = float(np.clip((np.cos(abs_e_prev) - cos_gate) / den_gate, 0.0, 1.0))
-
-            if abs_e > gate_angle:
-                v_des = 0.0
-            else:
-                v_des = float(np.clip(v_ref_norm * gate_scale, 0.0, v_max))
-            if abs_e_prev > gate_angle:
-                v_des_prev = 0.0
-            else:
-                v_des_prev = float(np.clip(np.linalg.norm(v_ref_prev) * gate_scale_prev, 0.0, v_max))
-
-            v_des_dot = (v_des - v_des_prev) / dt_safe
-
-            if abs_e > gate_angle:
-                a_cmd_unsat = -gains["k_brake"] * v_cur
-            else:
-                a_cmd_unsat = gains["k_a_p"] * (v_des - v_cur) + gains["k_a_d"] * v_des_dot
-            a_cmd = float(np.clip(a_cmd_unsat, -a_max, a_max))
-            eps = 1e-6
-            if v_cur >= (v_max - eps) and a_cmd > 0.0:
-                a_cmd = 0.0
-            if v_cur <= eps and a_cmd < 0.0:
-                a_cmd = 0.0
+            v_cmd_dot = (v_cmd - v_cmd_prev) / dt_safe
+            a_cmd_unsat = gains["k_a_track_p"] * (v_cmd - v_cur) + gains["k_a_track_d"] * v_cmd_dot
+            a_cmd = float(np.clip(a_cmd_unsat, a_lb_base, a_ub_base))
             return np.array([[a_cmd], [omega]], dtype=float)
 
         raise NotImplementedError(f"Unsupported model: {self.model}")
 
     def _pack_scenarios_for_jax(self, occlusion_scenarios, x_ref=None):
+        del x_ref
         S = int(self._jax_max_scenarios)
         K = int(self._jax_max_halfspaces)
 
@@ -1471,10 +1614,12 @@ class OcclusionController(BackupController):
                     np.float32(ug["v_min_cmd"]),
                     np.float32(self._uni_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    np.bool_(self._use_strict_occ_vref()),
                 )
             else:
                 x0 = np.zeros((4,), dtype=np.float32)
                 dg = self._du_occ_gains()
+                v_min, v_max = self._du_speed_bounds()
                 traj, _, _, _ = _jax_rollout_kernel_du(
                     jnp.asarray(x0),
                     jnp.asarray(A_pad),
@@ -1484,27 +1629,24 @@ class OcclusionController(BackupController):
                     jnp.asarray(valid_mask),
                     np.float32(self.dt),
                     int(n_steps),
-                    np.float32(self.robot_spec.get("v_max", 1.0)),
+                    np.float32(v_min),
+                    np.float32(v_max),
                     np.float32(self.robot_spec.get("w_max", 0.8)),
                     np.float32(self.robot_spec.get("a_max", 1.0)),
-                    np.float32(dg["k_theta_p"]),
-                    np.float32(dg["k_theta_d"]),
-                    np.float32(dg["k_theta_ff"]),
-                    np.float32(dg["k_a_p"]),
-                    np.float32(dg["k_a_d"]),
-                    np.float32(dg["k_turn_boost"]),
-                    np.float32(dg["turn_boost_angle"]),
-                    np.float32(dg["turn_hard_angle"]),
-                    np.float32(dg["turn_lock_angle"]),
-                    np.float32(dg["turn_speed_ratio"]),
-                    np.float32(dg["k_turn_brake"]),
+                    np.float32(dg["k_theta_emu_p"]),
+                    np.float32(dg["k_theta_emu_d"]),
+                    np.float32(dg["k_turn_boost_emu"]),
+                    np.float32(dg["turn_boost_angle_emu"]),
+                    np.float32(dg["k_a_track_p"]),
+                    np.float32(dg["k_a_track_d"]),
                     np.float32(dg["k_brake"]),
-                    np.float32(dg["theta_ref_dot_max"]),
-                    np.float32(dg["theta_deadzone"]),
-                    np.float32(dg["pi_switch_eps"]),
-                    np.float32(dg["theta_speed_gate_ratio"]),
+                    np.float32(dg["k_vemu_p"]),
+                    np.float32(dg["k_vemu_d"]),
+                    np.float32(dg["v_min_cmd_emu"]),
+                    np.float32(1.0 if dg.get("du_nonnegative_speed", True) else 0.0),
                     np.float32(self._du_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    np.bool_(self._use_strict_occ_vref()),
                 )
             _ = np.asarray(traj[0])
             self._jax_warm_n_steps = int(n_steps)
@@ -1613,10 +1755,12 @@ class OcclusionController(BackupController):
                     np.float32(ug["v_min_cmd"]),
                     np.float32(self._uni_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    np.bool_(self._use_strict_occ_vref()),
                 )
             else:
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(4,)
                 dg = self._du_occ_gains()
+                v_min, v_max = self._du_speed_bounds()
                 traj, stm, t_grid, fcl = _jax_rollout_kernel_du(
                     jnp.asarray(x0_vec),
                     jnp.asarray(A_pad),
@@ -1626,27 +1770,24 @@ class OcclusionController(BackupController):
                     jnp.asarray(valid_mask),
                     np.float32(dt),
                     int(N),
-                    np.float32(self.robot_spec.get("v_max", 1.0)),
+                    np.float32(v_min),
+                    np.float32(v_max),
                     np.float32(self.robot_spec.get("w_max", 0.8)),
                     np.float32(self.robot_spec.get("a_max", 1.0)),
-                    np.float32(dg["k_theta_p"]),
-                    np.float32(dg["k_theta_d"]),
-                    np.float32(dg["k_theta_ff"]),
-                    np.float32(dg["k_a_p"]),
-                    np.float32(dg["k_a_d"]),
-                    np.float32(dg["k_turn_boost"]),
-                    np.float32(dg["turn_boost_angle"]),
-                    np.float32(dg["turn_hard_angle"]),
-                    np.float32(dg["turn_lock_angle"]),
-                    np.float32(dg["turn_speed_ratio"]),
-                    np.float32(dg["k_turn_brake"]),
+                    np.float32(dg["k_theta_emu_p"]),
+                    np.float32(dg["k_theta_emu_d"]),
+                    np.float32(dg["k_turn_boost_emu"]),
+                    np.float32(dg["turn_boost_angle_emu"]),
+                    np.float32(dg["k_a_track_p"]),
+                    np.float32(dg["k_a_track_d"]),
                     np.float32(dg["k_brake"]),
-                    np.float32(dg["theta_ref_dot_max"]),
-                    np.float32(dg["theta_deadzone"]),
-                    np.float32(dg["pi_switch_eps"]),
-                    np.float32(dg["theta_speed_gate_ratio"]),
+                    np.float32(dg["k_vemu_p"]),
+                    np.float32(dg["k_vemu_d"]),
+                    np.float32(dg["v_min_cmd_emu"]),
+                    np.float32(1.0 if dg.get("du_nonnegative_speed", True) else 0.0),
                     np.float32(self._du_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    np.bool_(self._use_strict_occ_vref()),
                 )
             return (
                 np.asarray(traj, dtype=float),

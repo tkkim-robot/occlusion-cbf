@@ -91,6 +91,14 @@ def run_crowd_scenario(
     case_idx=None,
     rand_obs=True,
     n_rand=50,
+    du_min_speed_scale=None,
+    du_k_turn_brake=None,
+    du_k_a_p=None,
+    du_k_a_d=None,
+    du_reverse_enter_cos=None,
+    du_reverse_exit_cos=None,
+    du_reverse_min_scale=None,
+    vref_mode_occ=None,
 ):
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
@@ -100,7 +108,7 @@ def run_crowd_scenario(
     if mk in {"di", "doubleintegrator2d"}:
         model = "DoubleIntegrator2D"
     elif mk in {"du", "dynamicunicycle2d"}:
-        model = "DynamicUnicycle2ssD"
+        model = "DynamicUnicycle2D"
     elif mk in {"uni", "unicycle2d", "un"}:
         model = "Unicycle2D"
     else:
@@ -171,8 +179,8 @@ def run_crowd_scenario(
     if model == "DoubleIntegrator2D":
         robot_spec = {
             "model": "DoubleIntegrator2D",
-            "v_max": 1.5,
-            "a_max": 1.5,
+            "v_max": 1.0,
+            "a_max": 1.0,
             "radius": 0.25,
             "debug_backup_qp": False,
             "sensing_range": 10.0,
@@ -183,22 +191,39 @@ def run_crowd_scenario(
             "dynamic_obs_types": [1],
         }
     elif model == "DynamicUnicycle2D":
+        du_vmax = 1.0
+        du_backup_cfg = {
+            "T_horizon": 1.5,
+        }
+        if du_k_a_p is not None:
+            du_backup_cfg["k_a_occ_du_p"] = float(du_k_a_p)
+            du_backup_cfg["k_a_track_occ_du_p"] = float(du_k_a_p)
+        if du_k_a_d is not None:
+            du_backup_cfg["k_a_occ_du_d"] = float(du_k_a_d)
+            du_backup_cfg["k_a_track_occ_du_d"] = float(du_k_a_d)
+        if vref_mode_occ is not None:
+            du_backup_cfg["vref_mode_occ_du"] = str(vref_mode_occ).strip().lower()
         robot_spec = {
             "model": "DynamicUnicycle2D",
-            "v_max": 1.5,
-            "a_max": 1.5,
-            "w_max": 1.5,
+            "v_max": du_vmax,
+            "v_min": -du_vmax,
+            "v_obs_max": 0.5,
+            "a_max": 1.0,
+            "w_max": 0.8,
             "radius": 0.25,
             "debug_backup_qp": False,
             "sensing_range": 10.0,
             "fov_angle": 360.0,
-            "backup_cbf": {"T_horizon": 1.5},
+            "backup_cbf": du_backup_cfg,
             "show_backup_rollout": True,
             "backup_rollout_every": 1,
             "use_occ": True,
-            "dynamic_obs_types": [1],
+            "dynamic_obs_types": [1 ],
         }
     else:
+        uni_backup_cfg = {"T_horizon": 1.5}
+        if vref_mode_occ is not None:
+            uni_backup_cfg["vref_mode_occ_uni"] = str(vref_mode_occ).strip().lower()
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": 1.0,
@@ -207,7 +232,7 @@ def run_crowd_scenario(
             "debug_backup_qp": False,
             "sensing_range": 10.0,
             "fov_angle": 360.0,
-            "backup_cbf": {"T_horizon": 1.5},
+            "backup_cbf": uni_backup_cfg,
             "show_backup_rollout": True,
             "backup_rollout_every": 1,
             "use_occ": True,
@@ -283,6 +308,20 @@ def main():
     parser.add_argument("--n-rand", type=int, default=50, help="Number of random moving obstacles.")
     parser.add_argument("--no-rand-obs", action="store_true", help="Disable random moving obstacles.")
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
+    parser.add_argument("--du-min-speed-scale", type=float, default=None, help="Override backup_cbf.min_speed_scale_occ_du.")
+    parser.add_argument("--du-k-turn-brake", type=float, default=None, help="Override backup_cbf.k_turn_brake_occ_du.")
+    parser.add_argument("--du-k-a-p", type=float, default=None, help="Override backup_cbf.k_a_occ_du_p.")
+    parser.add_argument("--du-k-a-d", type=float, default=None, help="Override backup_cbf.k_a_occ_du_d.")
+    parser.add_argument("--du-reverse-enter-cos", type=float, default=None, help="Override backup_cbf.reverse_enter_cos_occ_du.")
+    parser.add_argument("--du-reverse-exit-cos", type=float, default=None, help="Override backup_cbf.reverse_exit_cos_occ_du.")
+    parser.add_argument("--du-reverse-min-scale", type=float, default=None, help="Override backup_cbf.reverse_min_scale_occ_du.")
+    parser.add_argument(
+        "--vref-mode-occ",
+        type=str,
+        choices=["soft", "strict"],
+        default=None,
+        help="Facet aggregation mode for UNI/DU occlusion backup v_ref.",
+    )
     parser.add_argument(
         "--save_ani",
         "--save-ani",
@@ -292,7 +331,7 @@ def main():
         type=_str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=False,
         help="Save animation frames/video. Accepts true/false or can be passed as a flag.",
     )
     args = parser.parse_args()
@@ -308,6 +347,14 @@ def main():
         case_idx=args.case_idx,
         rand_obs=(not args.no_rand_obs),
         n_rand=args.n_rand,
+        du_min_speed_scale=args.du_min_speed_scale,
+        du_k_turn_brake=args.du_k_turn_brake,
+        du_k_a_p=args.du_k_a_p,
+        du_k_a_d=args.du_k_a_d,
+        du_reverse_enter_cos=args.du_reverse_enter_cos,
+        du_reverse_exit_cos=args.du_reverse_exit_cos,
+        du_reverse_min_scale=args.du_reverse_min_scale,
+        vref_mode_occ=args.vref_mode_occ,
     )
 
 

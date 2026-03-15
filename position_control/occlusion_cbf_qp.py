@@ -637,8 +637,13 @@ class OcclusionCBFQP(BackupCBFQP):
         a_max = float(self.robot_spec.get("a_max", 1.0))
         w_max = float(self.robot_spec.get("w_max", 0.5))
         v_max = float(self.robot_spec.get("v_max", 1.0))
+        v_min = float(self.robot_spec.get("v_min", -v_max))
+        if not np.isfinite(v_min):
+            v_min = -v_max
+        if v_min > v_max:
+            v_min = v_max
 
-        a_lb = max(-a_max, -v_cur / dt)
+        a_lb = max(-a_max, (v_min - v_cur) / dt)
         a_ub = min(a_max, (v_max - v_cur) / dt)
         if a_lb > a_ub:
             a_mid = 0.5 * (a_lb + a_ub)
@@ -1001,7 +1006,12 @@ class OcclusionCBFQP(BackupCBFQP):
                     v_cur = 0.0
                 dt_du = max(float(getattr(self.robot, "dt", self.dt_backup)), 1e-6)
                 v_max = float(self.robot_spec.get("v_max", np.inf))
-                a_lb = max(-a_max, -v_cur / dt_du)
+                v_min = float(self.robot_spec.get("v_min", -v_max))
+                if not np.isfinite(v_min):
+                    v_min = -v_max
+                if v_min > v_max:
+                    v_min = v_max
+                a_lb = max(-a_max, (v_min - v_cur) / dt_du)
                 a_ub = min(a_max, (v_max - v_cur) / dt_du)
                 input_ok = bool(
                     (a_lb - tol) <= float(u_flat[0]) <= (a_ub + tol)
@@ -1112,14 +1122,20 @@ class OcclusionCBFQP(BackupCBFQP):
         qp_status = self.cbf_controller.status
         self.last_qp_status_raw = qp_status
         self.last_qp_exception = None if solve_exception is None else str(solve_exception)
-        qp_ok = (
-            solve_exception is None
-            and qp_status in ["optimal", "optimal_inaccurate"]
-            and self.u.value is not None
-        )
+        qp_ok = False
+        u_raw = None
+        if solve_exception is None and self.u.value is not None:
+            u_raw = np.array(self.u.value, dtype=float).reshape(-1, 1)
+            tol_feas = float(self.robot_spec.get("cbf_feas_tol", 1e-4))
+            raw_violation = (A_cbf_val @ u_raw - b_cbf_val).flatten()
+            max_raw_violation = float(np.max(raw_violation)) if raw_violation.size > 0 else -np.inf
+            if qp_status == "optimal":
+                qp_ok = True
+            elif qp_status in {"optimal_inaccurate", "user_limit"} and max_raw_violation <= tol_feas:
+                qp_ok = True
 
         if qp_ok:
-            u_safe = np.array(self.u.value, dtype=float).reshape(-1, 1)
+            u_safe = np.array(u_raw, dtype=float).reshape(-1, 1)
             u_safe = self._clip_du_input_for_speed(robot_state, u_safe)
             self.last_u = u_safe
             if self.last_u_ref is not None:
@@ -1127,7 +1143,7 @@ class OcclusionCBFQP(BackupCBFQP):
             else:
                 delta = float("inf")
             self.last_intervention = "u_ref" if delta <= tol else "backup_qp"
-            self.status = qp_status if isinstance(qp_status, str) else "optimal"
+            self.status = "optimal"
             self._last_intervention = self.last_intervention != "u_ref"
             self._using_backup = self._last_intervention
             return u_safe
