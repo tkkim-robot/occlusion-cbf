@@ -68,6 +68,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self._occ_mask_counter = 0
         self._cached_occluded_mask = None
         self._last_occluded_mask = None
+        self.last_terminal_event = None
         
         self._rng = np.random.default_rng(rand_seed)
         self.obs_meta = None
@@ -324,8 +325,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                     arrow.set_mutation_scale(head_scale)
                 arrow.set_positions((ox, oy), (ox + dx, oy + dy))
                 arrow.set_visible(True)
-    
-    def _get_occluded_obs_mask(self):
+
+    def _resolve_occ_filter_fn(self):
         if not hasattr(self, "pos_controller") or self.pos_controller is None:
             return None
         occ_filter_fn = None
@@ -334,6 +335,27 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         elif hasattr(self.pos_controller, "_occ_utils") and \
                 hasattr(self.pos_controller._occ_utils, "_filter_visible_and_build_occ"):
             occ_filter_fn = self.pos_controller._occ_utils._filter_visible_and_build_occ
+        elif bool(self.robot_spec.get("plot_dyn_obs_occlusion_fallback", True)):
+            # Keep occlusion-aware visibility filter for non-occlusion controllers.
+            try:
+                from utils.occlusion import OcclusionUtils
+                vis_utils = getattr(self, "_plot_occ_utils", None)
+                if vis_utils is None:
+                    sensing_range = self.robot_spec.get('sensing_range', 10.0)
+                    vis_utils = OcclusionUtils(
+                        robot=self.robot,
+                        robot_spec=self.robot_spec,
+                        sensing_range=float(sensing_range),
+                        barrier_fn=None,
+                    )
+                    self._plot_occ_utils = vis_utils
+                occ_filter_fn = vis_utils._filter_visible_and_build_occ
+            except Exception:
+                occ_filter_fn = None
+        return occ_filter_fn
+    
+    def _get_occluded_obs_mask(self):
+        occ_filter_fn = self._resolve_occ_filter_fn()
         if occ_filter_fn is None:
             return None
         occ_types = self.robot_spec.get('occlusion_types', None)
@@ -382,6 +404,67 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         # - occluded in sensing range
         # - outside sensing range
         return ~visible_mask
+
+    def _get_occlusion_scenarios_for_plot(self, obs_candidates=None):
+        """
+        Build occlusion scenarios for plotting overlays, even when the active
+        controller does not manage occlusion_scenarios itself (e.g., cbf_qp).
+        """
+        occ_filter_fn = self._resolve_occ_filter_fn()
+        if occ_filter_fn is None:
+            return None
+        if obs_candidates is None:
+            obs_candidates = self.obs
+        if obs_candidates is None:
+            return None
+
+        obs_arr = np.asarray(obs_candidates, dtype=float)
+        if obs_arr.size == 0:
+            return None
+        if obs_arr.ndim == 1:
+            obs_arr = obs_arr.reshape(1, -1)
+
+        try:
+            _, scenarios = occ_filter_fn(self.robot.X, obs_arr)
+        except Exception:
+            return None
+        if scenarios is None or len(scenarios) == 0:
+            return None
+        return scenarios
+
+    def _get_visible_obs_subset_for_control(self, obs_candidates):
+        """
+        Build visible subset for control constraints using the same occlusion/FOV
+        visibility filter used by plotting.
+        """
+        if obs_candidates is None:
+            return None
+        obs_arr = np.asarray(obs_candidates, dtype=float)
+        if obs_arr.size == 0:
+            return None
+        if obs_arr.ndim == 1:
+            obs_arr = obs_arr.reshape(1, -1)
+
+        if not hasattr(self, "pos_controller") or self.pos_controller is None:
+            return obs_arr
+
+        occ_filter_fn = self._resolve_occ_filter_fn()
+
+        if occ_filter_fn is None:
+            return obs_arr
+
+        try:
+            visible_obs, _ = occ_filter_fn(self.robot.X, obs_arr)
+        except Exception:
+            return obs_arr
+
+        if visible_obs is None or len(visible_obs) == 0:
+            return None
+
+        vis_arr = np.asarray(visible_obs, dtype=float)
+        if vis_arr.ndim == 1:
+            vis_arr = vis_arr.reshape(1, -1)
+        return vis_arr
 
     def draw_plot(self, pause=0.01, force_save=False):
         if self.show_animation:
@@ -547,7 +630,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         time_text = f"{float(total_ms):.3f} ms" if total_ms is not None else "n/a"
         value_width = 18
         text = (
-            f"QP Constraints: {constraints_text:<{value_width}}\n"
+            f"Constraints   : {constraints_text:<{value_width}}\n"
             f"Computation   : {time_text:<{value_width}}\n"
             f"Control Policy: {policy_text:<{value_width}}"
         )
@@ -569,6 +652,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             - 1: visibility violation
         '''
         # update state machine
+        self.last_terminal_event = None
         if self.state_machine == 'stop':
             if self.robot.has_stopped():
                 if self.enable_rotation:
@@ -612,9 +696,15 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                        'u_ref': u_ref,
                        'goal': self.goal}
         
+        control_obs = self.nearest_multi_obs
+        # For pure baseline CBF-QP, apply visibility filtering so only currently
+        # visible obstacles generate CBF constraints.
+        if self.pos_controller_type == 'cbf_qp' and bool(self.robot_spec.get('cbf_visible_only', True)):
+            control_obs = self._get_visible_obs_subset_for_control(self.nearest_multi_obs)
+
         if self.pos_controller_type in ['optimal_decay_cbf_qp', 'cbf_qp']:
             u = self.pos_controller.solve_control_problem(
-                self.robot.X, control_ref, self.nearest_multi_obs) 
+                self.robot.X, control_ref, control_obs) 
         else:
             u = self.pos_controller.solve_control_problem(
                 self.robot.X, control_ref, self.nearest_multi_obs)
@@ -658,12 +748,14 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         
         if self.pos_controller.status != 'optimal' or collide:
             if collide:
+                # Keep latest command for logging paths that read get_control_input()
+                # before loop break in run_all_steps.
+                self.u_pos = u
                 self._infeasible_active = True
                 self._infeasible_seen = True
                 self.draw_infeasible()
-                # cause = "Collision" if collide else "Infeasible"
-                # self.draw_infeasible()
                 print("Collision detected !!")
+                self.last_terminal_event = "collision"
                 if self.raise_error:
                     raise InfeasibleError("Collision detected !!")
                 return -2
@@ -674,8 +766,12 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 self._infeasible_active = True
                 self._infeasible_seen = True
             else:
+                # Keep latest command for logging paths that read get_control_input()
+                # before loop break in run_all_steps.
+                self.u_pos = u
                 self.draw_infeasible()
                 print("Infeasible detected!!")
+                self.last_terminal_event = "infeasible"
                 self._infeasible_seen = True
                 if self.raise_error:
                     raise InfeasibleError("Infeasible detected !!")
@@ -685,18 +781,21 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.robot.step(u, self.u_att)
         self.u_pos = u
 
-        if self.plot_occ_polygons and hasattr(self.robot, "update_occlusion_polygons") and \
-           hasattr(self.pos_controller, "occlusion_scenarios"):
+        if self.plot_occ_polygons and hasattr(self.robot, "update_occlusion_polygons"):
+            scenarios = getattr(self.pos_controller, "occlusion_scenarios", None)
+            if scenarios is None or len(scenarios) == 0:
+                scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
 
             kappa = getattr(self.pos_controller, "kappa", 10.0)
+            T_rollout = getattr(self.pos_controller, "T_horizon", 3.0)
 
             self.robot.update_occlusion_polygons(
-                self.pos_controller.occlusion_scenarios,
+                scenarios,
                 kappa=kappa,
                 show_true_occ=True,
                 show_true_occ_T=False,
                 show_smax_occ_T=False,
-                T_rollout=getattr(self.pos_controller, "T_horizon", 3.0),
+                T_rollout=T_rollout,
                 grid_res=0.05,
             )
 
@@ -709,12 +808,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             self.robot.update_safety_area()
 
             beyond_flag = self.robot.is_beyond_sensing_footprints()
-            if beyond_flag and self.show_animation:
-                pass
-                # print("Visibility Violation")
         else:
-            beyond_flag = 0 # not checking sensing footprint
+            beyond_flag = 0
 
         if self.goal is None and self.state_machine != 'stop':
+            self.last_terminal_event = "success"
             return -1  # all waypoints reached
         return beyond_flag

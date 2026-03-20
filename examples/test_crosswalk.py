@@ -24,6 +24,27 @@ if repo_root_str in sys.path:
 sys.path.insert(0, repo_root_str)
 
 
+def _install_position_controller_shims():
+    """
+    Allow LocalTrackingControllerDyn_OCC to resolve controller modules from this
+    repo layout where `position_control/` may not include all baseline files.
+    """
+    shim_map = {
+        "position_control.cbf_qp": "safe_control.position_control.cbf_qp",
+        "position_control.backup_cbf_qp": "safe_control.position_control.backup_cbf_qp",
+    }
+    for dst_name, src_name in shim_map.items():
+        if dst_name in sys.modules:
+            continue
+        try:
+            sys.modules[dst_name] = importlib.import_module(src_name)
+        except Exception:
+            pass
+
+
+_install_position_controller_shims()
+
+
 def _load_local_occ_controller():
     """
     Load LocalTrackingControllerDyn_OCC from this repo's dynamic_env/main.py.
@@ -77,6 +98,11 @@ def crosswalk_scenario_v3(
     seed=42,
     case_idx=None,
     save_animation=False,
+    oa_paper_mode=None,
+    oa_dynamic_occluders=None,
+    oa_allow_solver_fallback=None,
+    oa_dsafe=None,
+    oa_visible_reach_mode=None,
 ):
     """
     [Scenario V3]
@@ -236,6 +262,23 @@ def crosswalk_scenario_v3(
             "mark_qp_fail_infeasible": True,
             "use_occ": True,
         }
+        if str(controller_type.get("pos", "")).strip().lower() == "oa_mpc":
+            oa_cfg = robot_spec.setdefault("oa_mpc", {})
+            oa_cfg.setdefault("paper_mode", True)
+            oa_cfg.setdefault("N", 10)
+            oa_cfg.setdefault("visible_reach_mode", "worst_case")
+            oa_cfg.setdefault("use_nominal_tracking_cost", False)
+            oa_cfg.setdefault("dynamic_occluders", False)
+            if oa_paper_mode is not None:
+                oa_cfg["paper_mode"] = bool(oa_paper_mode)
+            if oa_dynamic_occluders is not None:
+                oa_cfg["dynamic_occluders"] = bool(oa_dynamic_occluders)
+            if oa_allow_solver_fallback is not None:
+                oa_cfg["allow_solver_fallback"] = bool(oa_allow_solver_fallback)
+            if oa_dsafe is not None:
+                oa_cfg["dsafe"] = float(oa_dsafe)
+            if oa_visible_reach_mode is not None:
+                oa_cfg["visible_reach_mode"] = str(oa_visible_reach_mode).strip().lower()
 
         # 3) Plot setup (optional)
         ax = None
@@ -489,6 +532,13 @@ def main():
     parser = argparse.ArgumentParser(description="Run crosswalk_scenario_v3 in occlusion-cbf framework.")
     parser.add_argument("--model", default="di", help="Model alias (only `di` is supported in this scenario).")
     parser.add_argument("--controller", default="occlusion_cbf_qp", help="Position controller type.")
+    parser.add_argument(
+        "--baseline",
+        type=str,
+        default=None,
+        choices=["occlusion_cbf", "cbf_qp", "backup_cbf_qp", "oa_mpc"],
+        help="Baseline alias. If provided, overrides --controller.",
+    )
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
     parser.add_argument(
         "--bus",
@@ -521,13 +571,57 @@ def main():
         default=False,
         help="Save animation frames. Accepts true/false or can be passed as a flag.",
     )
+    parser.add_argument(
+        "--oa-paper-mode",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="OA-MPC: use paper-faithful defaults (True/False).",
+    )
+    parser.add_argument(
+        "--oa-dynamic-occluders",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="OA-MPC extension: allow dynamic visible obstacles as occluders.",
+    )
+    parser.add_argument(
+        "--oa-allow-solver-fallback",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="OA-MPC: if solver fails, use stop fallback instead of infeasible termination.",
+    )
+    parser.add_argument(
+        "--oa-dsafe",
+        type=float,
+        default=None,
+        help="OA-MPC: minimum safety distance used in projection constraints.",
+    )
+    parser.add_argument(
+        "--oa-visible-reach-mode",
+        type=str,
+        choices=["worst_case", "constant_velocity"],
+        default=None,
+        help="OA-MPC: visible-agent reachable set mode.",
+    )
     args = parser.parse_args()
 
     model_key = str(args.model).strip().lower()
     if model_key not in {"di", "doubleintegrator2d"}:
         raise ValueError(f"Unsupported model `{args.model}`. This scenario currently supports only `di`.")
 
-    controller_type = {"pos": args.controller}
+    baseline_map = {
+        "occlusion_cbf": "occlusion_cbf_qp",
+        "cbf_qp": "cbf_qp",
+        "backup_cbf_qp": "backup_cbf_qp",
+        "oa_mpc": "oa_mpc",
+    }
+    pos_algo = baseline_map.get(args.baseline, args.controller)
+    controller_type = {"pos": pos_algo}
     crosswalk_scenario_v3(
         controller_type=controller_type,
         enable_plot=not args.disable_plot,
@@ -537,6 +631,11 @@ def main():
         seed=args.seed,
         case_idx=args.case_idx,
         save_animation=args.save_animation,
+        oa_paper_mode=args.oa_paper_mode,
+        oa_dynamic_occluders=args.oa_dynamic_occluders,
+        oa_allow_solver_fallback=args.oa_allow_solver_fallback,
+        oa_dsafe=args.oa_dsafe,
+        oa_visible_reach_mode=args.oa_visible_reach_mode,
     )
 
 
