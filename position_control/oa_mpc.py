@@ -40,7 +40,9 @@ class OAMPC:
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
 
         cfg = robot_spec.setdefault("oa_mpc", {})
-        self.paper_mode = bool(cfg.get("paper_mode", True))
+        # Keep OA-MPC in paper-faithful mode by default in this codebase.
+        # We intentionally do not expose a non-paper toggle in the crowd runner.
+        self.paper_mode = True
         self.N = int(cfg.get("N", 10))
         # Paper setting uses N=10 at dt=0.1 (~1.0 s horizon).
         # Preserve this effective horizon when running with smaller dt.

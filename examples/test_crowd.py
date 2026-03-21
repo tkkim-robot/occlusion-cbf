@@ -159,13 +159,13 @@ def run_crowd_scenario(
     du_reverse_exit_cos=None,
     du_reverse_min_scale=None,
     vref_mode_occ=None,
-    oa_paper_mode=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
     oa_visible_reach_mode=None,
     oa_use_nominal_tracking_cost=None,
-    oa_paper_uni_preset=False,
+    oa_wmax="default",
+    oa_dt=None,
     static_occluders=False,
     return_metrics=False,
     max_steps=None,
@@ -188,8 +188,13 @@ def run_crowd_scenario(
     else:
         raise ValueError(f"Unsupported model `{model_key}`. Use `di`, `du`, or `uni`.")
 
-    use_oa_uni_preset = bool(oa_paper_uni_preset) and is_oa_mpc and model == "Unicycle2D"
-    dt = 0.1 if use_oa_uni_preset else 0.05
+    if is_oa_mpc and oa_dt is not None:
+        dt = float(oa_dt)
+        if (not np.isfinite(dt)) or dt <= 0.0:
+            raise ValueError(f"Invalid --oa-dt: {oa_dt}. It must be a positive finite value.")
+    else:
+        # Keep default simulation dt fixed for fair preset on/off comparison.
+        dt = 0.05
 
     waypoints = np.array(
         [
@@ -310,9 +315,13 @@ def run_crowd_scenario(
         uni_backup_cfg = {"T_horizon": 1.5}
         if vref_mode_occ is not None:
             uni_backup_cfg["vref_mode_occ_uni"] = str(vref_mode_occ).strip().lower()
-        uni_vmax = 1.0 if use_oa_uni_preset else 1.0
-        uni_wmax = float(np.pi) if use_oa_uni_preset else 0.8
-        uni_radius = 0.2 if use_oa_uni_preset else 0.25
+        uni_vmax = 1.0
+        wmax_mode = str(oa_wmax).strip().lower()
+        if wmax_mode not in {"default", "pi"}:
+            raise ValueError(f"Invalid --wmax: {oa_wmax}. Use one of: default, pi.")
+        uni_wmax = float(np.pi) if (is_oa_mpc and wmax_mode == "pi") else 0.8
+        # Keep robot radius fixed for fair preset/non-preset comparison.
+        uni_radius = 0.25
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": uni_vmax,
@@ -330,22 +339,17 @@ def run_crowd_scenario(
 
     if str(controller_type.get("pos", "")).strip().lower() == "oa_mpc":
         oa_cfg = robot_spec.setdefault("oa_mpc", {})
-        oa_cfg.setdefault("paper_mode", True)
-        oa_cfg.setdefault("N", 10)
+        # Fix OA-MPC to paper-mode behavior in crowd benchmark.
+        oa_cfg["paper_mode"] = True
+        oa_cfg["N"] = 10
+        oa_cfg["auto_scale_N_with_dt"] = False
+        oa_cfg["paper_horizon_time"] = 1.0
+        oa_cfg.setdefault("dsafe", 0.5)
         oa_cfg.setdefault("visible_reach_mode", "worst_case")
         oa_cfg.setdefault("use_nominal_tracking_cost", False)
         oa_cfg.setdefault("dynamic_occluders", False)
-        if use_oa_uni_preset:
-            # Paper-like OA-MPC preset for unicycle baseline reproduction.
-            oa_cfg["paper_mode"] = True
-            oa_cfg["N"] = 10
-            oa_cfg["auto_scale_N_with_dt"] = False
-            oa_cfg["paper_horizon_time"] = 1.0
-            oa_cfg.setdefault("dsafe", 0.5)
         # OA paper baseline: static occluders only.
         robot_spec.setdefault("occlusion_types", [0])
-        if oa_paper_mode is not None:
-            oa_cfg["paper_mode"] = bool(oa_paper_mode)
         if oa_dynamic_occluders is not None:
             oa_cfg["dynamic_occluders"] = bool(oa_dynamic_occluders)
             if bool(oa_dynamic_occluders):
@@ -609,14 +613,6 @@ def main():
         help="Facet aggregation mode for UNI/DU occlusion backup v_ref.",
     )
     parser.add_argument(
-        "--oa-paper-mode",
-        type=_str2bool,
-        nargs="?",
-        const=True,
-        default=None,
-        help="OA-MPC: use paper-faithful defaults (True/False).",
-    )
-    parser.add_argument(
         "--oa-dynamic-occluders",
         type=_str2bool,
         nargs="?",
@@ -654,14 +650,23 @@ def main():
         help="OA-MPC extension: use ||u-u_ref|| cost term.",
     )
     parser.add_argument(
-        "--oa-paper-uni-preset",
-        type=_str2bool,
-        nargs="?",
-        const=True,
-        default=False,
+        "--wmax",
+        type=str,
+        choices=["default", "pi"],
+        default="default",
         help=(
-            "OA-MPC unicycle paper-like preset (one-line reproduction): "
-            "dt=0.1, v_max=2.0, w_max=pi, radius=0.2, N=10, dsafe=0.5."
+            "Unicycle yaw-rate bound mode for OA-MPC comparison: "
+            "`default` -> w_max=0.8, `pi` -> w_max=pi. "
+            "Only affects OA-MPC Unicycle runs."
+        ),
+    )
+    parser.add_argument(
+        "--oa-dt",
+        type=float,
+        default=None,
+        help=(
+            "Override crowd simulation dt for OA-MPC runs only. "
+            "Useful for fair true/false preset comparison (e.g., --oa-dt 0.05)."
         ),
     )
     parser.add_argument(
@@ -714,13 +719,13 @@ def main():
         du_reverse_exit_cos=args.du_reverse_exit_cos,
         du_reverse_min_scale=args.du_reverse_min_scale,
         vref_mode_occ=args.vref_mode_occ,
-        oa_paper_mode=args.oa_paper_mode,
         oa_dynamic_occluders=args.oa_dynamic_occluders,
         oa_allow_solver_fallback=args.oa_allow_solver_fallback,
         oa_dsafe=args.oa_dsafe,
         oa_visible_reach_mode=args.oa_visible_reach_mode,
         oa_use_nominal_tracking_cost=args.oa_use_nominal_tracking_cost,
-        oa_paper_uni_preset=args.oa_paper_uni_preset,
+        oa_wmax=args.wmax,
+        oa_dt=args.oa_dt,
         static_occluders=args.static_occluders,
     )
 

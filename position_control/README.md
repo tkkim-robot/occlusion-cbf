@@ -209,30 +209,53 @@ uv run python examples/test_crosswalk.py --batch-eval --num-trials 100 --seed 42
   - Enable/disable animation saving (`true` / `false` accepted).
 
 
-## 5. Common Pitfalls (Collaborator FAQ)
+## 5. Baseline Runs (Crowd Benchmark)
 
-### Q1. I used `--save-ani false`, but it is still slow.
+For crowd benchmarking, use `--baseline` (recommended) instead of `--algo`.
 
-`--save-ani false` only disables animation saving. Plot rendering may still be enabled.  
-If you want compute-focused runs, also add `--disable-plot`.
+Baseline names:
+- `occlusion_cbf` (ours, maps to `occlusion_cbf_qp`)
+- `oa_mpc` (two variants by input constraint)
+- `single_risk_mpc`
+- `control_tree_mpc`
 
-```bash
-uv run python examples/test_crowd.py --model du --n-rand 30 --idx 32 --disable-plot --save-ani false
-```
-
-### Q2. Is `--idx` random or reproducible?
-
-It is reproducible when `--seed` is fixed.  
-This is useful for sharing exact cases with collaborators.
+### 5.1 One command template
 
 ```bash
-uv run python examples/test_crowd.py --model du --seed 42 --idx 32 --n-rand 30 --save-ani false
+uv run python examples/test_crowd.py --model uni --baseline <baseline_name> --idx <idx num> --n-rand <random obs num>
 ```
 
-### Q3. The first run is slow. Is that normal?
+### 5.2 Ours (`occlusion_cbf`)
 
-Yes. `JAX` JIT warm-up can make the first run slower.  
-Repeated runs with the same shapes/settings are usually faster and more stable.
+```bash
+uv run python examples/test_crowd.py --model uni --baseline occlusion_cbf --idx 1 --n-rand 30
+```
+
+### 5.3 OA-MPC baselines (omega constraint variants)
+
+OA-MPC for unicycle is now compared with two `omega`-bound variants:
+
+- `OA-MPC (wmax=default)`:
+  - `--wmax default`  -> `w_max = 0.8`
+- `OA-MPC (wmax=pi)`:
+  - `--wmax pi` -> `w_max = pi`
+
+```bash
+uv run python examples/test_crowd.py --model uni --baseline oa_mpc --wmax default --idx 1 --n-rand 30
+uv run python examples/test_crowd.py --model uni --baseline oa_mpc --wmax pi --idx 1 --n-rand 30
+```
+
+### 5.4 Single-Risk MPC baseline
+
+```bash
+uv run python examples/test_crowd.py --model uni --baseline single_risk_mpc --idx 1 --n-rand 30
+```
+
+### 5.5 Control-Tree-inspired baseline
+
+```bash
+uv run python examples/test_crowd.py --model uni --baseline control_tree_mpc --idx 1 --n-rand 30
+```
 
 
 ## 6. Recommended First Commands (for collaborators)
@@ -249,4 +272,3 @@ PY
 uv run python examples/test_crowd.py --model du --n-rand 30 --idx 32 --disable-plot --save-ani false
 uv run python examples/test_crosswalk.py --model di --bus 1 --idx 66 --disable-plot
 ```
-

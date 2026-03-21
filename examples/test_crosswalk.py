@@ -91,6 +91,7 @@ def _str2bool(value):
 
 def crosswalk_scenario_v3(
     controller_type=None,
+    model_key="di",
     enable_plot=True,
     bus_type=0,
     batch_eval=False,
@@ -130,7 +131,15 @@ def crosswalk_scenario_v3(
         ],
         dtype=np.float64,
     )
-    x_init = np.array([waypoints[0][0], waypoints[0][1], 0.0, 1.0, np.pi / 2.0])
+    model_key = str(model_key).strip().lower()
+    if model_key in {"di", "doubleintegrator2d"}:
+        x_init = np.array([waypoints[0][0], waypoints[0][1], 0.0, 1.0, np.pi / 2.0], dtype=float)
+    elif model_key in {"uni", "unicycle2d"}:
+        x_init = np.array([waypoints[0][0], waypoints[0][1], np.pi / 2.0], dtype=float)
+    elif model_key in {"du", "dynamicunicycle2d"}:
+        x_init = np.array([waypoints[0][0], waypoints[0][1], np.pi / 2.0, 1.0], dtype=float)
+    else:
+        raise ValueError(f"Unsupported model `{model_key}`. Use one of di/uni/du.")
 
     # 1) Bus obstacle block (2 x 6 layout)
     bus_r = 1.1
@@ -236,10 +245,7 @@ def crosswalk_scenario_v3(
 
         # 2) Robot spec
         robot_spec = {
-            "model": "DoubleIntegrator2D",
             "radius": 0.3,
-            "v_max": 2.0,
-            "a_max": 2.0,
             "sensing_range": 25.0,
             "fov_angle": 360,
             "occ_visible_scale": 0.5,
@@ -262,6 +268,31 @@ def crosswalk_scenario_v3(
             "mark_qp_fail_infeasible": True,
             "use_occ": True,
         }
+        if model_key in {"di", "doubleintegrator2d"}:
+            robot_spec.update(
+                {
+                    "model": "DoubleIntegrator2D",
+                    "v_max": 2.0,
+                    "a_max": 2.0,
+                }
+            )
+        elif model_key in {"uni", "unicycle2d"}:
+            robot_spec.update(
+                {
+                    "model": "Unicycle2D",
+                    "v_max": 2.0,
+                    "w_max": 1.2,
+                }
+            )
+        elif model_key in {"du", "dynamicunicycle2d"}:
+            robot_spec.update(
+                {
+                    "model": "DynamicUnicycle2D",
+                    "v_max": 2.0,
+                    "a_max": 2.0,
+                    "w_max": 1.2,
+                }
+            )
         if str(controller_type.get("pos", "")).strip().lower() == "oa_mpc":
             oa_cfg = robot_spec.setdefault("oa_mpc", {})
             oa_cfg.setdefault("paper_mode", True)
@@ -530,7 +561,7 @@ def crosswalk_scenario_v3(
 
 def main():
     parser = argparse.ArgumentParser(description="Run crosswalk_scenario_v3 in occlusion-cbf framework.")
-    parser.add_argument("--model", default="di", help="Model alias (only `di` is supported in this scenario).")
+    parser.add_argument("--model", default="di", help="Model alias: di | uni | du")
     parser.add_argument("--controller", default="occlusion_cbf_qp", help="Position controller type.")
     parser.add_argument(
         "--baseline",
@@ -611,8 +642,8 @@ def main():
     args = parser.parse_args()
 
     model_key = str(args.model).strip().lower()
-    if model_key not in {"di", "doubleintegrator2d"}:
-        raise ValueError(f"Unsupported model `{args.model}`. This scenario currently supports only `di`.")
+    if model_key not in {"di", "doubleintegrator2d", "uni", "unicycle2d", "du", "dynamicunicycle2d"}:
+        raise ValueError(f"Unsupported model `{args.model}`. Use one of di/uni/du.")
 
     baseline_map = {
         "occlusion_cbf": "occlusion_cbf_qp",
@@ -624,6 +655,7 @@ def main():
     controller_type = {"pos": pos_algo}
     crosswalk_scenario_v3(
         controller_type=controller_type,
+        model_key=model_key,
         enable_plot=not args.disable_plot,
         bus_type=args.bus_type,
         batch_eval=args.batch_eval,
