@@ -6,47 +6,15 @@ Run:
 """
 
 import argparse
-import importlib
-import importlib.util
-import sys
-from pathlib import Path
 
 import numpy as np
 
+from _baseline_defs import HOSPITAL_ALGO_CHOICES
+from _runtime import ensure_repo_root, load_local_occ_controller
+
+ensure_repo_root()
+LocalTrackingControllerDyn_OCC = load_local_occ_controller("hospital")
 from safe_control.utils import env, plotting
-
-# Ensure this repository root is imported first.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT_STR = str(REPO_ROOT)
-if REPO_ROOT_STR in sys.path:
-    sys.path.remove(REPO_ROOT_STR)
-sys.path.insert(0, REPO_ROOT_STR)
-
-
-def _load_local_occ_controller():
-    """
-    Load LocalTrackingControllerDyn_OCC from this repo's dynamic_env/main.py.
-    Fallback to direct file import when namespace collisions exist.
-    """
-    try:
-        mod = importlib.import_module("dynamic_env.main")
-        cls = getattr(mod, "LocalTrackingControllerDyn_OCC", None)
-        mod_file = Path(getattr(mod, "__file__", "")).resolve()
-        if cls is not None and str(mod_file).startswith(REPO_ROOT_STR):
-            return cls
-    except Exception:
-        pass
-
-    local_main = REPO_ROOT / "dynamic_env" / "main.py"
-    spec = importlib.util.spec_from_file_location("dynamic_env_main_local_hospital", local_main)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load local dynamic_env.main at {local_main}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return getattr(module, "LocalTrackingControllerDyn_OCC")
-
-
-LocalTrackingControllerDyn_OCC = _load_local_occ_controller()
 
 
 def _wall_segment_vertical(x, y_min, y_max, gap_ranges, r, spacing, env_h, obs_type=0):
@@ -289,7 +257,7 @@ def main():
         "--algo",
         type=str,
         default="occlusion_cbf_qp",
-        choices=["occlusion_cbf_qp", "cbf_qp", "backup_cbf_qp"],
+        choices=HOSPITAL_ALGO_CHOICES,
         help="Position controller algorithm.",
     )
     parser.add_argument("--tf", type=float, default=260.0, help="Simulation final time [s].")

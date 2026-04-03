@@ -371,52 +371,6 @@ if _JAX_AVAILABLE:
         del ref_speed, use_norm_mode
         return v_ref, jnp.linalg.norm(v_ref)
 
-
-    # def _jax_uni_virtual_cmd_from_vref(
-    #     theta,
-    #     v_ref,
-    #     v_ref_prev,
-    #     dt,
-    #     v_max,
-    #     w_max,
-    #     k_theta_p,
-    #     k_theta_d,
-    #     k_v_p,
-    #     k_v_d,
-    #     k_turn_boost,
-    #     turn_boost_angle,
-    #     v_min_cmd,
-    # ):
-    #     v_ref_norm = jnp.linalg.norm(v_ref)
-    #     v_ref_prev_norm = jnp.linalg.norm(v_ref_prev)
-    #     theta_ref = jnp.arctan2(v_ref[1], v_ref[0])
-    #     theta_ref_prev = jnp.arctan2(v_ref_prev[1], v_ref_prev[0])
-    #     e_theta = _jax_angle_normalize(theta_ref - theta)
-    #     e_theta_prev = _jax_angle_normalize(theta_ref_prev - theta)
-
-    #     dt_safe = jnp.maximum(dt, 1e-6)
-    #     theta_ref_dot = _jax_angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-    #     e_theta_dot = theta_ref_dot
-
-    #     boost = 1.0 + k_turn_boost * jnp.minimum(
-    #         1.0, jnp.abs(e_theta) / jnp.maximum(turn_boost_angle, 1e-3)
-    #     )
-    #     omega_unsat = boost * (k_theta_p * e_theta + k_theta_d * e_theta_dot)
-    #     omega = jnp.clip(omega_unsat, -w_max, w_max)
-
-    #     gate = jnp.maximum(0.0, jnp.cos(e_theta))
-    #     gate_prev = jnp.maximum(0.0, jnp.cos(e_theta_prev))
-    #     v_des = jnp.clip(v_ref_norm * gate, 0.0, v_max)
-    #     v_des_prev = jnp.clip(v_ref_prev_norm * gate_prev, 0.0, v_max)
-    #     v_des_dot = (v_des - v_des_prev) / dt_safe
-
-    #     v_cmd_unsat = k_v_p * v_des + k_v_d * v_des_dot
-    #     v_cmd = jnp.clip(v_cmd_unsat, 0.0, v_max)
-    #     v_cmd = jnp.where(v_ref_norm > 1e-9, jnp.maximum(v_cmd, v_min_cmd), 0.0)
-
-    #     omega = jnp.where(v_ref_norm < 1e-9, 0.0, omega)
-    #     return jnp.array([v_cmd, omega], dtype=v_ref.dtype)
-
     def _jax_uni_virtual_cmd_from_vref(
         theta,
         v_ref,
@@ -1461,48 +1415,6 @@ class OcclusionController(BackupController):
             self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, tau),
             dtype=float,
         ).reshape(2,)
-
-    # def _uni_virtual_cmd_from_vref(self, theta, v_ref, v_ref_prev, gains=None, v_max=None, w_max=None):
-    #     v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
-    #     v_ref_prev = np.asarray(v_ref_prev, dtype=float).reshape(2,)
-    #     v_ref_norm = float(np.linalg.norm(v_ref))
-    #     if v_ref_norm < 1e-9:
-    #         return 0.0, 0.0
-
-    #     theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
-    #     theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
-    #     if w_max is None:
-    #         w_max = float(self.robot_spec.get("w_max", 0.8))
-    #     else:
-    #         w_max = float(w_max)
-    #     if v_max is None:
-    #         v_max = float(self.robot_spec.get("v_max", 1.0))
-    #     else:
-    #         v_max = float(v_max)
-    #     if gains is None:
-    #         gains = self._uni_occ_gains()
-    #     e_theta = angle_normalize(theta_ref - float(theta))
-    #     e_theta_prev = angle_normalize(theta_ref_prev - float(theta))
-    #     dt_safe = max(float(self.dt), 1e-6)
-    #     theta_ref_dot = angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-    #     e_theta_dot = theta_ref_dot
-
-    #     boost = 1.0 + gains["k_turn_boost"] * min(
-    #         1.0, abs(e_theta) / max(gains["turn_boost_angle"], 1e-3)
-    #     )
-    #     omega_unsat = boost * (gains["k_theta_p"] * e_theta + gains["k_theta_d"] * e_theta_dot)
-    #     omega = float(np.clip(omega_unsat, -w_max, w_max))
-
-    #     gate = max(0.0, np.cos(e_theta))
-    #     gate_prev = max(0.0, np.cos(e_theta_prev))
-    #     v_des = float(np.clip(v_ref_norm * gate, 0.0, v_max))
-    #     v_des_prev = float(np.clip(np.linalg.norm(v_ref_prev) * gate_prev, 0.0, v_max))
-    #     v_des_dot = (v_des - v_des_prev) / dt_safe
-    #     v_cmd_unsat = gains["k_v_p"] * v_des + gains["k_v_d"] * v_des_dot
-    #     v_cmd = float(np.clip(v_cmd_unsat, 0.0, v_max))
-    #     v_cmd = max(v_cmd, min(gains["v_min_cmd"], v_max))
-    #     return v_cmd, omega
-
     def _uni_virtual_cmd_from_vref(self, theta, v_ref, v_ref_prev, gains=None, v_min=None, v_max=None, w_max=None):
         v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
         v_ref_prev = np.asarray(v_ref_prev, dtype=float).reshape(2,)
@@ -1588,19 +1500,18 @@ class OcclusionController(BackupController):
             raise AttributeError("Occlusion barrier function not set.")
         if not isinstance(scenario, dict):
             raise TypeError(f"scenario must be dict, got {type(scenario)}")
-        
         if tau is None:
             tau = self.get_backup_horizon()
         else:
             tau = self.clamp_tau(tau)
 
         return fn(pos, scenario, tau)
-    
+
     def _occ_safe_velocity_reference_rollout(self, X, scenarios, t):
 
         if (scenarios is None) or (len(scenarios) == 0):
             return np.zeros(2, dtype=float)
-        
+
         p = np.array([float(X[0,0]), float(X[1,0])], dtype=float)
         R     = self.robot_spec['radius']
 

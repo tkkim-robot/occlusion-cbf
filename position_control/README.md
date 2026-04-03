@@ -63,8 +63,11 @@ PY
 
 ## 3. Scenario 1: Crowd (`examples/test_crowd.py`)
 
-This scenario tests dense moving obstacles and supports comparing `occlusion_cbf_qp`, `cbf_qp`,
-and `backup_cbf_qp`.
+For the collaborator-facing campus benchmark reproduction guide, see
+`examples/README_campus.md`.
+
+This scenario tests dense moving obstacles and supports comparing `occlusion_cbf_qp`,
+`cbf_qp`, `oa_mpc`, `single_risk_mpc`, `control_tree_mpc`, and `oacp_mpc`.
 
 ### 3.1 Show CLI help
 
@@ -92,11 +95,11 @@ Headless run (recommended for measuring computation time):
 uv run python examples/test_crowd.py --model du --n-rand 30 --idx 32 --disable-plot --save-ani false
 ```
 
-Algorithm comparison (`cbf_qp`, `backup_cbf_qp`):
+Algorithm comparison (`cbf_qp`, `oa_mpc`):
 
 ```bash
 uv run python examples/test_crowd.py --model du --algo cbf_qp --n-rand 30 --idx 32 --save-ani false
-uv run python examples/test_crowd.py --model du --algo backup_cbf_qp --n-rand 30 --idx 32 --save-ani false
+uv run python examples/test_crowd.py --model du --algo oa_mpc --n-rand 30 --idx 32 --save-ani false
 ```
 
 ### 3.3 Key options (`test_crowd.py`)
@@ -106,7 +109,7 @@ uv run python examples/test_crowd.py --model du --algo backup_cbf_qp --n-rand 30
   - `du`: Dynamic Unicycle
   - `uni`: Unicycle
 
-- `--algo {occlusion_cbf_qp,cbf_qp,backup_cbf_qp}`
+- `--algo {occlusion_cbf_qp,cbf_qp,oa_mpc,single_risk_mpc,control_tree_mpc,oacp_mpc}`
   - Position controller algorithm.
 
 - `--idx` / `--case-idx` (1-based)
@@ -184,7 +187,7 @@ uv run python examples/test_crosswalk.py --batch-eval --num-trials 100 --seed 42
   - Currently only `di` is supported in this scenario.
 
 - `--controller`
-  - Position controller type (typically `occlusion_cbf_qp`, `cbf_qp`, or `backup_cbf_qp`).
+  - Position controller type (typically `occlusion_cbf_qp`, `cbf_qp`, or `oa_mpc`).
 
 - `--bus` / `--bus-type {0,1}`
   - `0`: bus occlusion OFF

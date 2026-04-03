@@ -17,6 +17,8 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 
+from _baseline_defs import CROWD_ALGO_CHOICES, CROWD_BASELINE_CHOICES, CROWD_BASELINE_MAP, resolve_baseline_alias
+
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
@@ -42,11 +44,6 @@ WAYPOINTS = np.array(
 )
 PEDESTRIAN_X_BOUNDS = (2.5, 12.5)
 PEDESTRIAN_Y_RANGE = (6.0, 40.0)
-
-# Match the apparent world scale of crowd/crowd2.
-# Crowd1 default view effectively displays ~3.75 m per inch on the axis.
-# For a 15 x 40 workspace, that corresponds to an axis of ~4.0 x 10.67 in.
-# Add a bit of room for titles/margins so robot/obstacle sizes no longer look tiny.
 PLOT_FIGSIZE = (5.4, 12.4)
 
 
@@ -62,12 +59,6 @@ def _resolve_model_name(model_key):
 
 
 def _build_campus_model_defaults(model_key, controller_type=None, vref_mode_occ=None, oa_wmax="default"):
-    """
-    Campus-local model defaults.
-
-    These intentionally mirror the editable model blocks in `test_crowd.py`,
-    but live here so this scenario can be tuned independently for sweeps.
-    """
     model = _resolve_model_name(model_key)
     is_oa_mpc = str((controller_type or {}).get("pos", "")).strip().lower() == "oa_mpc"
 
@@ -147,6 +138,90 @@ def _build_campus_model_defaults(model_key, controller_type=None, vref_mode_occ=
 
     backup_cfg = dict(robot_spec.pop("backup_cbf", {}))
     return model, backup_cfg, dict(robot_spec)
+
+
+def _build_backup_cbf_overrides(args):
+    backup_cbf_overrides = {}
+    if args.du_min_speed_scale is not None:
+        backup_cbf_overrides["min_speed_scale_occ_du"] = float(args.du_min_speed_scale)
+    if args.du_k_turn_brake is not None:
+        backup_cbf_overrides["k_turn_brake_occ_du"] = float(args.du_k_turn_brake)
+    if args.du_k_a_p is not None:
+        backup_cbf_overrides["k_a_occ_du_p"] = float(args.du_k_a_p)
+        backup_cbf_overrides["k_a_track_occ_du_p"] = float(args.du_k_a_p)
+    if args.du_k_a_d is not None:
+        backup_cbf_overrides["k_a_occ_du_d"] = float(args.du_k_a_d)
+        backup_cbf_overrides["k_a_track_occ_du_d"] = float(args.du_k_a_d)
+    if args.du_reverse_enter_cos is not None:
+        backup_cbf_overrides["reverse_enter_cos_occ_du"] = float(args.du_reverse_enter_cos)
+    if args.du_reverse_exit_cos is not None:
+        backup_cbf_overrides["reverse_exit_cos_occ_du"] = float(args.du_reverse_exit_cos)
+    if args.du_reverse_min_scale is not None:
+        backup_cbf_overrides["reverse_min_scale_occ_du"] = float(args.du_reverse_min_scale)
+    if args.uni_reverse_bias is not None:
+        backup_cbf_overrides["reverse_bias_occ_uni"] = float(args.uni_reverse_bias)
+    if args.uni_reverse_gate_angle is not None:
+        backup_cbf_overrides["reverse_speed_gate_angle_occ_uni"] = float(args.uni_reverse_gate_angle)
+    if args.uni_reverse_gate_power is not None:
+        backup_cbf_overrides["reverse_speed_gate_power_occ_uni"] = float(args.uni_reverse_gate_power)
+    if args.uni_v_min_cmd_rev is not None:
+        backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
+    if args.occ_dt_backup is not None:
+        backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if args.vref is not None:
+        backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
+    return backup_cbf_overrides or None
+
+
+def _build_robot_spec_overrides(args):
+    robot_spec_overrides = {}
+    if args.robot_v_max is not None:
+        robot_spec_overrides["v_max"] = float(args.robot_v_max)
+    if args.robot_v_min is not None:
+        robot_spec_overrides["v_min"] = float(args.robot_v_min)
+    if args.robot_a_max is not None:
+        robot_spec_overrides["a_max"] = float(args.robot_a_max)
+    if args.robot_w_max is not None:
+        robot_spec_overrides["w_max"] = float(args.robot_w_max)
+    if args.robot_radius is not None:
+        robot_spec_overrides["radius"] = float(args.robot_radius)
+    if args.di_qp_weight_ax is not None:
+        robot_spec_overrides["qp_weight_ax"] = float(args.di_qp_weight_ax)
+    if args.di_qp_weight_ay is not None:
+        robot_spec_overrides["qp_weight_ay"] = float(args.di_qp_weight_ay)
+    oacp_cfg = _build_oacp_overrides(args)
+    if oacp_cfg is not None:
+        robot_spec_overrides["oacp_mpc"] = oacp_cfg
+    return robot_spec_overrides or None
+
+
+def _build_oacp_overrides(args):
+    oacp_cfg = {}
+    if args.oacp_dt_plan is not None:
+        oacp_cfg["dt_plan"] = float(args.oacp_dt_plan)
+    if args.oacp_Th is not None:
+        oacp_cfg["Th"] = float(args.oacp_Th)
+    if args.oacp_N is not None:
+        oacp_cfg["N"] = int(args.oacp_N)
+    if args.oacp_n_shared is not None:
+        oacp_cfg["n_shared"] = int(args.oacp_n_shared)
+    if args.oacp_risk_explore_scale is not None:
+        oacp_cfg["risk_explore_scale"] = float(args.oacp_risk_explore_scale)
+    if args.oacp_risk_fallback_scale is not None:
+        oacp_cfg["risk_fallback_scale"] = float(args.oacp_risk_fallback_scale)
+    if args.oacp_explore_speed_scale is not None:
+        oacp_cfg["explore_speed_scale"] = float(args.oacp_explore_speed_scale)
+    if args.oacp_fallback_speed_scale is not None:
+        oacp_cfg["fallback_speed_scale"] = float(args.oacp_fallback_speed_scale)
+    if args.oacp_use_nominal_tracking_cost is not None:
+        oacp_cfg["use_nominal_tracking_cost"] = bool(args.oacp_use_nominal_tracking_cost)
+    if args.oacp_allow_solver_fallback is not None:
+        oacp_cfg["allow_solver_fallback"] = bool(args.oacp_allow_solver_fallback)
+    if args.oacp_dynamic_occluders is not None:
+        oacp_cfg["dynamic_occluders"] = bool(args.oacp_dynamic_occluders)
+    if args.oacp_visible_reach_mode is not None:
+        oacp_cfg["visible_reach_mode"] = str(args.oacp_visible_reach_mode).strip().lower()
+    return oacp_cfg or None
 
 
 def _sample_campus_spawn_x(rng, x_center):
@@ -358,14 +433,14 @@ def main():
         "--algo",
         type=str,
         default="occlusion_cbf_qp",
-        choices=["occlusion_cbf_qp", "cbf_qp", "backup_cbf_qp", "oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"],
+        choices=CROWD_ALGO_CHOICES,
         help="Position controller algorithm.",
     )
     parser.add_argument(
         "--baseline",
         type=str,
         default=None,
-        choices=["occlusion_cbf", "cbf_qp", "backup_cbf_qp", "oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"],
+        choices=CROWD_BASELINE_CHOICES,
         help="Baseline alias. If provided, overrides --algo.",
     )
     parser.add_argument("--tf", type=float, default=120.0, help="Simulation final time [s].")
@@ -472,90 +547,10 @@ def main():
     parser.add_argument("--oa-dt", type=float, default=None)
     args = parser.parse_args()
 
-    baseline_map = {
-        "occlusion_cbf": "occlusion_cbf_qp",
-        "cbf_qp": "cbf_qp",
-        "backup_cbf_qp": "backup_cbf_qp",
-        "oa_mpc": "oa_mpc",
-        "single_risk_mpc": "single_risk_mpc",
-        "control_tree_mpc": "control_tree_mpc",
-        "oacp_mpc": "oacp_mpc",
-    }
-    pos_algo = baseline_map.get(args.baseline, args.algo)
+    pos_algo = resolve_baseline_alias(args.baseline, args.algo, CROWD_BASELINE_MAP)
     controller_type = {"pos": pos_algo}
-    backup_cbf_overrides = {}
-    if args.du_min_speed_scale is not None:
-        backup_cbf_overrides["min_speed_scale_occ_du"] = float(args.du_min_speed_scale)
-    if args.du_k_turn_brake is not None:
-        backup_cbf_overrides["k_turn_brake_occ_du"] = float(args.du_k_turn_brake)
-    if args.du_k_a_p is not None:
-        backup_cbf_overrides["k_a_occ_du_p"] = float(args.du_k_a_p)
-        backup_cbf_overrides["k_a_track_occ_du_p"] = float(args.du_k_a_p)
-    if args.du_k_a_d is not None:
-        backup_cbf_overrides["k_a_occ_du_d"] = float(args.du_k_a_d)
-        backup_cbf_overrides["k_a_track_occ_du_d"] = float(args.du_k_a_d)
-    if args.du_reverse_enter_cos is not None:
-        backup_cbf_overrides["reverse_enter_cos_occ_du"] = float(args.du_reverse_enter_cos)
-    if args.du_reverse_exit_cos is not None:
-        backup_cbf_overrides["reverse_exit_cos_occ_du"] = float(args.du_reverse_exit_cos)
-    if args.du_reverse_min_scale is not None:
-        backup_cbf_overrides["reverse_min_scale_occ_du"] = float(args.du_reverse_min_scale)
-    if args.uni_reverse_bias is not None:
-        backup_cbf_overrides["reverse_bias_occ_uni"] = float(args.uni_reverse_bias)
-    if args.uni_reverse_gate_angle is not None:
-        backup_cbf_overrides["reverse_speed_gate_angle_occ_uni"] = float(args.uni_reverse_gate_angle)
-    if args.uni_reverse_gate_power is not None:
-        backup_cbf_overrides["reverse_speed_gate_power_occ_uni"] = float(args.uni_reverse_gate_power)
-    if args.uni_v_min_cmd_rev is not None:
-        backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
-    if args.occ_dt_backup is not None:
-        backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
-    if args.vref is not None:
-        backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
-
-    robot_spec_overrides = {}
-    if args.robot_v_max is not None:
-        robot_spec_overrides["v_max"] = float(args.robot_v_max)
-    if args.robot_v_min is not None:
-        robot_spec_overrides["v_min"] = float(args.robot_v_min)
-    if args.robot_a_max is not None:
-        robot_spec_overrides["a_max"] = float(args.robot_a_max)
-    if args.robot_w_max is not None:
-        robot_spec_overrides["w_max"] = float(args.robot_w_max)
-    if args.robot_radius is not None:
-        robot_spec_overrides["radius"] = float(args.robot_radius)
-    if args.di_qp_weight_ax is not None:
-        robot_spec_overrides["qp_weight_ax"] = float(args.di_qp_weight_ax)
-    if args.di_qp_weight_ay is not None:
-        robot_spec_overrides["qp_weight_ay"] = float(args.di_qp_weight_ay)
-
-    oacp_cfg = {}
-    if args.oacp_dt_plan is not None:
-        oacp_cfg["dt_plan"] = float(args.oacp_dt_plan)
-    if args.oacp_Th is not None:
-        oacp_cfg["Th"] = float(args.oacp_Th)
-    if args.oacp_N is not None:
-        oacp_cfg["N"] = int(args.oacp_N)
-    if args.oacp_n_shared is not None:
-        oacp_cfg["n_shared"] = int(args.oacp_n_shared)
-    if args.oacp_risk_explore_scale is not None:
-        oacp_cfg["risk_explore_scale"] = float(args.oacp_risk_explore_scale)
-    if args.oacp_risk_fallback_scale is not None:
-        oacp_cfg["risk_fallback_scale"] = float(args.oacp_risk_fallback_scale)
-    if args.oacp_explore_speed_scale is not None:
-        oacp_cfg["explore_speed_scale"] = float(args.oacp_explore_speed_scale)
-    if args.oacp_fallback_speed_scale is not None:
-        oacp_cfg["fallback_speed_scale"] = float(args.oacp_fallback_speed_scale)
-    if args.oacp_use_nominal_tracking_cost is not None:
-        oacp_cfg["use_nominal_tracking_cost"] = bool(args.oacp_use_nominal_tracking_cost)
-    if args.oacp_allow_solver_fallback is not None:
-        oacp_cfg["allow_solver_fallback"] = bool(args.oacp_allow_solver_fallback)
-    if args.oacp_dynamic_occluders is not None:
-        oacp_cfg["dynamic_occluders"] = bool(args.oacp_dynamic_occluders)
-    if args.oacp_visible_reach_mode is not None:
-        oacp_cfg["visible_reach_mode"] = str(args.oacp_visible_reach_mode).strip().lower()
-    if oacp_cfg:
-        robot_spec_overrides["oacp_mpc"] = oacp_cfg
+    backup_cbf_overrides = _build_backup_cbf_overrides(args)
+    robot_spec_overrides = _build_robot_spec_overrides(args)
 
     run_campus_scenario(
         controller_type=controller_type,
@@ -585,8 +580,8 @@ def main():
         oa_use_nominal_tracking_cost=args.oa_use_nominal_tracking_cost,
         oa_wmax=args.wmax,
         oa_dt=args.oa_dt,
-        backup_cbf_overrides=(backup_cbf_overrides or None),
-        robot_spec_overrides=(robot_spec_overrides or None),
+        backup_cbf_overrides=backup_cbf_overrides,
+        robot_spec_overrides=robot_spec_overrides,
     )
 
 

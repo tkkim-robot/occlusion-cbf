@@ -29,16 +29,8 @@ from typing import Any
 
 import numpy as np
 
-
-BASELINE_MAP = {
-    "occlusion_cbf": "occlusion_cbf_qp",
-    "cbf_qp": "cbf_qp",
-    "backup_cbf_qp": "backup_cbf_qp",
-    "oa_mpc": "oa_mpc",
-    "single_risk_mpc": "single_risk_mpc",
-    "control_tree_mpc": "control_tree_mpc",
-    "oacp_mpc": "oacp_mpc",
-}
+from examples._baseline_defs import CROWD_BASELINE_MAP
+BASELINE_MAP = dict(CROWD_BASELINE_MAP)
 
 SUITE_NON_OCC_5 = [
     {"label": "oa_mpc_wmax_default", "baseline": "oa_mpc", "wmax": "default"},

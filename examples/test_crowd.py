@@ -7,68 +7,22 @@ Run:
 
 import argparse
 from collections import deque
-import importlib
-import importlib.util
-import sys
-from pathlib import Path
 
 import numpy as np
 
+from _baseline_defs import (
+    CROWD_ALGO_CHOICES,
+    CROWD_BASELINE_CHOICES,
+    CROWD_BASELINE_MAP,
+    CROWD_PLANNER_LABELS,
+    resolve_baseline_alias,
+)
+from _runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
+
+ensure_repo_root()
+install_position_controller_shims()
+LocalTrackingControllerDyn_OCC = load_local_occ_controller("crowd")
 from safe_control.utils import env, plotting
-
-# Ensure this repository root is imported first.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT_STR = str(REPO_ROOT)
-if REPO_ROOT_STR in sys.path:
-    sys.path.remove(REPO_ROOT_STR)
-sys.path.insert(0, REPO_ROOT_STR)
-
-
-def _install_position_controller_shims():
-    """
-    Allow LocalTrackingControllerDyn to resolve controller modules from this
-    repo layout where `position_control/` may not include all baseline files.
-    """
-    shim_map = {
-        "position_control.cbf_qp": "safe_control.position_control.cbf_qp",
-        "position_control.backup_cbf_qp": "safe_control.position_control.backup_cbf_qp",
-    }
-    for dst_name, src_name in shim_map.items():
-        if dst_name in sys.modules:
-            continue
-        try:
-            sys.modules[dst_name] = importlib.import_module(src_name)
-        except Exception:
-            pass
-
-
-_install_position_controller_shims()
-
-
-def _load_local_occ_controller():
-    """
-    Load LocalTrackingControllerDyn_OCC from this repo's dynamic_env/main.py.
-    Fallback to direct file import when namespace collisions exist.
-    """
-    try:
-        mod = importlib.import_module("dynamic_env.main")
-        cls = getattr(mod, "LocalTrackingControllerDyn_OCC", None)
-        mod_file = Path(getattr(mod, "__file__", "")).resolve()
-        if cls is not None and str(mod_file).startswith(REPO_ROOT_STR):
-            return cls
-    except Exception:
-        pass
-
-    local_main = REPO_ROOT / "dynamic_env" / "main.py"
-    spec = importlib.util.spec_from_file_location("dynamic_env_main_local_crowd", local_main)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load local dynamic_env.main at {local_main}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return getattr(module, "LocalTrackingControllerDyn_OCC")
-
-
-LocalTrackingControllerDyn_OCC = _load_local_occ_controller()
 
 
 def _str2bool(value):
@@ -207,14 +161,6 @@ def _apply_crowd_dynamic_obstacle_defaults(robot_spec):
     dyn_cfg.setdefault("ped_aware_away_weight", 0.15)
     dyn_cfg.setdefault("ped_aware_noise_std", 0.03)
     dyn_cfg.setdefault("ped_aware_side_flip_prob", 0.02)
-
-    # dyn_cfg.setdefault("ped_aware_radius", 1.5)
-    # dyn_cfg.setdefault("ped_aware_approach_cos", 0.05)
-    # dyn_cfg.setdefault("ped_aware_turn_gain", 0.5)
-    # dyn_cfg.setdefault("ped_aware_side_weight", 0.85)
-    # dyn_cfg.setdefault("ped_aware_away_weight", 0.25)
-    # dyn_cfg.setdefault("ped_aware_noise_std", 0.06)
-    # dyn_cfg.setdefault("ped_aware_side_flip_prob", 0.03)
 
     # Occlusion-emergence: increase natural "hidden then appear" events.
     dyn_cfg.setdefault("occlusion_emergence_enable", True)
@@ -1222,15 +1168,8 @@ def run_crowd_scenario(
     elif pos_name == "oacp_mpc":
         _apply_oacp_defaults(robot_spec)
 
-    planner_label_map = {
-        "occlusion_cbf_qp": "OCBF-QP",
-        "cbf_qp": "CBF-QP",
-        "backup_cbf_qp": "Backup-CBF-QP",
-        "oa_mpc": f"OA-MPC (wmax={str(oa_wmax).strip().lower()})",
-        "single_risk_mpc": "Single-Risk MPC",
-        "control_tree_mpc": "Control-Tree MPC",
-        "oacp_mpc": "OACP-MPC",
-    }
+    planner_label_map = dict(CROWD_PLANNER_LABELS)
+    planner_label_map["oa_mpc"] = f"OA-MPC (wmax={str(oa_wmax).strip().lower()})"
     planner_label = planner_label_map.get(pos_name, str(controller_type.get("pos", "")).strip())
     model_label_map = {
         "DoubleIntegrator2D": "DI",
@@ -1579,30 +1518,14 @@ def main():
         "--algo",
         type=str,
         default="occlusion_cbf_qp",
-        choices=[
-            "occlusion_cbf_qp",
-            "cbf_qp",
-            "backup_cbf_qp",
-            "oa_mpc",
-            "single_risk_mpc",
-            "control_tree_mpc",
-            "oacp_mpc",
-        ],
+        choices=CROWD_ALGO_CHOICES,
         help="Position controller algorithm.",
     )
     parser.add_argument(
         "--baseline",
         type=str,
         default=None,
-        choices=[
-            "occlusion_cbf",
-            "cbf_qp",
-            "backup_cbf_qp",
-            "oa_mpc",
-            "single_risk_mpc",
-            "control_tree_mpc",
-            "oacp_mpc",
-        ],
+        choices=CROWD_BASELINE_CHOICES,
         help="Baseline alias. If provided, overrides --algo.",
     )
     parser.add_argument("--tf", type=float, default=100.0, help="Simulation final time [s].")
@@ -1856,16 +1779,7 @@ def main():
     )
     args = parser.parse_args()
 
-    baseline_map = {
-        "occlusion_cbf": "occlusion_cbf_qp",
-        "cbf_qp": "cbf_qp",
-        "backup_cbf_qp": "backup_cbf_qp",
-        "oa_mpc": "oa_mpc",
-        "single_risk_mpc": "single_risk_mpc",
-        "control_tree_mpc": "control_tree_mpc",
-        "oacp_mpc": "oacp_mpc",
-    }
-    pos_algo = baseline_map.get(args.baseline, args.algo)
+    pos_algo = resolve_baseline_alias(args.baseline, args.algo, CROWD_BASELINE_MAP)
     controller_type = {"pos": pos_algo}
     backup_cbf_overrides = {}
     if args.uni_reverse_bias is not None:

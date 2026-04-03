@@ -6,10 +6,7 @@ the scenario self-contained in this file.
 """
 
 import argparse
-import importlib
-import importlib.util
 import types
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -17,65 +14,13 @@ import matplotlib.patheffects as path_effects
 import matplotlib.patches as patches
 import numpy as np
 
-# Ensure this repository root is imported first when running
-# `python examples/test_crosswalk.py ...`
-REPO_ROOT = Path(__file__).resolve().parents[1]
-repo_root_str = str(REPO_ROOT)
-if repo_root_str in sys.path:
-    sys.path.remove(repo_root_str)
-sys.path.insert(0, repo_root_str)
+from _baseline_defs import CROSSWALK_BASELINE_CHOICES, CROSSWALK_BASELINE_MAP, resolve_baseline_alias
+from _runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
 
-
-def _install_position_controller_shims():
-    """
-    Allow LocalTrackingControllerDyn_OCC to resolve controller modules from this
-    repo layout where `position_control/` may not include all baseline files.
-    """
-    shim_map = {
-        "position_control.cbf_qp": "safe_control.position_control.cbf_qp",
-        "position_control.backup_cbf_qp": "safe_control.position_control.backup_cbf_qp",
-    }
-    for dst_name, src_name in shim_map.items():
-        if dst_name in sys.modules:
-            continue
-        try:
-            sys.modules[dst_name] = importlib.import_module(src_name)
-        except Exception:
-            pass
-
-
-_install_position_controller_shims()
-
-
-def _load_local_occ_controller():
-    """
-    Load LocalTrackingControllerDyn_OCC from this repo's dynamic_env/main.py.
-    Falls back to direct file import when namespace collisions exist.
-    """
-    try:
-        mod = importlib.import_module("dynamic_env.main")
-        cls = getattr(mod, "LocalTrackingControllerDyn_OCC", None)
-        mod_file = Path(getattr(mod, "__file__", "")).resolve()
-        if cls is not None and str(mod_file).startswith(repo_root_str):
-            return cls
-    except Exception:
-        pass
-
-    local_main = REPO_ROOT / "dynamic_env" / "main.py"
-    spec = importlib.util.spec_from_file_location("dynamic_env_main_local_crosswalk", local_main)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load local dynamic_env.main at {local_main}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return getattr(module, "LocalTrackingControllerDyn_OCC")
-
-
-LocalTrackingControllerDyn_OCC = _load_local_occ_controller()
+REPO_ROOT = ensure_repo_root()
+install_position_controller_shims()
+LocalTrackingControllerDyn_OCC = load_local_occ_controller("crosswalk")
 from safe_control.utils import env, plotting
-
-# =============================================================================
-# Bus Types
-# =============================================================================
 
 BUS_TYPES = [0, 1]  # 0: bus occlusion off, 1: bus occlusion on
 
@@ -97,8 +42,6 @@ def _crosswalk_plot_title(controller_type):
         return "Occlusion-Aware CBF"
     if pos_name == "cbf_qp":
         return "CBF-QP (Occlusion-agnostic)"
-    if pos_name == "backup_cbf_qp":
-        return "Backup CBF-QP"
     if pos_name == "oa_mpc":
         return "OA-MPC"
     if not pos_name:
@@ -1097,7 +1040,7 @@ def main():
         "--baseline",
         type=str,
         default=None,
-        choices=["occlusion_cbf", "cbf_qp", "backup_cbf_qp", "oa_mpc"],
+        choices=CROSSWALK_BASELINE_CHOICES,
         help="Baseline alias. If provided, overrides --controller.",
     )
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
@@ -1221,13 +1164,7 @@ def main():
     if model_key not in {"di", "doubleintegrator2d", "uni", "unicycle2d", "du", "dynamicunicycle2d"}:
         raise ValueError(f"Unsupported model `{args.model}`. Use one of di/uni/du.")
 
-    baseline_map = {
-        "occlusion_cbf": "occlusion_cbf_qp",
-        "cbf_qp": "cbf_qp",
-        "backup_cbf_qp": "backup_cbf_qp",
-        "oa_mpc": "oa_mpc",
-    }
-    pos_algo = baseline_map.get(args.baseline, args.controller)
+    pos_algo = resolve_baseline_alias(args.baseline, args.controller, CROSSWALK_BASELINE_MAP)
     controller_type = {"pos": pos_algo}
     crosswalk_scenario_v3(
         controller_type=controller_type,

@@ -18,6 +18,8 @@ import sys
 
 import numpy as np
 
+from _baseline_defs import CROWD_ALGO_CHOICES, CROWD_BASELINE_CHOICES, CROWD_BASELINE_MAP, resolve_baseline_alias
+
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
@@ -855,14 +857,14 @@ def main():
         "--algo",
         type=str,
         default="occlusion_cbf_qp",
-        choices=["occlusion_cbf_qp", "cbf_qp", "backup_cbf_qp", "oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"],
+        choices=CROWD_ALGO_CHOICES,
         help="Position controller algorithm.",
     )
     parser.add_argument(
         "--baseline",
         type=str,
         default=None,
-        choices=["occlusion_cbf", "cbf_qp", "backup_cbf_qp", "oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"],
+        choices=CROWD_BASELINE_CHOICES,
         help="Baseline alias. If provided, overrides --algo.",
     )
     parser.add_argument("--tf", type=float, default=200.0, help="Simulation final time [s].")
@@ -934,16 +936,7 @@ def main():
     parser.add_argument("--save_ani", "--save-ani", "--save-anim", "--save-animation", dest="save_anim", type=crowd1._str2bool, nargs="?", const=True, default=False)
     args = parser.parse_args()
 
-    baseline_map = {
-        "occlusion_cbf": "occlusion_cbf_qp",
-        "cbf_qp": "cbf_qp",
-        "backup_cbf_qp": "backup_cbf_qp",
-        "oa_mpc": "oa_mpc",
-        "single_risk_mpc": "single_risk_mpc",
-        "control_tree_mpc": "control_tree_mpc",
-        "oacp_mpc": "oacp_mpc",
-    }
-    pos_algo = baseline_map.get(args.baseline, args.algo)
+    pos_algo = resolve_baseline_alias(args.baseline, args.algo, CROWD_BASELINE_MAP)
     controller_type = {"pos": pos_algo}
     backup_cbf_overrides = {}
     if args.uni_reverse_bias is not None:
