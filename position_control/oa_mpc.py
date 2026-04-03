@@ -91,6 +91,25 @@ class OAMPC:
         self.complementarity_for_circles = bool(
             cfg.get("complementarity_for_circles", self.use_complementarity and self.paper_mode)
         )
+        # Paper recursive-feasibility argument relies on a terminal stopping
+        # contingency. In practice, encoding bilinear complementarity at every
+        # step is solver-fragile in this benchmark. Instead, keep hard
+        # collision-avoidance rows over the horizon and realize the terminal
+        # complementarity only at the final prediction step by dropping the
+        # corresponding hard row there. Since X[:,N] == X[:,N-1] is enforced,
+        # this captures the intended "stopped => safe contingency" logic
+        # without introducing another nonconvex product term.
+        default_terminal_comp = self.paper_mode and (not self.dynamic_occluders)
+        self.use_terminal_complementarity = bool(
+            cfg.get("use_terminal_complementarity", default_terminal_comp)
+        )
+        self.terminal_complementarity_for_occlusion = bool(
+            cfg.get("terminal_complementarity_for_occlusion", self.use_terminal_complementarity)
+        )
+        self.terminal_complementarity_for_circles = bool(
+            cfg.get("terminal_complementarity_for_circles", False)
+        )
+        self.terminal_relax_weight = float(cfg.get("terminal_relax_weight", 250.0))
         # Paper Algorithm 2 performs one projection solve + one NMPC solve
         # per control cycle (no inner fixed-point repeats by default).
         default_alt_iters = 1 if self.paper_mode else 1
@@ -692,6 +711,7 @@ class OAMPC:
 
         visible_dyn_obs = []
         occluder_obs = []
+        static_occluder_obs = []
         for obs in arr:
             obs = np.asarray(obs, dtype=float).reshape(-1)
             obs_type = int(obs[7]) if obs.size >= 8 else 0
@@ -705,15 +725,30 @@ class OAMPC:
             static_like = (not np.isfinite(vmag)) or (vmag <= self.occluder_speed_max)
             if type_ok and (self.dynamic_occluders or static_like):
                 occluder_obs.append(obs)
+            if type_ok and static_like:
+                static_occluder_obs.append(obs)
 
         occ_scenarios = []
         static_pc_circles = []
         if self.use_lidar_jump_occ or self.use_static_pointcloud_constraints:
-            scan = self._simulate_lidar_scan(robot_state, occluder_obs)
+            scan_for_occ = self._simulate_lidar_scan(robot_state, occluder_obs)
             if self.use_static_pointcloud_constraints:
-                static_pc_circles = self._build_static_pointcloud_circles(scan)
+                # Paper point-cloud circles approximate the visible portion of
+                # static obstacles. When moving agents are also allowed to act
+                # as occluders, reusing the same scan for static circles
+                # double-counts them as:
+                #   1) visible dynamic reachable set
+                #   2) static LiDAR circle
+                #   3) occlusion boundary source
+                # This is overly conservative and is the main source of the
+                # spurious early infeasibility seen in dense crowd2 cases.
+                # Keep static-circle constraints only for genuinely static-like
+                # occluders; dynamic occluders still generate occlusion
+                # boundaries via `scan_for_occ`.
+                scan_for_static = self._simulate_lidar_scan(robot_state, static_occluder_obs)
+                static_pc_circles = self._build_static_pointcloud_circles(scan_for_static)
             if self.use_lidar_jump_occ:
-                occ_scenarios = self._build_occ_scenarios_from_lidar_jumps(scan)
+                occ_scenarios = self._build_occ_scenarios_from_lidar_jumps(scan_for_occ)
         else:
             # Legacy fallback path (occlusion utils geometry).
             rs = np.asarray(robot_state, dtype=float).reshape(-1, 1)
@@ -777,7 +812,6 @@ class OAMPC:
                 J += self.w_du * ca.sumsqr(U[:, k] - U[:, k - 1])
 
         J += self.w_terminal * ca.sumsqr(X[0:2, N] - xgoal_dm[0:2])
-        opti.minimize(J)
 
         # Dynamics and bounds.
         opti.subject_to(X[:, 0] == x0_dm)
@@ -798,9 +832,30 @@ class OAMPC:
                 opti.subject_to(opti.bounded(v_min, X[3, k], v_max))
 
         # Terminal stopping constraint for recursive-feasibility condition.
-        opti.subject_to(X[:, N] == X[:, N - 1])
+        #
+        # Writing this as X[:,N] == X[:,N-1] is algebraically valid, but for
+        # UNI/DU it introduces redundant stop equalities through the dynamics
+        # (e.g. x_N-x_{N-1}=dt*v*cos(theta), y_N-y_{N-1}=dt*v*sin(theta)),
+        # which become rank-deficient at v=0 and can trigger IPOPT
+        # Restoration_Failed even when a feasible warm start exists.
+        #
+        # Use exact, model-specific stop conditions instead:
+        # - UNI: terminal input is zero -> x,y,theta do not change
+        # - DU: terminal speed is zero and terminal input is zero
+        # - DI: terminal velocity is zero and terminal acceleration is zero
+        if self.model == "Unicycle2D":
+            opti.subject_to(U[:, N - 1] == 0.0)
+        elif self.model == "DynamicUnicycle2D":
+            opti.subject_to(X[3, N - 1] == 0.0)
+            opti.subject_to(U[:, N - 1] == 0.0)
+        else:
+            opti.subject_to(X[2, N - 1] == 0.0)
+            opti.subject_to(X[3, N - 1] == 0.0)
+            opti.subject_to(U[:, N - 1] == 0.0)
 
         collision_constraints = 0
+        terminal_relaxed_constraints = 0
+        terminal_relax_cost = 0
         for k in range(1, N + 1):
             move_dx = X[0, k] - X[0, k - 1]
             move_dy = X[1, k] - X[1, k - 1]
@@ -814,6 +869,7 @@ class OAMPC:
             g_terms = []
             for cst in proj_targets[k]:
                 kind = str(cst.get("kind", "proj")).strip().lower()
+                is_terminal_step = (k == N)
                 if kind == "circle":
                     cxy = np.asarray(cst.get("center", np.zeros(2)), dtype=float).reshape(2,)
                     min_dist = float(cst.get("min_dist", 0.0))
@@ -829,6 +885,16 @@ class OAMPC:
                         # sign(min_dist - dist) == sign(min_dist^2 - dist^2)
                         # for nonnegative distances.
                         g_terms.append(min_dist_sq - dist_sq)
+                    elif (
+                        is_terminal_step
+                        and self.use_terminal_complementarity
+                        and self.terminal_complementarity_for_circles
+                    ):
+                        slack = opti.variable()
+                        opti.subject_to(slack >= 0.0)
+                        opti.subject_to(slack >= (min_dist_sq - dist_sq))
+                        terminal_relax_cost += self.terminal_relax_weight * slack * slack
+                        terminal_relaxed_constraints += 1
                     else:
                         # Optional hard static/visible distance constraint.
                         opti.subject_to(dist_sq >= min_dist_sq)
@@ -847,6 +913,16 @@ class OAMPC:
                     # Use squared-distance form for numerical robustness.
                     g_violation = clear_sq - dist_sq
                     g_terms.append(g_violation)
+                elif (
+                    is_terminal_step
+                    and self.use_terminal_complementarity
+                    and self.terminal_complementarity_for_occlusion
+                ):
+                    slack = opti.variable()
+                    opti.subject_to(slack >= 0.0)
+                    opti.subject_to(slack >= (clear_sq - dist_sq))
+                    terminal_relax_cost += self.terminal_relax_weight * slack * slack
+                    terminal_relaxed_constraints += 1
                 else:
                     opti.subject_to(dist_sq >= clear_sq)
                 collision_constraints += 1
@@ -867,6 +943,8 @@ class OAMPC:
                     for gk in g_terms:
                         opti.subject_to(g_pos >= gk)
                     opti.subject_to(move_sq * g_pos <= 0.0)
+
+        opti.minimize(J + terminal_relax_cost)
 
         # Warm start.
         opti.set_initial(X, np.asarray(x_init, dtype=float))
@@ -894,10 +972,10 @@ class OAMPC:
             solve_ms = (time.perf_counter() - t0) * 1000.0
             x_sol = np.array(sol.value(X), dtype=float)
             u_sol = np.array(sol.value(U), dtype=float)
-            return True, x_sol, u_sol, "optimal", "", solve_ms, collision_constraints
+            return True, x_sol, u_sol, "optimal", "", solve_ms, collision_constraints, terminal_relaxed_constraints
         except Exception as exc:
             solve_ms = (time.perf_counter() - t0) * 1000.0
-            return False, None, None, "infeasible", str(exc), solve_ms, collision_constraints
+            return False, None, None, "infeasible", str(exc), solve_ms, collision_constraints, terminal_relaxed_constraints
 
     def solve_control_problem(self, robot_state, control_ref, obs_list):
         t_all0 = time.perf_counter()
@@ -923,6 +1001,7 @@ class OAMPC:
         best_proj_targets = None
         total_solve_ms = 0.0
         max_n_coll = 0
+        max_n_terminal_relaxed = 0
         qp_status = "infeasible"
         qp_exc = ""
         alt_iter_count = 0
@@ -936,7 +1015,16 @@ class OAMPC:
                 occ_scenarios,
                 static_pc_circles,
             )
-            ok_i, x_sol_i, u_sol_i, status_i, exc_i, solve_ms_i, n_coll_i = self._solve_nmpc(
+            (
+                ok_i,
+                x_sol_i,
+                u_sol_i,
+                status_i,
+                exc_i,
+                solve_ms_i,
+                n_coll_i,
+                n_term_relaxed_i,
+            ) = self._solve_nmpc(
                 x0=x0,
                 u_ref=u_ref,
                 x_goal=x_goal,
@@ -946,6 +1034,7 @@ class OAMPC:
             )
             total_solve_ms += float(solve_ms_i)
             max_n_coll = max(max_n_coll, int(n_coll_i))
+            max_n_terminal_relaxed = max(max_n_terminal_relaxed, int(n_term_relaxed_i))
             qp_status = status_i
             qp_exc = exc_i
 
@@ -1016,6 +1105,8 @@ class OAMPC:
             "num_visible_obs": int(len(visible_obs)),
             "num_occ_scenarios": int(len(occ_scenarios)),
             "num_static_pc_circles": int(len(static_pc_circles)),
+            "num_terminal_relaxed_constraints": int(max_n_terminal_relaxed),
+            "use_terminal_complementarity": bool(self.use_terminal_complementarity),
             "alternation_iters_run": int(alt_iter_count),
             "alternation_iters_cfg": int(self.alternation_iters),
         }

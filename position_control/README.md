@@ -257,6 +257,30 @@ uv run python examples/test_crowd.py --model uni --baseline single_risk_mpc --id
 uv run python examples/test_crowd.py --model uni --baseline control_tree_mpc --idx 1 --n-rand 30
 ```
 
+### 5.6 Batch Trials Helper (idx sweep)
+
+Run a single baseline over an idx range (default 1..100) with plotting disabled, and print:
+- success / collision / infeasible idx lists
+- average solve time over idx
+- average control intervention over idx
+
+```bash
+uv run python tools/benchmark_crowd_trials.py --baseline occlusion_cbf --model uni --seed 42 --idx-start 1 --idx-end 100 --n-rand 50 --tf 100
+```
+
+OA-MPC variants can be swept with:
+
+```bash
+uv run python tools/benchmark_crowd_trials.py --baseline oa_mpc --wmax default --model uni --seed 42 --idx-start 1 --idx-end 100 --n-rand 50 --tf 100
+uv run python tools/benchmark_crowd_trials.py --baseline oa_mpc --wmax pi --model uni --seed 42 --idx-start 1 --idx-end 100 --n-rand 50 --tf 100
+```
+
+Run the 5 non-occlusion baselines sequentially in one command:
+
+```bash
+uv run python tools/benchmark_crowd_trials.py --baseline-suite non_occlusion_5 --model uni --seed 42 --idx-start 1 --idx-end 100 --n-rand 50 --tf 100
+```
+
 
 ## 6. Recommended First Commands (for collaborators)
 

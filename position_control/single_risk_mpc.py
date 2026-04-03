@@ -19,7 +19,7 @@ class SingleRiskMPC(MPCCommonUtils):
     Single-hypothesis worst-case risk-region MPC baseline.
 
     This controller intentionally keeps one baseline behavior only:
-    - Unicycle2D model
+    - DoubleIntegrator2D / Unicycle2D / DynamicUnicycle2D model
     - hidden speed bound fixed to 0.5
     - single NMPC (no multi-branch / no consensus)
     """
@@ -30,10 +30,11 @@ class SingleRiskMPC(MPCCommonUtils):
         self.num_obs = int(num_obs)
 
         self.model = str(robot_spec.get("model", "")).strip()
-        if self.model != "Unicycle2D":
+        if self.model not in {"DoubleIntegrator2D", "Unicycle2D", "DynamicUnicycle2D"}:
             raise ValueError(
-                f"SingleRiskMPC currently supports Unicycle2D only, got `{self.model}`"
+                f"SingleRiskMPC currently supports DoubleIntegrator2D, Unicycle2D and DynamicUnicycle2D, got `{self.model}`"
             )
+        self._n_state, self._u_dim = self._dims()
 
         self.dt = float(getattr(robot, "dt", robot_spec.get("dt", 0.05)))
         self.robot_radius = float(robot_spec.get("radius", 0.25))
@@ -155,11 +156,11 @@ class SingleRiskMPC(MPCCommonUtils):
 
     def _shift_or_init_plan(self, x0, u_ref):
         N = self.N
-        x0 = np.asarray(x0, dtype=float).reshape(3)
+        x0 = np.asarray(x0, dtype=float).reshape(self._n_state)
         u_ref = self._clip_input(u_ref).reshape(2)
 
         if self._x_prev_plan is None or self._u_prev_plan is None:
-            X = np.zeros((3, N + 1), dtype=float)
+            X = np.zeros((self._n_state, N + 1), dtype=float)
             U = np.tile(u_ref.reshape(2, 1), (1, N))
             X[:, 0] = x0
             for k in range(N):
@@ -168,7 +169,7 @@ class SingleRiskMPC(MPCCommonUtils):
 
         Xp = np.asarray(self._x_prev_plan, dtype=float)
         Up = np.asarray(self._u_prev_plan, dtype=float)
-        X = np.zeros((3, N + 1), dtype=float)
+        X = np.zeros((self._n_state, N + 1), dtype=float)
         U = np.zeros((2, N), dtype=float)
         X[:, :-1] = Xp[:, 1:]
         X[:, -1] = Xp[:, -1]
@@ -364,16 +365,12 @@ class SingleRiskMPC(MPCCommonUtils):
 
     def _nominal_rollout_positions(self, x0, guidance_xy, v_ref_nom):
         lb_u, ub_u = self._input_bounds()
-        x = np.asarray(x0, dtype=float).reshape(3,)
+        x = np.asarray(x0, dtype=float).reshape(self._n_state,)
         points = np.zeros((self.N + 1, 2), dtype=float)
         points[0] = x[:2]
-        v_cmd = float(np.clip(v_ref_nom, lb_u[0], ub_u[0]))
         for k in range(self.N):
-            to_g = np.asarray(guidance_xy, dtype=float).reshape(2,) - x[:2]
-            hdg_des = float(np.arctan2(to_g[1], to_g[0]))
-            err = self._angle_wrap(hdg_des - x[2])
-            w_cmd = np.clip(self.nominal_k_heading * err, lb_u[1], ub_u[1])
-            x = self._discrete_np(x, np.array([v_cmd, w_cmd], dtype=float))
+            u_cmd = self._guidance_input_np(x, guidance_xy, v_ref_nom, k_heading=self.nominal_k_heading)
+            x = self._discrete_np(x, u_cmd)
             points[k + 1] = x[:2]
         return points
 
@@ -441,7 +438,7 @@ class SingleRiskMPC(MPCCommonUtils):
         up = np.asarray(self._u_prev_applied, dtype=float).reshape(2,)
         J = 0.0
         for k in range(self.N):
-            vk = float(U[0, k])
+            vk = self._stage_speed_np(X, U, k)
             wk = float(U[1, k])
             if k == 0:
                 dv = vk - up[0]
@@ -500,15 +497,15 @@ class SingleRiskMPC(MPCCommonUtils):
             R = int(self.max_risk_regions_total)
             lb_u, ub_u = self._input_bounds()
 
-            X = ca.SX.sym("X", 3, N + 1)
+            X = ca.SX.sym("X", self._n_state, N + 1)
             U = ca.SX.sym("U", 2, N)
             Z = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
 
-            p_dim = 3 + 2 + 2 * N + 1 + 1 + 2 + 6 * M + 4 * R
+            p_dim = self._n_state + 2 + 2 * N + 1 + 1 + 2 + 6 * M + 4 * R
             P = ca.SX.sym("P", p_dim)
             idx = 0
-            p_x0 = P[idx : idx + 3]
-            idx += 3
+            p_x0 = P[idx : idx + self._n_state]
+            idx += self._n_state
             p_goal = P[idx : idx + 2]
             idx += 2
             p_track = ca.reshape(P[idx : idx + 2 * N], 2, N)
@@ -551,16 +548,16 @@ class SingleRiskMPC(MPCCommonUtils):
             ubg = []
 
             g.append(X[:, 0] - p_x0)
-            lbg.extend([0.0, 0.0, 0.0])
-            ubg.extend([0.0, 0.0, 0.0])
+            lbg.extend([0.0] * self._n_state)
+            ubg.extend([0.0] * self._n_state)
 
             J = 0
             for k in range(N):
                 xk = X[:, k]
                 uk = U[:, k]
                 g.append(X[:, k + 1] - self._discrete_ca(xk, uk))
-                lbg.extend([0.0, 0.0, 0.0])
-                ubg.extend([0.0, 0.0, 0.0])
+                lbg.extend([0.0] * self._n_state)
+                ubg.extend([0.0] * self._n_state)
 
                 if k == 0:
                     dv = uk[0] - p_up[0]
@@ -570,7 +567,7 @@ class SingleRiskMPC(MPCCommonUtils):
                     dw = uk[1] - U[1, k - 1]
 
                 J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
-                J += self.wvel * ((uk[0] - p_vref) ** 2)
+                J += self.wvel * ((self._stage_speed_ca(X, U, k) - p_vref) ** 2)
                 J += p_wtrack * ca.sumsqr(X[0:2, k] - p_track[:, k])
 
             J += self.wgoal * ca.sumsqr(X[0:2, N] - p_goal)
@@ -613,7 +610,7 @@ class SingleRiskMPC(MPCCommonUtils):
             solver = ca.nlpsol("single_risk_persistent", "ipopt", nlp, opts)
 
             z_size = int(Z.shape[0])
-            nx = 3 * (N + 1)
+            nx = self._n_state * (N + 1)
             nu = 2 * N
             lbx = np.full((z_size,), -np.inf, dtype=float)
             ubx = np.full((z_size,), np.inf, dtype=float)
@@ -653,8 +650,8 @@ class SingleRiskMPC(MPCCommonUtils):
     ):
         p = np.zeros((int(self._persistent_p_dim),), dtype=float)
         idx = 0
-        p[idx : idx + 3] = np.asarray(x0, dtype=float).reshape(3,)
-        idx += 3
+        p[idx : idx + self._n_state] = np.asarray(x0, dtype=float).reshape(self._n_state,)
+        idx += self._n_state
         p[idx : idx + 2] = np.asarray(goal_xy, dtype=float).reshape(2,)
         idx += 2
 
@@ -698,7 +695,7 @@ class SingleRiskMPC(MPCCommonUtils):
         return p, n_visible_active, n_risk_active
 
     def _pack_persistent_guess(self, x_init, u_init):
-        x0 = np.asarray(x_init, dtype=float).reshape(3, self.N + 1, order="F")
+        x0 = np.asarray(x_init, dtype=float).reshape(self._n_state, self.N + 1, order="F")
         u0 = np.asarray(u_init, dtype=float).reshape(2, self.N, order="F")
         return np.concatenate(
             [
@@ -709,7 +706,7 @@ class SingleRiskMPC(MPCCommonUtils):
 
     def _unpack_persistent_solution(self, z):
         z = np.asarray(z, dtype=float).reshape(-1)
-        x_sol = z[: int(self._persistent_nx)].reshape((3, self.N + 1), order="F")
+        x_sol = z[: int(self._persistent_nx)].reshape((self._n_state, self.N + 1), order="F")
         u_sol = z[int(self._persistent_nx) :].reshape((2, self.N), order="F")
         return x_sol, u_sol
 
@@ -806,10 +803,10 @@ class SingleRiskMPC(MPCCommonUtils):
         lb_u, ub_u = self._input_bounds()
 
         opti = ca.Opti()
-        X = opti.variable(3, N + 1)
+        X = opti.variable(self._n_state, N + 1)
         U = opti.variable(2, N)
 
-        x0_dm = ca.DM(np.asarray(x0, dtype=float).reshape(3))
+        x0_dm = ca.DM(np.asarray(x0, dtype=float).reshape(self._n_state))
         goal_dm = ca.DM(np.asarray(goal_xy, dtype=float).reshape(2))
         guide_dm = ca.DM(np.asarray(guidance_xy, dtype=float).reshape(2))
         up_dm = ca.DM(np.asarray(self._u_prev_applied, dtype=float).reshape(2))
@@ -826,7 +823,7 @@ class SingleRiskMPC(MPCCommonUtils):
                 dv = U[0, k] - U[0, k - 1]
                 dw = U[1, k] - U[1, k - 1]
             J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
-            J += self.wvel * ((U[0, k] - float(v_ref_nom)) ** 2)
+            J += self.wvel * ((self._stage_speed_ca(X, U, k) - float(v_ref_nom)) ** 2)
             gk = guide_dm if k <= int(n_split_eff) else goal_dm
             J += float(wtrack_eff) * ca.sumsqr(X[0:2, k] - gk)
         terr = X[0:2, N] - goal_dm
@@ -877,8 +874,7 @@ class SingleRiskMPC(MPCCommonUtils):
     def solve_control_problem(self, robot_state, control_ref, obs_list):
         t_all0 = time.perf_counter()
 
-        x = np.asarray(robot_state, dtype=float).reshape(-1)
-        x0 = np.array([x[0], x[1], self._normalize_angle(x[2])], dtype=float)
+        x0 = self._state_from_robot_state(robot_state)
 
         u_ref = np.asarray(control_ref.get("u_ref", np.zeros((2, 1))), dtype=float).reshape(-1, 1)
         u_ref = self._clip_input(u_ref)
@@ -886,7 +882,7 @@ class SingleRiskMPC(MPCCommonUtils):
 
         goal_xy = self._goal_xy(x0, control_ref.get("goal", None))
         v_ref_floor_eff = float(self.v_ref_default)
-        v_ref_nom = max(abs(float(u_ref[0, 0])), v_ref_floor_eff)
+        v_ref_nom = self._nominal_speed_reference(x0, u_ref, v_ref_floor_eff)
 
         visible_obs, occ_scenarios_all = self._occ_utils._filter_visible_and_build_occ(
             np.asarray(robot_state, dtype=float).reshape(-1, 1),

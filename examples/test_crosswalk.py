@@ -12,6 +12,8 @@ import types
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 import matplotlib.patches as patches
 import numpy as np
 
@@ -89,6 +91,158 @@ def _str2bool(value):
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
 
 
+def _crosswalk_plot_title(controller_type):
+    pos_name = str((controller_type or {}).get("pos", "")).strip().lower()
+    if pos_name == "occlusion_cbf_qp":
+        return "Occlusion-Aware CBF"
+    if pos_name == "cbf_qp":
+        return "CBF-QP (Occlusion-agnostic)"
+    if pos_name == "backup_cbf_qp":
+        return "Backup CBF-QP"
+    if pos_name == "oa_mpc":
+        return "OA-MPC"
+    if not pos_name:
+        return "Crosswalk Scenario"
+    return pos_name.replace("_", " ").title()
+
+
+def _default_crosswalk_svg_path(controller_type, model_key, bus_type, case_idx):
+    pos_name = str((controller_type or {}).get("pos", "")).strip().lower() or "controller"
+    model_name = str(model_key).strip().lower() or "model"
+    case_name = f"idx{int(case_idx)}" if case_idx is not None else "single"
+    out_dir = REPO_ROOT / "output" / "figures" / "crosswalk_svg"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"{pos_name}_{model_name}_bus{int(bus_type)}_{case_name}.svg"
+
+
+def _style_crosswalk_axis(ax, fig, title_text):
+    fig.set_size_inches(12.8, 8.6, forward=True)
+    fig.set_facecolor("#efe8db")
+    ax.set_facecolor("#e7dcc8")
+    fig.subplots_adjust(left=0.02, right=0.985, top=0.965, bottom=0.03)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_title("")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    header = ax.text(
+        0.03,
+        0.97,
+        title_text,
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=16,
+        fontweight="bold",
+        color="#102a43",
+        zorder=30,
+    )
+    header.set_path_effects(
+        [
+            path_effects.Stroke(linewidth=3.0, foreground="white", alpha=0.85),
+            path_effects.Normal(),
+        ]
+    )
+
+
+def _draw_crosswalk_scene(
+    ax,
+    env_width,
+    env_height,
+    bus_bounds,
+    lane_y,
+    lane_half,
+    crosswalk_x_min,
+    crosswalk_x_max,
+):
+    _, _, bus_min_y, bus_max_y = bus_bounds
+    road_y_min = bus_min_y - 0.08
+    road_y_max = 18.1
+    lane_divider_y = bus_max_y + 0.22
+    road_color = "#2f3b46"
+    shoulder_color = "#cbb79a"
+    curb_color = "#f7f1e3"
+    centerline_color = "#f4d35e"
+    crosswalk_color = "#fffaf0"
+
+    ax.add_patch(
+        patches.Rectangle(
+            (0.0, road_y_min),
+            env_width,
+            road_y_max - road_y_min,
+            facecolor=road_color,
+            edgecolor="none",
+            zorder=0.2,
+        )
+    )
+    ax.add_patch(
+        patches.Rectangle(
+            (0.0, road_y_min - 0.55),
+            env_width,
+            0.55,
+            facecolor=shoulder_color,
+            edgecolor="none",
+            zorder=0.15,
+        )
+    )
+    ax.add_patch(
+        patches.Rectangle(
+            (0.0, road_y_max),
+            env_width,
+            0.55,
+            facecolor=shoulder_color,
+            edgecolor="none",
+            zorder=0.15,
+        )
+    )
+    ax.plot([0.0, env_width], [road_y_min, road_y_min], color=curb_color, linewidth=2.0, zorder=0.35)
+    ax.plot([0.0, env_width], [road_y_max, road_y_max], color=curb_color, linewidth=2.0, zorder=0.35)
+
+    dash_x = np.arange(1.5, env_width - 1.0, 3.2)
+    for x0 in dash_x:
+        ax.plot(
+            [x0, min(x0 + 1.7, env_width - 0.5)],
+            [lane_divider_y, lane_divider_y],
+            color=centerline_color,
+            linewidth=2.0,
+            solid_capstyle="round",
+            alpha=0.95,
+            zorder=0.5,
+        )
+
+    crosswalk_center_x = 0.5 * (crosswalk_x_min + crosswalk_x_max)
+    stripe_x = crosswalk_x_min
+    stripe_w = crosswalk_x_max - crosswalk_x_min
+    stripe_h = 0.62
+    stripe_gap = 0.42
+    # Start the zebra stripes so the lower lane shows four bars and the
+    # bus body sits naturally inside the narrowed lower lane.
+    y = max(road_y_min + 0.55, bus_min_y + 0.62)
+    while y + stripe_h <= road_y_max - 0.35:
+        ax.add_patch(
+            patches.Rectangle(
+                (stripe_x, y),
+                stripe_w,
+                stripe_h,
+                facecolor=crosswalk_color,
+                edgecolor="none",
+                alpha=0.97,
+                zorder=0.75,
+            )
+        )
+        y += stripe_h + stripe_gap
+
+    return {
+        "road_y_min": road_y_min,
+        "road_y_max": road_y_max,
+        "lane_divider_y": lane_divider_y,
+    }
+
+
 def crosswalk_scenario_v3(
     controller_type=None,
     model_key="di",
@@ -99,11 +253,18 @@ def crosswalk_scenario_v3(
     seed=42,
     case_idx=None,
     save_animation=False,
+    save_frame_ext="png",
+    animation_subdir=None,
+    save_svg=False,
+    svg_path=None,
     oa_paper_mode=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
     oa_visible_reach_mode=None,
+    vref_scenario_softmax_kappa=None,
+    v_adv_max_occ=None,
+    occ_T_horizon=None,
 ):
     """
     [Scenario V3]
@@ -117,7 +278,7 @@ def crosswalk_scenario_v3(
     dt = 0.05
 
     # User config for opposite-lane cars
-    max_car_speed = 6.0
+    max_car_speed = 5.0
     lane_y = 15.5
     lane_half = 0.6
 
@@ -165,15 +326,15 @@ def crosswalk_scenario_v3(
         specs = []
         current_x = x_start
 
-        set_size = 3
-        set_gap_min, set_gap_max = 25.0, 25.1   # between sets
-        intra_gap_min, intra_gap_max = 6.0, 6.01  # within one 3-car set
+        set_size = 2
+        set_gap_min, set_gap_max = 20.0, 30.1   # between sets
+        intra_gap_min, intra_gap_max = 10.0, 10.01  # within one 3-car set
         # Randomize the very first visible set anchor so initial cars are
         # distributed differently inside the current plotting view (x in [0, 40]).
         # first_set_gap_min, first_set_gap_max = 15.0, 15.1
         first_set_gap_min, first_set_gap_max = 18.0, 18.1
         speed_drop_max = 1.2
-        min_speed = 0.6 * max_car_speed
+        min_speed = 0.8 * max_car_speed
         prev_global_speed = None
 
         while current_x > x_limit:
@@ -240,22 +401,36 @@ def crosswalk_scenario_v3(
             )
         return np.array(obs_list, dtype=float)
 
-    def run_trial(bus_type, car_specs, trial_enable_plot, trial_save_animation, return_infeasible=False):
+    def run_trial(
+        bus_type,
+        car_specs,
+        trial_enable_plot,
+        trial_save_animation,
+        trial_save_frame_ext="png",
+        trial_animation_subdir=None,
+        trial_save_svg=False,
+        trial_svg_path=None,
+        return_infeasible=False,
+    ):
         known_obs = build_known_obs(bus_type, car_specs)
 
         # 2) Robot spec
         robot_spec = {
-            "radius": 0.3,
+            "radius": 0.25,
             "sensing_range": 25.0,
             "fov_angle": 360,
             "occ_visible_scale": 0.5,
             "debug_backup_qp": False,
-            "v_adv_max_occ": max_car_speed,
+            "show_qp_stats_text": False,
+            "car_vis_length_scale": 1.18,
+            "car_vis_width_scale": 1.12,
+            "v_adv_max_occ": float(v_adv_max_occ) if v_adv_max_occ is not None else max_car_speed,
             "backup_cbf": {
-                "T_horizon": 1.0,
+                "T_horizon": float(occ_T_horizon) if occ_T_horizon is not None else 1.0,
                 "dt_backup": 0.05,
-                "alpha": 100.0,
+                "alpha": 5.0,
                 "rho_T": "stopping_distance",
+                "vref_front_mode_occ": "los",
             },
             "occlusion_types": [int(bus_type)],
             "dynamic_obs_types": [2],
@@ -267,12 +442,44 @@ def crosswalk_scenario_v3(
             # Show infeasible marker and keep previous input when QP fails.
             "mark_qp_fail_infeasible": True,
             "use_occ": True,
+            "enable_visible_hocbf_in_occ": True,
         }
+        crosswalk_base_width = 4.9
+        crosswalk_right_extra = 0.6
+        crosswalk_center_x_base = float(waypoints[0][0]) + 1.0
+        crosswalk_x_min = crosswalk_center_x_base - 0.5 * crosswalk_base_width
+        crosswalk_x_max = crosswalk_center_x_base + 0.5 * crosswalk_base_width + crosswalk_right_extra
+        corridor_buffer = float(robot_spec["radius"]) + 0.05
+        robot_spec["position_corridor"] = {
+            "enabled": True,
+            "x_min": crosswalk_x_min,
+            "x_max": crosswalk_x_max,
+            "buffer": corridor_buffer,
+            "alpha": 1.5,
+            "alpha1": 1.5,
+            "alpha2": 1.5,
+        }
+        if trial_save_animation:
+            pos_name = str((controller_type or {}).get("pos", "")).strip().lower() or "controller"
+            model_name = str(model_key).strip().lower() or "model"
+            case_name = f"idx{int(case_idx)}" if case_idx is not None else "single"
+            default_subdir = f"crosswalk_{pos_name}_{model_name}_bus{int(bus_type)}_{case_name}"
+            robot_spec["animation_frame_ext"] = str(trial_save_frame_ext).strip().lower()
+            robot_spec["animation_subdir"] = (
+                str(trial_animation_subdir).strip() if trial_animation_subdir else default_subdir
+            )
+            robot_spec["animation_export_video"] = (
+                str(robot_spec["animation_frame_ext"]).strip().lower() == "png"
+            )
+        if vref_scenario_softmax_kappa is not None:
+            robot_spec["backup_cbf"]["vref_scenario_softmax_kappa"] = float(
+                vref_scenario_softmax_kappa
+            )
         if model_key in {"di", "doubleintegrator2d"}:
             robot_spec.update(
                 {
                     "model": "DoubleIntegrator2D",
-                    "v_max": 2.0,
+                    "v_max": 1.5,
                     "a_max": 2.0,
                 }
             )
@@ -315,17 +522,28 @@ def crosswalk_scenario_v3(
         ax = None
         fig = None
         bus_indices = []
+        bus_shadow = None
         bus_patch = None
         bus_label = None
+        bus_window_patches = []
+        bus_door_patch = None
         bus_occ_patch = None
         car_indices = []
-        car_rects = []
+        car_bodies = []
+        car_cabins = []
+        car_light_bars = []
+        car_windshields = []
+        car_rear_windows = []
+        car_front_wheels = []
+        car_rear_wheels = []
         car_last_occ = None
         bus_min_x = bus_max_x = bus_min_y = bus_max_y = 0.0
 
         if trial_enable_plot:
             plot_handler = plotting.Plotting(width=env_width, height=env_height, known_obs=known_obs)
-            ax, fig = plot_handler.plot_grid("Single-Lane Crosswalk Scenario")
+            plot_title = _crosswalk_plot_title(controller_type)
+            ax, fig = plot_handler.plot_grid("")
+            _style_crosswalk_axis(ax, fig, plot_title)
 
             bus_count = len(bus_rows) * len(bus_cols)
             bus_indices = list(range(bus_count))
@@ -346,60 +564,202 @@ def crosswalk_scenario_v3(
                 bus_min_y = cy - half_w
                 bus_max_y = cy + half_w
 
-            bus_patch = patches.Rectangle(
+            _draw_crosswalk_scene(
+                ax,
+                env_width=env_width,
+                env_height=env_height,
+                bus_bounds=(bus_min_x, bus_max_x, bus_min_y, bus_max_y),
+                lane_y=lane_y,
+                lane_half=lane_half,
+                crosswalk_x_min=crosswalk_x_min,
+                crosswalk_x_max=crosswalk_x_max,
+            )
+
+            bus_w = bus_max_x - bus_min_x
+            bus_h = bus_max_y - bus_min_y
+            bus_shadow = patches.FancyBboxPatch(
+                (bus_min_x + 0.18, bus_min_y - 0.18),
+                bus_w,
+                bus_h,
+                boxstyle="round,pad=0.02,rounding_size=0.22",
+                edgecolor="none",
+                facecolor="#102a43",
+                alpha=0.16,
+                zorder=6.4,
+            )
+            ax.add_patch(bus_shadow)
+            bus_patch = patches.FancyBboxPatch(
                 (bus_min_x, bus_min_y),
-                bus_max_x - bus_min_x,
-                bus_max_y - bus_min_y,
-                edgecolor="black",
-                facecolor="blue",
+                bus_w,
+                bus_h,
+                boxstyle="round,pad=0.02,rounding_size=0.22",
+                edgecolor="#102a43",
+                linewidth=1.6,
+                facecolor="#2b6cb0",
                 fill=True,
-                zorder=6,
+                zorder=7.0,
             )
             ax.add_patch(bus_patch)
+
+            n_bus_windows = 5
+            window_margin_x = 0.36
+            window_gap = 0.18
+            window_h = 0.34 * bus_h
+            window_y = bus_min_y + 0.50 * bus_h - 0.5 * window_h
+            win_total_w = bus_w - 2.0 * window_margin_x - (n_bus_windows - 1) * window_gap
+            win_w = max(win_total_w / float(n_bus_windows), 0.18)
+            for i in range(n_bus_windows):
+                wx = bus_min_x + window_margin_x + i * (win_w + window_gap)
+                win = patches.Rectangle(
+                    (wx, window_y),
+                    win_w,
+                    window_h,
+                    edgecolor="none",
+                    facecolor="#d9e8f5",
+                    alpha=0.92,
+                    zorder=7.5,
+                )
+                ax.add_patch(win)
+                bus_window_patches.append(win)
+
+            bus_door_patch = patches.Rectangle(
+                (bus_max_x - 0.85, bus_min_y + 0.18),
+                0.42,
+                bus_h - 0.36,
+                edgecolor="#0b2033",
+                linewidth=0.8,
+                facecolor="#4c83c3",
+                alpha=0.95,
+                zorder=7.6,
+            )
+            ax.add_patch(bus_door_patch)
             bus_label = ax.text(
-                bus_min_x + 0.5 * (bus_max_x - bus_min_x),
-                bus_min_y + 0.5 * (bus_max_y - bus_min_y),
+                bus_min_x + 0.5 * bus_w,
+                bus_min_y + 0.52 * bus_h,
                 "BUS",
                 color="white",
                 ha="center",
                 va="center",
-                fontsize=8,
+                fontsize=10,
                 fontweight="bold",
-                zorder=7,
+                zorder=8,
             )
-
-            ax.plot([-200, 100], [14, 14], "k--", linewidth=1.5)
+            bus_label.set_path_effects(
+                [
+                    path_effects.Stroke(linewidth=2.5, foreground="#17406d", alpha=0.95),
+                    path_effects.Normal(),
+                ]
+            )
 
             car_indices = [
                 idx for idx, row in enumerate(known_obs) if len(row) >= 8 and int(row[7]) == 2
             ]
+            car_length_scale = float(robot_spec.get("car_vis_length_scale", 1.0))
+            car_width_scale = float(robot_spec.get("car_vis_width_scale", 1.0))
             for idx in car_indices:
                 r = float(known_obs[idx][2])
-                car_width = 2.0 * r
-                car_length = 4.0 * r
-                rect = patches.Rectangle(
+                car_width = 2.0 * r * car_width_scale
+                car_length = 4.0 * r * car_length_scale
+                body = patches.FancyBboxPatch(
                     (0.0, 0.0),
                     car_length,
                     car_width,
-                    edgecolor="black",
-                    facecolor="gray",
+                    boxstyle="round,pad=0.01,rounding_size=0.24",
+                    edgecolor="#1f2933",
+                    linewidth=1.2,
+                    facecolor="#6f7f8f",
                     fill=True,
-                    zorder=5,
+                    zorder=5.6,
                 )
-                rect.set_visible(False)
-                ax.add_patch(rect)
-                car_rects.append(rect)
-            car_last_occ = np.full(len(car_rects), -1, dtype=np.int8)
+                body.set_visible(False)
+                ax.add_patch(body)
+                cabin = patches.FancyBboxPatch(
+                    (0.0, 0.0),
+                    0.50 * car_length,
+                    0.62 * car_width,
+                    boxstyle="round,pad=0.01,rounding_size=0.18",
+                    edgecolor="none",
+                    facecolor="#8ea2b4",
+                    alpha=0.98,
+                    zorder=5.85,
+                )
+                cabin.set_visible(False)
+                ax.add_patch(cabin)
+                windshield = patches.FancyBboxPatch(
+                    (0.0, 0.0),
+                    0.18 * car_length,
+                    0.46 * car_width,
+                    boxstyle="round,pad=0.01,rounding_size=0.12",
+                    edgecolor="none",
+                    facecolor="#dfeaf5",
+                    alpha=0.96,
+                    zorder=5.95,
+                )
+                windshield.set_visible(False)
+                ax.add_patch(windshield)
+                rear_window = patches.FancyBboxPatch(
+                    (0.0, 0.0),
+                    0.14 * car_length,
+                    0.40 * car_width,
+                    boxstyle="round,pad=0.01,rounding_size=0.10",
+                    edgecolor="none",
+                    facecolor="#cad9e8",
+                    alpha=0.92,
+                    zorder=5.92,
+                )
+                rear_window.set_visible(False)
+                ax.add_patch(rear_window)
+                light_bar = patches.Rectangle(
+                    (0.0, 0.0),
+                    0.12 * car_length,
+                    0.14 * car_width,
+                    edgecolor="none",
+                    facecolor="#ffe8a3",
+                    alpha=0.9,
+                    zorder=6.0,
+                )
+                light_bar.set_visible(False)
+                ax.add_patch(light_bar)
+                front_wheel = patches.Ellipse(
+                    (0.0, 0.0),
+                    0.16 * car_length,
+                    0.22 * car_width,
+                    edgecolor="none",
+                    facecolor="#1f2933",
+                    alpha=0.98,
+                    zorder=5.55,
+                )
+                front_wheel.set_visible(False)
+                ax.add_patch(front_wheel)
+                rear_wheel = patches.Ellipse(
+                    (0.0, 0.0),
+                    0.16 * car_length,
+                    0.22 * car_width,
+                    edgecolor="none",
+                    facecolor="#1f2933",
+                    alpha=0.98,
+                    zorder=5.55,
+                )
+                rear_wheel.set_visible(False)
+                ax.add_patch(rear_wheel)
+                car_bodies.append(body)
+                car_cabins.append(cabin)
+                car_light_bars.append(light_bar)
+                car_windshields.append(windshield)
+                car_rear_windows.append(rear_window)
+                car_front_wheels.append(front_wheel)
+                car_rear_wheels.append(rear_wheel)
+            car_last_occ = np.full(len(car_bodies), -1, dtype=np.int8)
 
             if bus_type != 0:
                 bus_occ_patch = patches.Polygon(
                     np.zeros((4, 2)),
                     closed=True,
                     fill=True,
-                    facecolor="gray",
+                    facecolor="#7aa6c2",
                     edgecolor="none",
-                    alpha=0.25,
-                    zorder=1,
+                    alpha=0.22,
+                    zorder=1.2,
                 )
                 bus_occ_patch.set_visible(False)
                 ax.add_patch(bus_occ_patch)
@@ -433,6 +793,61 @@ def crosswalk_scenario_v3(
         tracking_controller.set_waypoints(waypoints)
 
         if trial_enable_plot:
+            if getattr(tracking_controller, "waypoints_scatter", None) is not None:
+                tracking_controller.waypoints_scatter.set_visible(False)
+            start_xy = np.asarray(waypoints[0][:2], dtype=float)
+            goal_xy = np.asarray(waypoints[-1][:2], dtype=float)
+            start_marker = ax.scatter(
+                [start_xy[0]],
+                [start_xy[1]],
+                s=90,
+                facecolors="#f8fafc",
+                edgecolors="#0f172a",
+                linewidths=1.4,
+                zorder=9.2,
+            )
+            goal_marker = ax.scatter(
+                [goal_xy[0]],
+                [goal_xy[1]],
+                s=430,
+                marker="*",
+                facecolors="#f6bd60",
+                edgecolors="none",
+                linewidths=0.0,
+                zorder=8.4,
+            )
+            goal_text = ax.text(
+                goal_xy[0],
+                goal_xy[1] + 1.15,
+                "GOAL",
+                color="#102a43",
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                fontweight="bold",
+                zorder=9.5,
+            )
+            goal_text.set_path_effects(
+                [
+                    path_effects.Stroke(linewidth=2.5, foreground="white", alpha=0.9),
+                    path_effects.Normal(),
+                ]
+            )
+            start_marker.set_path_effects(
+                [
+                    path_effects.Stroke(linewidth=2.2, foreground="white", alpha=0.9),
+                    path_effects.Normal(),
+                ]
+            )
+            if hasattr(tracking_controller.robot, "body"):
+                try:
+                    tracking_controller.robot.body.set_zorder(9.0)
+                except Exception:
+                    pass
+            if getattr(tracking_controller.robot, "axis", None) is not None:
+                tracking_controller.robot.axis.set_linewidth(2.4)
+                tracking_controller.robot.axis.set_zorder(9.1)
+
             orig_render_dyn_obs = tracking_controller.render_dyn_obs
             sensing_range = float(robot_spec.get("sensing_range", 20.0))
 
@@ -484,25 +899,92 @@ def crosswalk_scenario_v3(
                             self.dyn_obs_patch[idx].set_visible(False)
 
                 occluded_mask = self._cached_occluded_mask
-                for rect_i, (rect, idx) in enumerate(zip(car_rects, car_indices)):
+                for rect_i, (body, cabin, light_bar, windshield, rear_window, front_wheel, rear_wheel, idx) in enumerate(
+                    zip(
+                        car_bodies,
+                        car_cabins,
+                        car_light_bars,
+                        car_windshields,
+                        car_rear_windows,
+                        car_front_wheels,
+                        car_rear_wheels,
+                        car_indices,
+                    )
+                ):
                     if idx >= len(self.obs) or not self.plot_dyn_obs:
-                        rect.set_visible(False)
+                        body.set_visible(False)
+                        cabin.set_visible(False)
+                        light_bar.set_visible(False)
+                        windshield.set_visible(False)
+                        rear_window.set_visible(False)
+                        front_wheel.set_visible(False)
+                        rear_wheel.set_visible(False)
                         continue
                     obs_info = self.obs[idx]
                     ox, oy, r = obs_info[:3]
-                    car_width = 2.0 * r
-                    car_length = 4.0 * r
-                    if abs(rect.get_width() - car_length) > 1e-9:
-                        rect.set_width(car_length)
-                    if abs(rect.get_height() - car_width) > 1e-9:
-                        rect.set_height(car_width)
-                    rect.set_xy((ox - 0.5 * car_length, oy - 0.5 * car_width))
+                    car_width = 2.0 * r * car_width_scale
+                    car_length = 4.0 * r * car_length_scale
+                    body_xy = (ox - 0.5 * car_length, oy - 0.5 * car_width)
+                    body.set_bounds(body_xy[0], body_xy[1], car_length, car_width)
+                    cabin_w = 0.50 * car_length
+                    cabin_h = 0.62 * car_width
+                    cabin_xy = (
+                        ox - 0.5 * cabin_w + 0.02 * car_length,
+                        oy - 0.5 * cabin_h,
+                    )
+                    cabin.set_bounds(cabin_xy[0], cabin_xy[1], cabin_w, cabin_h)
+                    windshield_w = 0.18 * car_length
+                    windshield_h = 0.46 * car_width
+                    windshield.set_bounds(
+                        ox + 0.12 * car_length,
+                        oy - 0.5 * windshield_h,
+                        windshield_w,
+                        windshield_h,
+                    )
+                    rear_window_w = 0.14 * car_length
+                    rear_window_h = 0.40 * car_width
+                    rear_window.set_bounds(
+                        ox - 0.34 * car_length,
+                        oy - 0.5 * rear_window_h,
+                        rear_window_w,
+                        rear_window_h,
+                    )
+                    light_bar.set_width(0.12 * car_length)
+                    light_bar.set_height(0.14 * car_width)
+                    light_bar.set_xy(
+                        (
+                            ox + 0.5 * car_length - 0.15 * car_length,
+                            oy - 0.07 * car_width,
+                        )
+                    )
+                    front_wheel.width = 0.16 * car_length
+                    front_wheel.height = 0.22 * car_width
+                    front_wheel.center = (
+                        ox + 0.18 * car_length,
+                        oy - 0.34 * car_width,
+                    )
+                    rear_wheel.width = 0.16 * car_length
+                    rear_wheel.height = 0.22 * car_width
+                    rear_wheel.center = (
+                        ox - 0.18 * car_length,
+                        oy - 0.34 * car_width,
+                    )
                     is_occ = int(occluded_mask is not None and bool(occluded_mask[idx]))
                     if car_last_occ is None or car_last_occ[rect_i] != is_occ:
-                        rect.set_facecolor("orange" if is_occ else "gray")
+                        body.set_facecolor("#ef8354" if is_occ else "#6f7f8f")
+                        cabin.set_facecolor("#f4b08f" if is_occ else "#8ea2b4")
+                        windshield.set_facecolor("#fde5d8" if is_occ else "#dfeaf5")
+                        rear_window.set_facecolor("#f6d4c0" if is_occ else "#cad9e8")
+                        light_bar.set_facecolor("#ffd166" if is_occ else "#fff2bf")
                         if car_last_occ is not None:
                             car_last_occ[rect_i] = is_occ
-                    rect.set_visible(True)
+                    body.set_visible(True)
+                    cabin.set_visible(True)
+                    light_bar.set_visible(True)
+                    windshield.set_visible(True)
+                    rear_window.set_visible(True)
+                    front_wheel.set_visible(True)
+                    rear_wheel.set_visible(True)
 
                 if bus_occ_patch is not None:
                     poly = compute_bus_occ_poly(float(self.robot.X[0, 0]), float(self.robot.X[1, 0]))
@@ -512,14 +994,30 @@ def crosswalk_scenario_v3(
                         bus_occ_patch.set_xy(poly)
                         bus_occ_patch.set_visible(True)
 
+                if bus_shadow is not None:
+                    bus_shadow.set_visible(True)
                 if bus_patch is not None:
                     bus_patch.set_visible(True)
+                if bus_door_patch is not None:
+                    bus_door_patch.set_visible(True)
+                for win in bus_window_patches:
+                    win.set_visible(True)
                 if bus_label is not None:
                     bus_label.set_visible(True)
 
             tracking_controller.render_dyn_obs = types.MethodType(render_dyn_obs_with_bus, tracking_controller)
 
         result = tracking_controller.run_all_steps(tf=400)
+        if trial_save_svg and fig is not None:
+            svg_out = Path(trial_svg_path).expanduser() if trial_svg_path else _default_crosswalk_svg_path(
+                controller_type=controller_type,
+                model_key=model_key,
+                bus_type=bus_type,
+                case_idx=case_idx,
+            )
+            svg_out.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(svg_out, format="svg", dpi=300, bbox_inches="tight")
+            print(f"Saved SVG: {svg_out}")
         if return_infeasible:
             infeasible_seen = bool(getattr(tracking_controller, "_infeasible_seen", False))
             return result, infeasible_seen
@@ -532,7 +1030,16 @@ def crosswalk_scenario_v3(
         car_specs = None
         for _ in range(case_idx):
             car_specs = make_car_specs(rng)
-        return run_trial(bus_type, car_specs, enable_plot, save_animation)
+        return run_trial(
+            bus_type,
+            car_specs,
+            enable_plot,
+            save_animation,
+            trial_save_frame_ext=save_frame_ext,
+            trial_animation_subdir=animation_subdir,
+            trial_save_svg=save_svg,
+            trial_svg_path=svg_path,
+        )
 
     if batch_eval:
         import contextlib
@@ -544,9 +1051,23 @@ def crosswalk_scenario_v3(
             car_specs = make_car_specs(rng)
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                result0, _ = run_trial(0, car_specs, trial_enable_plot=False, trial_save_animation=False, return_infeasible=True)
+                result0, _ = run_trial(
+                    0,
+                    car_specs,
+                    trial_enable_plot=False,
+                    trial_save_animation=False,
+                    trial_save_frame_ext=save_frame_ext,
+                    trial_animation_subdir=animation_subdir,
+                    return_infeasible=True,
+                )
                 result1, infeasible1 = run_trial(
-                    1, car_specs, trial_enable_plot=False, trial_save_animation=False, return_infeasible=True
+                    1,
+                    car_specs,
+                    trial_enable_plot=False,
+                    trial_save_animation=False,
+                    trial_save_frame_ext=save_frame_ext,
+                    trial_animation_subdir=animation_subdir,
+                    return_infeasible=True,
                 )
             if result1 == -1 and (not infeasible1) and result0 == -2:
                 case_indices.append(idx + 1)
@@ -556,7 +1077,16 @@ def crosswalk_scenario_v3(
 
     rng = np.random.default_rng(seed)
     car_specs = make_car_specs(rng)
-    return run_trial(bus_type, car_specs, enable_plot, save_animation)
+    return run_trial(
+        bus_type,
+        car_specs,
+        enable_plot,
+        save_animation,
+        trial_save_frame_ext=save_frame_ext,
+        trial_animation_subdir=animation_subdir,
+        trial_save_svg=save_svg,
+        trial_svg_path=svg_path,
+    )
 
 
 def main():
@@ -603,6 +1133,34 @@ def main():
         help="Save animation frames. Accepts true/false or can be passed as a flag.",
     )
     parser.add_argument(
+        "--save-frame-ext",
+        type=str,
+        choices=["png", "svg"],
+        default="png",
+        help="Animation frame format when --save-animation is enabled.",
+    )
+    parser.add_argument(
+        "--animation-subdir",
+        type=str,
+        default=None,
+        help="Optional subdirectory under output/animations for saved frames.",
+    )
+    parser.add_argument(
+        "--save-svg",
+        dest="save_svg",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Save the final rendered frame as an SVG file.",
+    )
+    parser.add_argument(
+        "--svg-path",
+        type=str,
+        default=None,
+        help="Optional explicit output path for the saved SVG.",
+    )
+    parser.add_argument(
         "--oa-paper-mode",
         type=_str2bool,
         nargs="?",
@@ -639,6 +1197,24 @@ def main():
         default=None,
         help="OA-MPC: visible-agent reachable set mode.",
     )
+    parser.add_argument(
+        "--vref-scenario-softmax-kappa",
+        type=float,
+        default=None,
+        help="Occlusion backup v_ref: scenario-level softmax kappa. Applies in both strict and soft v_ref modes.",
+    )
+    parser.add_argument(
+        "--v-adv-max-occ",
+        type=float,
+        default=None,
+        help="Occlusion backup: assumed hidden-agent speed bound used to expand the occlusion reachable set.",
+    )
+    parser.add_argument(
+        "--occ-T-horizon",
+        type=float,
+        default=None,
+        help="Occlusion backup: horizon length used by the backup rollout and occlusion v_ref construction.",
+    )
     args = parser.parse_args()
 
     model_key = str(args.model).strip().lower()
@@ -663,11 +1239,18 @@ def main():
         seed=args.seed,
         case_idx=args.case_idx,
         save_animation=args.save_animation,
+        save_frame_ext=args.save_frame_ext,
+        animation_subdir=args.animation_subdir,
+        save_svg=args.save_svg,
+        svg_path=args.svg_path,
         oa_paper_mode=args.oa_paper_mode,
         oa_dynamic_occluders=args.oa_dynamic_occluders,
         oa_allow_solver_fallback=args.oa_allow_solver_fallback,
         oa_dsafe=args.oa_dsafe,
         oa_visible_reach_mode=args.oa_visible_reach_mode,
+        vref_scenario_softmax_kappa=args.vref_scenario_softmax_kappa,
+        v_adv_max_occ=args.v_adv_max_occ,
+        occ_T_horizon=args.occ_T_horizon,
     )
 
 

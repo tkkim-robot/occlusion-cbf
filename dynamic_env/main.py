@@ -2,6 +2,9 @@ from safe_control.dynamic_env.main import LocalTrackingControllerDyn
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.patheffects as path_effects
+from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 import os
 import glob
 import subprocess
@@ -24,7 +27,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                  dt=0.05,
                  show_animation=False, save_animation=False, show_mpc_traj=False,
                  enable_rotation=True, raise_error=False,
-                 ax=None, fig=None, env=None, rand_seed=42):
+                 ax=None, fig=None, env=None, rand_seed=42,
+                 tracking_view_ax=None, tracking_view_window_size=None):
         super().__init__(X0, robot_spec,
                          controller_type=controller_type,
                          dt=dt,
@@ -38,6 +42,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         
         self.qp_stats_text = None
         self.backup_rollout_line = None
+        self.backup_rollout_end_marker = None
         self.backup_safe_contour = []
         self._backup_vis_counter = 0
         self.show_backup_rollout = bool(self.robot_spec.get('show_backup_rollout', False))
@@ -50,10 +55,13 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.plot_dyn_obs_arrow_len_min = float(self.robot_spec.get('plot_dyn_obs_arrow_len_min', 0.3))
         self.plot_dyn_obs_arrow_len_max = float(self.robot_spec.get('plot_dyn_obs_arrow_len_max', 0.8))
         self.plot_dyn_obs_arrow_head = float(self.robot_spec.get('plot_dyn_obs_arrow_head', 6.0))
+        self.plot_dyn_obs_visible_color = self.robot_spec.get('plot_dyn_obs_visible_color', 'gray')
+        self.plot_dyn_obs_hidden_color = self.robot_spec.get('plot_dyn_obs_hidden_color', 'deepskyblue')
         self.plot_occ_polygons = bool(self.robot_spec.get('plot_occ_polygons', self.show_animation))
         self.continue_on_infeasible = bool(self.robot_spec.get('continue_on_infeasible', False))
         self._infeasible_active = False
         self._infeasible_text = None
+        self._tracking_infeasible_text = None
         self._infeasible_seen = False
         self.plot_every = int(self.robot_spec.get('plot_every', 1))
         if self.plot_every < 1:
@@ -72,6 +80,541 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         
         self._rng = np.random.default_rng(rand_seed)
         self.obs_meta = None
+        self._dyn_behavior_vis_mask_cache = None
+        self._dyn_behavior_fov_mask_cache = None
+        self._dyn_behavior_vis_cache_step = -1
+        self._dyn_behavior_step_counter = 0
+        self.tracking_view_ax = tracking_view_ax
+        self.tracking_view_window_size = float(tracking_view_window_size) if tracking_view_window_size is not None else 5.0
+        if self.tracking_view_window_size <= 0.0:
+            self.tracking_view_window_size = 5.0
+        self.tracking_view_enabled = bool(self.show_animation and (self.tracking_view_ax is not None))
+        self.tracking_view_waypoints_scatter = None
+        self.tracking_view_robot_patch = None
+        self.tracking_view_heading_line = None
+        self.tracking_view_fov_line = None
+        self.tracking_view_fov_fill = None
+        self.tracking_view_backup_rollout_line = None
+        self.tracking_view_backup_rollout_end_marker = None
+        self.plot_robot_trajectory = bool(self.robot_spec.get('plot_robot_trajectory', True))
+        self.plot_robot_trajectory_cmap = self.robot_spec.get(
+            'plot_robot_trajectory_cmap', 'trajectory_red_pink'
+        )
+        self.plot_robot_trajectory_linewidth = float(
+            self.robot_spec.get('plot_robot_trajectory_linewidth', 2.8)
+        )
+        self.plot_robot_trajectory_alpha = float(
+            self.robot_spec.get('plot_robot_trajectory_alpha', 0.95)
+        )
+        self.plot_robot_trajectory_zorder = float(
+            self.robot_spec.get('plot_robot_trajectory_zorder', 9.0)
+        )
+        self.plot_robot_trajectory_speed_max = self.robot_spec.get(
+            'plot_robot_trajectory_speed_max', None
+        )
+        self.robot_trajectory_points = []
+        self.robot_trajectory_speeds = []
+        self.robot_trajectory_collection = None
+        self._trajectory_cmap_obj = None
+        self._trajectory_cache_dirty = True
+        self._trajectory_cached_segments = np.empty((0, 2, 2), dtype=float)
+        self._trajectory_cached_segment_speeds = np.empty((0,), dtype=float)
+        self._trajectory_cached_vmax = 1.0
+        self.tracking_view_trajectory_collection = None
+        self.tracking_view_occ_patches = []
+        self.tracking_view_obs_patches = []
+        self.tracking_view_obs_arrows = []
+        self._record_trajectory_sample()
+        if self.tracking_view_enabled:
+            self._setup_tracking_view()
+
+    def setup_animation_saving(self):
+        self.current_directory_path = os.getcwd()
+        frame_ext = str(self.robot_spec.get("animation_frame_ext", "png")).strip().lower().lstrip(".")
+        if frame_ext not in {"png", "svg"}:
+            frame_ext = "png"
+        subdir = str(self.robot_spec.get("animation_subdir", "")).strip()
+        save_root = os.path.join(self.current_directory_path, "output", "animations")
+        if subdir:
+            save_root = os.path.join(save_root, subdir)
+        if not os.path.exists(save_root):
+            os.makedirs(save_root)
+        self.save_folder = save_root
+        self.save_frame_ext = frame_ext
+        self.save_frame_dpi = int(self.robot_spec.get("animation_frame_dpi", 300))
+        self.animation_export_video = bool(
+            self.robot_spec.get("animation_export_video", self.save_frame_ext == "png")
+        )
+        self.save_per_frame = 1
+        self.ani_idx = 0
+
+    def _frame_output_path(self, frame_idx):
+        return os.path.join(
+            self.save_folder,
+            f"t_step_{int(frame_idx):04d}.{self.save_frame_ext}",
+        )
+
+    def export_video(self):
+        if not (self.show_animation and self.save_animation):
+            return
+        if self.save_frame_ext != "png" or not self.animation_export_video:
+            return
+        subprocess.call([
+            'ffmpeg',
+            '-framerate', '30',
+            '-i', os.path.join(self.save_folder, 't_step_%04d.png'),
+            '-vf', 'scale=1920:982,fps=60',
+            '-pix_fmt', 'yuv420p',
+            os.path.join(self.save_folder, 'tracking.mp4'),
+        ])
+
+        for file_name in glob.glob(os.path.join(self.save_folder, "*.png")):
+            os.remove(file_name)
+
+    @staticmethod
+    def _wrap_angle(theta):
+        return float(np.arctan2(np.sin(theta), np.cos(theta)))
+
+    @staticmethod
+    def _safe_normalize(vec, eps=1e-9):
+        n = float(np.linalg.norm(vec))
+        if n <= eps:
+            return None
+        return vec / n
+
+    def _compute_robot_speed_scalar(self):
+        model = str(self.robot_spec.get("model", ""))
+        X = np.asarray(getattr(self.robot, "X", np.zeros((0, 1))), dtype=float).reshape(-1)
+        u_pos = getattr(self, "u_pos", None)
+        if u_pos is None:
+            u_arr = np.asarray(getattr(self.robot, "U", np.zeros((0, 1))), dtype=float).reshape(-1)
+        else:
+            u_arr = np.asarray(u_pos, dtype=float).reshape(-1)
+
+        if model == "SingleIntegrator2D":
+            if u_arr.size >= 2:
+                return float(np.linalg.norm(u_arr[:2]))
+        elif model in ["DoubleIntegrator2D", "DoubleIntegrator2D_DPCBF"]:
+            if X.size >= 4:
+                return float(np.linalg.norm(X[2:4]))
+        elif model == "Unicycle2D":
+            if u_arr.size >= 1:
+                return float(abs(u_arr[0]))
+        elif model in [
+            "DynamicUnicycle2D",
+            "DynamicUnicycle2D_C3BF",
+            "DynamicUnicycle2D_DPCBF",
+            "KinematicBicycle2D",
+            "KinematicBicycle2D_C3BF",
+            "KinematicBicycle2D_DPCBF",
+            "KinematicBicycle2D_CBFVO",
+            "KinematicBicycle2D_OVVO",
+            "KinematicBicycle2D_CVAR",
+        ]:
+            if X.size >= 4:
+                return float(abs(X[3]))
+            if u_arr.size >= 1:
+                return float(abs(u_arr[0]))
+        elif model in ["Quad2D", "VTOL2D"]:
+            if X.size >= 5:
+                return float(np.linalg.norm(X[3:5]))
+        elif model == "Quad3D":
+            if X.size >= 9:
+                return float(np.linalg.norm(X[6:9]))
+
+        if hasattr(self.robot, "get_velocity"):
+            try:
+                vel = np.asarray(self.robot.get_velocity(), dtype=float).reshape(-1)
+                if vel.size == 1:
+                    return float(abs(vel[0]))
+                if vel.size > 1:
+                    return float(np.linalg.norm(vel))
+            except Exception:
+                pass
+
+        if u_arr.size > 0:
+            return float(np.linalg.norm(u_arr))
+        return 0.0
+
+    def _trajectory_speed_limit(self, segment_speeds):
+        vmax = self.plot_robot_trajectory_speed_max
+        if vmax is not None:
+            try:
+                return max(float(vmax), 1e-6)
+            except (TypeError, ValueError):
+                pass
+
+        spec_vmax = self.robot_spec.get("v_max", None)
+        if spec_vmax is not None:
+            try:
+                return max(float(spec_vmax), 1e-6)
+            except (TypeError, ValueError):
+                pass
+
+        if segment_speeds.size > 0:
+            return max(float(np.max(segment_speeds)), 1e-6)
+        return 1.0
+
+    def _get_trajectory_cmap(self):
+        cmap_name = str(self.plot_robot_trajectory_cmap)
+        if self._trajectory_cmap_obj is not None and getattr(
+            self._trajectory_cmap_obj, "name", None
+        ) == cmap_name:
+            return self._trajectory_cmap_obj
+
+        if cmap_name in {"trajectory_red_pink", "red_pink", "pink_red"}:
+            self._trajectory_cmap_obj = LinearSegmentedColormap.from_list(
+                "trajectory_red_pink",
+                [
+                    (0.00, "#ffd6e5"),
+                    (0.35, "#ff9fbc"),
+                    (0.70, "#ff4f7a"),
+                    (1.00, "#ff0000"),
+                ],
+            )
+        else:
+            self._trajectory_cmap_obj = plt.colormaps.get_cmap(cmap_name)
+        return self._trajectory_cmap_obj
+
+    def _record_trajectory_sample(self):
+        if not self.plot_robot_trajectory or not (self.show_animation or self.save_animation):
+            return
+
+        pos = np.asarray(self.robot.get_position(), dtype=float).reshape(-1)
+        if pos.size < 2:
+            return
+
+        point = pos[:2].copy()
+        speed = self._compute_robot_speed_scalar()
+
+        if self.robot_trajectory_points and np.allclose(
+            self.robot_trajectory_points[-1], point, atol=1e-9, rtol=0.0
+        ):
+            self.robot_trajectory_speeds[-1] = speed
+        else:
+            self.robot_trajectory_points.append(point)
+            self.robot_trajectory_speeds.append(speed)
+        self._trajectory_cache_dirty = True
+
+    def _refresh_trajectory_cache(self):
+        if not self._trajectory_cache_dirty:
+            return
+
+        self._trajectory_cache_dirty = False
+        self._trajectory_cached_segments = np.empty((0, 2, 2), dtype=float)
+        self._trajectory_cached_segment_speeds = np.empty((0,), dtype=float)
+        self._trajectory_cached_vmax = 1.0
+
+        if len(self.robot_trajectory_points) < 2:
+            return
+
+        points = np.asarray(self.robot_trajectory_points, dtype=float)
+        speeds = np.asarray(self.robot_trajectory_speeds, dtype=float)
+        self._trajectory_cached_segments = np.stack([points[:-1], points[1:]], axis=1)
+        self._trajectory_cached_segment_speeds = 0.5 * (speeds[:-1] + speeds[1:])
+        self._trajectory_cached_vmax = self._trajectory_speed_limit(
+            self._trajectory_cached_segment_speeds
+        )
+
+    def _update_trajectory_artist(self, ax, attr_name, linewidth=None, zorder=None):
+        artist = getattr(self, attr_name, None)
+        if not self.plot_robot_trajectory:
+            if artist is not None:
+                artist.set_visible(False)
+            return
+
+        self._refresh_trajectory_cache()
+        if self._trajectory_cached_segments.shape[0] == 0:
+            if artist is not None:
+                artist.set_visible(False)
+            return
+
+        if linewidth is None:
+            linewidth = self.plot_robot_trajectory_linewidth
+        if zorder is None:
+            zorder = self.plot_robot_trajectory_zorder
+
+        norm = Normalize(vmin=0.0, vmax=self._trajectory_cached_vmax)
+        cmap = self._get_trajectory_cmap()
+
+        if artist is None:
+            artist = LineCollection(
+                self._trajectory_cached_segments,
+                cmap=cmap,
+                norm=norm,
+                linewidths=linewidth,
+                alpha=self.plot_robot_trajectory_alpha,
+                zorder=zorder,
+                capstyle='round',
+                joinstyle='round',
+            )
+            ax.add_collection(artist)
+            setattr(self, attr_name, artist)
+        else:
+            artist.set_segments(self._trajectory_cached_segments)
+            artist.set_cmap(cmap)
+            artist.set_norm(norm)
+            artist.set_linewidth(linewidth)
+            artist.set_alpha(self.plot_robot_trajectory_alpha)
+            artist.set_zorder(zorder)
+            artist.set_capstyle('round')
+            artist.set_joinstyle('round')
+
+        artist.set_array(self._trajectory_cached_segment_speeds)
+        artist.set_visible(True)
+
+    def _setup_tracking_view(self):
+        ax = self.tracking_view_ax
+        ax.set_title("Tracking View")
+        ax.set_xlabel("X [m]")
+        ax.set_ylabel("Y [m]")
+        ax.set_aspect('equal', adjustable='box')
+
+        self.tracking_view_waypoints_scatter = ax.scatter(
+            [], [],
+            s=10, facecolors='g', edgecolors='g',
+            alpha=0.5, zorder=2
+        )
+        colors = plt.colormaps.get_cmap('Pastel1').colors
+        robot_id = int(self.robot_spec.get('robot_id', 0))
+        body_color = colors[robot_id % len(colors) + 1]
+        self.tracking_view_robot_patch = ax.add_patch(
+            patches.Circle(
+                (0.0, 0.0), self.robot.robot_radius,
+                edgecolor='black', facecolor=body_color,
+                fill=True, linewidth=1.0, zorder=7
+            )
+        )
+        (self.tracking_view_heading_line,) = ax.plot(
+            [], [],
+            color='r', linewidth=2.0, zorder=8
+        )
+        (self.tracking_view_fov_line,) = ax.plot([], [], 'k--', zorder=5)
+        self.tracking_view_fov_fill = ax.fill([], [], 'k', alpha=0.1, zorder=4)[0]
+        (self.tracking_view_backup_rollout_line,) = ax.plot(
+            [], [],
+            linestyle='-', color='tab:green',
+            linewidth=2.4, alpha=1.0, zorder=20
+        )
+        self.tracking_view_backup_rollout_line.set_path_effects([
+            path_effects.Stroke(linewidth=4.2, foreground='white'),
+            path_effects.Normal(),
+        ])
+        self.tracking_view_backup_rollout_line.set_visible(False)
+        self.tracking_view_backup_rollout_end_marker = ax.scatter(
+            [], [],
+            s=26, facecolors='tab:green', edgecolors='white',
+            linewidths=0.8, alpha=1.0, zorder=21
+        )
+        self._update_tracking_view()
+
+    def _sync_tracking_view_waypoints(self):
+        if not self.tracking_view_enabled:
+            return
+        if getattr(self, "waypoints", None) is None or len(self.waypoints) == 0:
+            self.tracking_view_waypoints_scatter.set_offsets(np.empty((0, 2)))
+            return
+        pts = np.asarray(self.waypoints[:, :2], dtype=float)
+        self.tracking_view_waypoints_scatter.set_offsets(pts)
+
+    def _ensure_tracking_view_obs_artists(self, n_obs):
+        ax = self.tracking_view_ax
+        while len(self.tracking_view_obs_patches) < n_obs:
+            patch = patches.Circle(
+                (0.0, 0.0), 0.0,
+                edgecolor='black', facecolor=self.plot_dyn_obs_visible_color,
+                alpha=0.85, linewidth=1.0, zorder=4
+            )
+            ax.add_patch(patch)
+            self.tracking_view_obs_patches.append(patch)
+
+            arrow = patches.FancyArrowPatch(
+                (0.0, 0.0), (0.0, 0.0),
+                arrowstyle='-|>',
+                mutation_scale=self.plot_dyn_obs_arrow_head,
+                color='orange',
+                linewidth=1.0,
+                zorder=5,
+            )
+            arrow.set_visible(False)
+            ax.add_patch(arrow)
+            self.tracking_view_obs_arrows.append(arrow)
+
+        while len(self.tracking_view_obs_patches) > n_obs:
+            patch = self.tracking_view_obs_patches.pop()
+            patch.remove()
+        while len(self.tracking_view_obs_arrows) > n_obs:
+            arrow = self.tracking_view_obs_arrows.pop()
+            arrow.remove()
+
+    def _ensure_tracking_view_occ_artists(self, n_occ):
+        ax = self.tracking_view_ax
+        while len(self.tracking_view_occ_patches) < n_occ:
+            patch = patches.Polygon(
+                np.zeros((3, 2)),
+                closed=True,
+                fill=True,
+                facecolor='gray',
+                edgecolor='none',
+                alpha=0.25,
+                zorder=1.5,
+            )
+            patch.set_visible(False)
+            ax.add_patch(patch)
+            self.tracking_view_occ_patches.append(patch)
+
+        while len(self.tracking_view_occ_patches) > n_occ:
+            patch = self.tracking_view_occ_patches.pop()
+            patch.remove()
+
+    def _update_tracking_view_occlusion_polygons(self, center_xy, half_window):
+        if not self.tracking_view_enabled:
+            return
+        pos_controller = getattr(self, "pos_controller", None)
+        scenarios = getattr(pos_controller, "occlusion_scenarios", None) if pos_controller is not None else None
+        if not scenarios:
+            scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
+        if not scenarios:
+            for patch in self.tracking_view_occ_patches:
+                patch.set_visible(False)
+            return
+
+        xmin = float(center_xy[0] - half_window)
+        xmax = float(center_xy[0] + half_window)
+        ymin = float(center_xy[1] - half_window)
+        ymax = float(center_xy[1] + half_window)
+
+        visible_polys = []
+        for sc in scenarios:
+            poly = sc.get('poly', None)
+            if poly is None:
+                continue
+            pts = np.asarray(poly, dtype=float)
+            if pts.ndim != 2 or pts.shape[0] < 3 or pts.shape[1] < 2:
+                continue
+            pxmin = float(np.min(pts[:, 0]))
+            pxmax = float(np.max(pts[:, 0]))
+            pymin = float(np.min(pts[:, 1]))
+            pymax = float(np.max(pts[:, 1]))
+            if pxmax < xmin or pxmin > xmax or pymax < ymin or pymin > ymax:
+                continue
+            visible_polys.append(pts)
+
+        self._ensure_tracking_view_occ_artists(len(visible_polys))
+        for i, pts in enumerate(visible_polys):
+            patch = self.tracking_view_occ_patches[i]
+            patch.set_xy(pts)
+            patch.set_visible(True)
+        for j in range(len(visible_polys), len(self.tracking_view_occ_patches)):
+            self.tracking_view_occ_patches[j].set_visible(False)
+
+    def _update_tracking_view(self):
+        if not self.tracking_view_enabled:
+            return
+
+        ax = self.tracking_view_ax
+        pos = np.asarray(self.robot.get_position(), dtype=float).reshape(-1)
+        theta = float(self.robot.get_orientation())
+        half = 0.5 * float(self.tracking_view_window_size)
+
+        ax.set_xlim(float(pos[0] - half), float(pos[0] + half))
+        ax.set_ylim(float(pos[1] - half), float(pos[1] + half))
+        self._update_tracking_view_occlusion_polygons(pos, half)
+        self._update_trajectory_artist(
+            ax,
+            "tracking_view_trajectory_collection",
+            linewidth=0.9 * self.plot_robot_trajectory_linewidth,
+            zorder=max(2.5, self.plot_robot_trajectory_zorder),
+        )
+
+        self.tracking_view_robot_patch.center = (float(pos[0]), float(pos[1]))
+        heading_len = float(getattr(self.robot, "vis_orient_len", 0.5))
+        hx = float(pos[0] + heading_len * np.cos(theta))
+        hy = float(pos[1] + heading_len * np.sin(theta))
+        self.tracking_view_heading_line.set_data([float(pos[0]), hx], [float(pos[1]), hy])
+
+        if 'sensor' in self.robot_spec and self.robot_spec['sensor'] == 'rgbd':
+            fov_left, fov_right = self.robot.calculate_fov_points()
+            fov_x_points = [float(pos[0]), float(fov_left[0]), float(fov_right[0]), float(pos[0])]
+            fov_y_points = [float(pos[1]), float(fov_left[1]), float(fov_right[1]), float(pos[1])]
+            self.tracking_view_fov_line.set_data(fov_x_points, fov_y_points)
+            self.tracking_view_fov_fill.set_xy(np.array([fov_x_points, fov_y_points]).T)
+            self.tracking_view_fov_line.set_visible(True)
+            self.tracking_view_fov_fill.set_visible(True)
+        else:
+            self.tracking_view_fov_line.set_visible(False)
+            self.tracking_view_fov_fill.set_visible(False)
+
+        if self.obs is None:
+            obs_arr = np.empty((0, 8), dtype=float)
+        else:
+            obs_arr = np.asarray(self.obs, dtype=float)
+        if obs_arr.size == 0:
+            obs_arr = np.empty((0, 8), dtype=float)
+        elif obs_arr.ndim == 1:
+            obs_arr = obs_arr.reshape(1, -1)
+
+        occluded_mask = self._cached_occluded_mask
+        if occluded_mask is None or len(occluded_mask) != obs_arr.shape[0]:
+            occluded_mask = None
+
+        if obs_arr.size:
+            margin = max(
+                0.75,
+                float(np.max(obs_arr[:, 2])) + self.plot_dyn_obs_arrow_len_max
+            )
+            in_view_mask = (
+                (obs_arr[:, 0] >= float(pos[0] - half - margin)) &
+                (obs_arr[:, 0] <= float(pos[0] + half + margin)) &
+                (obs_arr[:, 1] >= float(pos[1] - half - margin)) &
+                (obs_arr[:, 1] <= float(pos[1] + half + margin))
+            )
+            obs_plot = obs_arr[in_view_mask]
+            occ_plot = occluded_mask[in_view_mask] if occluded_mask is not None else None
+        else:
+            obs_plot = obs_arr
+            occ_plot = None
+
+        self._ensure_tracking_view_obs_artists(int(obs_plot.shape[0]))
+
+        speeds = np.hypot(obs_plot[:, 3], obs_plot[:, 4]) if obs_plot.size else np.array([])
+        v_ref = float(np.max(speeds)) if speeds.size else 1.0
+        if v_ref < 1e-9:
+            v_ref = 1.0
+
+        for i, obs_info in enumerate(obs_plot):
+            ox, oy, r = float(obs_info[0]), float(obs_info[1]), float(obs_info[2])
+            patch = self.tracking_view_obs_patches[i]
+            patch.center = (ox, oy)
+            patch.set_radius(r)
+            patch.set_visible(True)
+            is_occ = bool(occ_plot[i]) if occ_plot is not None else False
+            patch.set_facecolor(self.plot_dyn_obs_hidden_color if is_occ else self.plot_dyn_obs_visible_color)
+
+            arrow = self.tracking_view_obs_arrows[i]
+            if not self.plot_dyn_obs_arrows or obs_plot.shape[1] < 5:
+                arrow.set_visible(False)
+                continue
+
+            vx, vy = float(obs_info[3]), float(obs_info[4])
+            speed = float(np.hypot(vx, vy))
+            if speed < 1e-9:
+                arrow.set_visible(False)
+                continue
+
+            ux = vx / speed
+            uy = vy / speed
+            t = min(1.0, speed / v_ref)
+            length = self.plot_dyn_obs_arrow_len_min + (
+                self.plot_dyn_obs_arrow_len_max - self.plot_dyn_obs_arrow_len_min
+            ) * np.sqrt(t)
+            arrow.set_positions((ox, oy), (ox + ux * length, oy + uy * length))
+            arrow.set_mutation_scale(self.plot_dyn_obs_arrow_head)
+            arrow.set_visible(True)
+
+    def set_waypoints(self, waypoints):
+        super().set_waypoints(waypoints)
+        self._sync_tracking_view_waypoints()
 
     def is_collide_unknown(self):
         robot_radius = self.robot.robot_radius
@@ -193,48 +736,348 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 raise e
             
         self._ensure_obs_meta()
+        crowd_cfg = self.robot_spec.get("crowd_dyn_obs", {})
+        if not isinstance(crowd_cfg, dict):
+            crowd_cfg = {}
+
+        base_jitter_std = float(crowd_cfg.get("heading_jitter_std", 0.0))
+        large_turn_prob = float(crowd_cfg.get("large_turn_prob", 0.05))
+        large_turn_std = float(crowd_cfg.get("large_turn_std", 0.2))
+
+        # Pedestrian-aware near-robot interaction:
+        # if a visible obstacle is close to the robot and heading toward it,
+        # bias heading to sidestep instead of charging into the robot.
+        ped_aware_enable = bool(crowd_cfg.get("ped_aware_enable", False))
+        ped_aware_visible_only = bool(crowd_cfg.get("ped_aware_visible_only", True))
+        ped_aware_radius = float(crowd_cfg.get("ped_aware_radius", 2.0))
+        ped_aware_approach_cos = float(crowd_cfg.get("ped_aware_approach_cos", 0.0))
+        ped_aware_turn_gain = float(crowd_cfg.get("ped_aware_turn_gain", 0.45))
+        ped_aware_side_weight = float(crowd_cfg.get("ped_aware_side_weight", 0.85))
+        ped_aware_away_weight = float(crowd_cfg.get("ped_aware_away_weight", 0.25))
+        ped_aware_noise_std = float(crowd_cfg.get("ped_aware_noise_std", 0.07))
+        ped_aware_side_flip_prob = float(crowd_cfg.get("ped_aware_side_flip_prob", 0.04))
+
+        # Occlusion-emergence bias:
+        # for currently occluded agents near the robot-forward region,
+        # occasionally steer toward a path-crossing target to increase natural
+        # emergence events without forcing deterministic collisions.
+        emergence_enable = bool(crowd_cfg.get("occlusion_emergence_enable", False))
+        emergence_occluded_only = bool(crowd_cfg.get("occlusion_emergence_occluded_only", True))
+        emergence_zone_radius = float(crowd_cfg.get("occlusion_emergence_zone_radius", 8.0))
+        emergence_forward_only = bool(crowd_cfg.get("occlusion_emergence_forward_only", True))
+        emergence_forward_min_proj = float(crowd_cfg.get("occlusion_emergence_forward_min_proj", -0.2))
+        emergence_turn_prob = float(crowd_cfg.get("occlusion_emergence_turn_prob", 0.07))
+        emergence_turn_gain = float(crowd_cfg.get("occlusion_emergence_turn_gain", 0.28))
+        emergence_target_ahead = float(crowd_cfg.get("occlusion_emergence_target_ahead", 2.8))
+        emergence_lateral_jitter = float(crowd_cfg.get("occlusion_emergence_lateral_jitter", 0.9))
+        emergence_noise_std = float(crowd_cfg.get("occlusion_emergence_noise_std", 0.04))
+        occluded_speed_boost_enable = bool(crowd_cfg.get("occluded_speed_boost_enable", False))
+        occluded_speed_boost_vmax = float(crowd_cfg.get("occluded_speed_boost_vmax", 1.0))
+        occluded_speed_boost_exact = bool(crowd_cfg.get("occluded_speed_boost_exact", False))
+        if (not np.isfinite(occluded_speed_boost_vmax)) or occluded_speed_boost_vmax <= 1e-9:
+            occluded_speed_boost_enable = False
+        occluded_speed_boost_fov_only = bool(crowd_cfg.get("occluded_speed_boost_fov_only", True))
+        occluded_speed_boost_on_hys = int(crowd_cfg.get("occluded_speed_boost_on_hysteresis_steps", 1))
+        occluded_speed_boost_off_hys = int(crowd_cfg.get("occluded_speed_boost_off_hysteresis_steps", 1))
+        occluded_speed_boost_on_hys = max(1, occluded_speed_boost_on_hys)
+        occluded_speed_boost_off_hys = max(1, occluded_speed_boost_off_hys)
+
+        robot_xy = np.asarray(self.robot.X[:2, 0], dtype=float).reshape(2,)
+        goal_xy = None
+        if self.goal is not None:
+            goal_xy = np.asarray(self.goal[:2], dtype=float).reshape(2,)
+        if goal_xy is not None:
+            goal_vec = goal_xy - robot_xy
+            goal_dir = self._safe_normalize(goal_vec)
+        else:
+            goal_dir = None
+        if goal_dir is None:
+            yaw = float(self.robot.X[2, 0]) if self.robot.X.shape[0] >= 3 else 0.0
+            goal_dir = np.array([np.cos(yaw), np.sin(yaw)], dtype=float)
+        goal_lat = np.array([-goal_dir[1], goal_dir[0]], dtype=float)
+
+        use_visibility_logic = bool(
+            (ped_aware_enable and ped_aware_visible_only)
+            or (emergence_enable and emergence_occluded_only)
+            or occluded_speed_boost_enable
+        )
+        visible_mask = None
+        fov_range_mask = None
+        if use_visibility_logic:
+            vis_refresh_steps = int(crowd_cfg.get("visibility_refresh_steps", 1))
+            if vis_refresh_steps < 1:
+                vis_refresh_steps = 1
+            if (
+                self._dyn_behavior_vis_mask_cache is None
+                or self._dyn_behavior_step_counter - self._dyn_behavior_vis_cache_step >= vis_refresh_steps
+                or len(self._dyn_behavior_vis_mask_cache) != int(self.obs.shape[0])
+            ):
+                n_obs = int(self.obs.shape[0])
+                visible_mask = np.ones(n_obs, dtype=bool)
+                fov_range_mask = np.zeros(n_obs, dtype=bool)
+                obs_xy = np.asarray(self.obs[:, :2], dtype=float)
+                rel = obs_xy - robot_xy[None, :]
+                dist = np.linalg.norm(rel, axis=1)
+                mode_arr = np.array([int(m.get("mode", 0)) for m in self.obs_meta], dtype=int)
+                dyn_mask = mode_arr == 1
+                candidate_mask = np.zeros(n_obs, dtype=bool)
+
+                # Visibility is needed only where behavior logic consumes it.
+                if ped_aware_enable and ped_aware_visible_only:
+                    candidate_mask |= dyn_mask & (dist <= ped_aware_radius)
+
+                if emergence_enable and emergence_occluded_only:
+                    in_front = np.ones(n_obs, dtype=bool)
+                    if emergence_forward_only:
+                        proj = rel @ goal_dir
+                        in_front = proj >= emergence_forward_min_proj
+                    candidate_mask |= dyn_mask & (dist <= emergence_zone_radius) & in_front
+
+                if occluded_speed_boost_enable:
+                    for j in range(n_obs):
+                        try:
+                            if occluded_speed_boost_fov_only:
+                                fov_range_mask[j] = bool(self.robot.is_in_fov(obs_xy[j], is_in_cam_range=True))
+                            else:
+                                fov_range_mask[j] = dist[j] <= float(self.robot.cam_range)
+                        except Exception:
+                            fov_range_mask[j] = dist[j] <= float(self.robot.robot_spec.get("sensing_range", np.inf))
+                    candidate_mask |= dyn_mask & fov_range_mask
+
+                candidate_idx = np.nonzero(candidate_mask)[0]
+                if candidate_idx.size > 0:
+                    occ_filter_fn = self._resolve_occ_filter_fn()
+                    if occ_filter_fn is not None:
+                        # For candidate visibility, only obstacles up to the farthest
+                        # candidate distance can act as occluders (distance-ordered logic).
+                        d_max = float(np.max(dist[candidate_idx]))
+                        support_idx = np.nonzero(dist <= (d_max + 1e-9))[0]
+                        try:
+                            _, _, vis_local_idx = occ_filter_fn(
+                                self.robot.X,
+                                self.obs[support_idx],
+                                return_indices=True,
+                            )
+                            vis_local_idx = np.asarray(vis_local_idx, dtype=int).reshape(-1)
+                            vis_local_idx = vis_local_idx[
+                                (vis_local_idx >= 0) & (vis_local_idx < support_idx.shape[0])
+                            ]
+                            support_visible = np.zeros(support_idx.shape[0], dtype=bool)
+                            if vis_local_idx.size > 0:
+                                support_visible[vis_local_idx] = True
+                            support_visible_global = np.zeros(n_obs, dtype=bool)
+                            support_visible_global[support_idx] = support_visible
+                            visible_mask[candidate_idx] = support_visible_global[candidate_idx]
+                        except Exception:
+                            # Keep conservative fallback behavior-neutral for dynamic logic.
+                            pass
+
+                self._dyn_behavior_vis_mask_cache = visible_mask
+                self._dyn_behavior_fov_mask_cache = fov_range_mask
+                self._dyn_behavior_vis_cache_step = self._dyn_behavior_step_counter
+            else:
+                visible_mask = self._dyn_behavior_vis_mask_cache
+                fov_range_mask = self._dyn_behavior_fov_mask_cache
 
         for i in range(self.obs.shape[0]):
             x, y, r, vx, vy, y_min, y_max = self.obs[i, :7]
             meta = self.obs_meta[i]
             mode   = int(meta.get('mode', 0))
             v_max  = float(meta.get('v_max', np.hypot(vx, vy)))
+            forced_occluder = bool(meta.get("forced_occluder", False))
+            base_v_max = float(meta.get("base_v_max", v_max))
+            meta["base_v_max"] = float(base_v_max)
             if 'theta' not in meta:
                 meta['theta'] = np.arctan2(vy, vx) if v_max > 1e-9 else 0.0 
             theta  = float(meta['theta'])
+            is_visible = True if visible_mask is None else bool(visible_mask[i])
+            in_fov_range = True if fov_range_mask is None else bool(fov_range_mask[i])
+            speed_boost_desired = bool(
+                (mode == 1)
+                and (not forced_occluder)
+                and occluded_speed_boost_enable
+                and (base_v_max > 1e-9)
+                and (not is_visible)
+                and ((not occluded_speed_boost_fov_only) or in_fov_range)
+            )
+            prev_speed_boost_active = bool(meta.get("occluded_speed_boost_latched", False))
+            speed_boost_on_count = int(meta.get("occluded_speed_boost_on_count", 0) or 0)
+            speed_boost_off_count = int(meta.get("occluded_speed_boost_off_count", 0) or 0)
+            if speed_boost_desired:
+                speed_boost_on_count += 1
+                speed_boost_off_count = 0
+                if prev_speed_boost_active or speed_boost_on_count >= occluded_speed_boost_on_hys:
+                    speed_boost_active = True
+                else:
+                    speed_boost_active = False
+            else:
+                speed_boost_off_count += 1
+                speed_boost_on_count = 0
+                if prev_speed_boost_active and speed_boost_off_count < occluded_speed_boost_off_hys:
+                    speed_boost_active = True
+                else:
+                    speed_boost_active = False
+            if speed_boost_active:
+                if occluded_speed_boost_exact:
+                    eff_v_max = float(occluded_speed_boost_vmax)
+                else:
+                    eff_v_max = float(max(base_v_max, occluded_speed_boost_vmax))
+            else:
+                eff_v_max = float(base_v_max)
+            meta["occluded_speed_boost_latched"] = bool(speed_boost_active)
+            meta["occluded_speed_boost_on_count"] = int(speed_boost_on_count)
+            meta["occluded_speed_boost_off_count"] = int(speed_boost_off_count)
+            meta["occluded_speed_boost_desired"] = bool(speed_boost_desired)
+            meta["occluded_speed_boost_active"] = bool(speed_boost_active)
+            meta["occluded_speed_boost_exact"] = bool(occluded_speed_boost_exact)
+            meta["effective_v_max"] = float(eff_v_max)
 
             if mode == 1:
                 # --- Random walker: heading noise + occasional large turn ---
-                dtheta = self._rng.normal(0.0, 0.0)          # small heading jitter
-                if self._rng.random() < 0.05:                 # 5% chance of a large turn
-                    dtheta += self._rng.normal(0.0, 0.2)
+                jitter_std = float(meta.get("heading_jitter_std", base_jitter_std))
+                turn_prob = float(meta.get("large_turn_prob", large_turn_prob))
+                turn_std = float(meta.get("large_turn_std", large_turn_std))
+                dtheta = self._rng.normal(0.0, jitter_std)
+                if self._rng.random() < turn_prob:
+                    dtheta += self._rng.normal(0.0, turn_std)
                 theta += dtheta
-                vx, vy = v_max * np.cos(theta), v_max * np.sin(theta)
+
+                # Occluded-agent emergence bias (kept stochastic).
+                if (not forced_occluder) and emergence_enable and base_v_max > 1e-9:
+                    rel_from_robot = np.array([x - robot_xy[0], y - robot_xy[1]], dtype=float)
+                    dist_from_robot = float(np.linalg.norm(rel_from_robot))
+                    in_front = float(np.dot(rel_from_robot, goal_dir)) >= emergence_forward_min_proj
+                    trigger = (dist_from_robot <= emergence_zone_radius) and (in_front or (not emergence_forward_only))
+                    if emergence_occluded_only:
+                        trigger = trigger and (not is_visible)
+                    if trigger and self._rng.random() < emergence_turn_prob:
+                        ahead = emergence_target_ahead + float(self._rng.normal(0.0, 0.5))
+                        lat = float(self._rng.normal(0.0, emergence_lateral_jitter))
+                        target = robot_xy + ahead * goal_dir + lat * goal_lat
+                        to_target = target - np.array([x, y], dtype=float)
+                        dir_target = self._safe_normalize(to_target)
+                        if dir_target is not None:
+                            theta_target = float(np.arctan2(dir_target[1], dir_target[0]))
+                            d = self._wrap_angle(theta_target - theta)
+                            theta += emergence_turn_gain * d + float(self._rng.normal(0.0, emergence_noise_std))
+
+                # Near-robot pedestrian-aware sidestep/avoidance.
+                if (not forced_occluder) and ped_aware_enable and base_v_max > 1e-9:
+                    if (not ped_aware_visible_only) or is_visible:
+                        rel_to_robot = robot_xy - np.array([x, y], dtype=float)
+                        dist = float(np.linalg.norm(rel_to_robot))
+                        if dist <= ped_aware_radius and dist > 1e-9:
+                            u_to_robot = rel_to_robot / dist
+                            u_heading = np.array([np.cos(theta), np.sin(theta)], dtype=float)
+                            approach_cos = float(np.dot(u_heading, u_to_robot))
+                            if approach_cos > ped_aware_approach_cos:
+                                side_sign = float(meta.get("pass_side_sign", 0.0))
+                                if side_sign == 0.0:
+                                    side_sign = 1.0 if self._rng.random() < 0.5 else -1.0
+                                if self._rng.random() < ped_aware_side_flip_prob:
+                                    side_sign = -side_sign
+                                meta["pass_side_sign"] = float(side_sign)
+
+                                side_vec = side_sign * np.array([-u_to_robot[1], u_to_robot[0]], dtype=float)
+                                avoid_vec = (
+                                    ped_aware_side_weight * side_vec
+                                    - ped_aware_away_weight * u_to_robot
+                                    + 0.2 * u_heading
+                                )
+                                dir_avoid = self._safe_normalize(avoid_vec)
+                                if dir_avoid is not None:
+                                    theta_avoid = float(np.arctan2(dir_avoid[1], dir_avoid[0]))
+                                    closeness = float(np.clip((ped_aware_radius - dist) / max(ped_aware_radius, 1e-6), 0.0, 1.0))
+                                    approach_scale = float(
+                                        np.clip(
+                                            (approach_cos - ped_aware_approach_cos)
+                                            / max(1.0 - ped_aware_approach_cos, 1e-6),
+                                            0.0,
+                                            1.0,
+                                        )
+                                    )
+                                    alpha = ped_aware_turn_gain * (0.35 + 0.65 * closeness) * approach_scale
+                                    d = self._wrap_angle(theta_avoid - theta)
+                                    theta += alpha * d + float(self._rng.normal(0.0, ped_aware_noise_std * closeness))
+
+                if forced_occluder and base_v_max > 1e-9:
+                    sep_margin = float(meta.get("forced_occluder_sep_margin", 0.35))
+                    repel = np.zeros(2, dtype=float)
+                    p_i = np.array([x, y], dtype=float)
+                    for j in range(self.obs.shape[0]):
+                        if j == i:
+                            continue
+                        meta_j = self.obs_meta[j] if j < len(self.obs_meta) else {}
+                        if not bool(meta_j.get("forced_occluder", False)):
+                            continue
+                        p_j = np.asarray(self.obs[j, :2], dtype=float)
+                        diff = p_i - p_j
+                        dist = float(np.linalg.norm(diff))
+                        desired = float(r + self.obs[j, 2] + sep_margin)
+                        if dist <= 1e-6:
+                            ang = float(self._rng.uniform(-np.pi, np.pi))
+                            repel += np.array([np.cos(ang), np.sin(ang)], dtype=float)
+                        elif dist < desired:
+                            repel += ((desired - dist) / max(desired, 1e-6)) * (diff / dist)
+                    repel_dir = self._safe_normalize(repel)
+                    if repel_dir is not None:
+                        theta_repel = float(np.arctan2(repel_dir[1], repel_dir[0]))
+                        theta += 0.45 * self._wrap_angle(theta_repel - theta)
+                    drift_x = meta.get("forced_drift_dir_x", None)
+                    drift_y = meta.get("forced_drift_dir_y", None)
+                    if drift_x is not None and drift_y is not None:
+                        drift_dir = self._safe_normalize(np.array([float(drift_x), float(drift_y)], dtype=float))
+                        if drift_dir is not None:
+                            theta_drift = float(np.arctan2(drift_dir[1], drift_dir[0]))
+                            drift_gain = float(meta.get("forced_drift_gain", 0.25))
+                            theta += drift_gain * self._wrap_angle(theta_drift - theta)
+
+                theta = self._wrap_angle(theta)
+                vx, vy = eff_v_max * np.cos(theta), eff_v_max * np.sin(theta)
                 meta['theta'] = theta   # store latest heading in meta
 
             # Update position
             x_new = x + vx * self.dt
             y_new = y + vy * self.dt
 
+            x_min = meta.get("x_min", None)
+            x_max = meta.get("x_max", None)
+            if x_min is not None and x_max is not None:
+                x_min = float(x_min)
+                x_max = float(x_max)
+                if x_new >= x_max:
+                    x_new = x_max
+                    vx = -abs(vx)
+                    if mode == 1:
+                        meta['theta'] = self._wrap_angle(np.pi - float(meta['theta']))
+                        vx, vy = eff_v_max*np.cos(meta['theta']), eff_v_max*np.sin(meta['theta'])
+                elif x_new <= x_min:
+                    x_new = x_min
+                    vx = abs(vx)
+                    if mode == 1:
+                        meta['theta'] = self._wrap_angle(np.pi - float(meta['theta']))
+                        vx, vy = eff_v_max*np.cos(meta['theta']), eff_v_max*np.sin(meta['theta'])
+
             # Reflect at y bounds
             if y_new >= y_max:
                 y_new = y_max
                 vy = -abs(vy)
                 if mode == 1:
-                    meta['theta'] = -meta['theta']            # mirror across x-axis
-                    vx, vy = v_max*np.cos(meta['theta']), v_max*np.sin(meta['theta'])
+                    meta['theta'] = self._wrap_angle(-float(meta['theta']))  # mirror across x-axis
+                    vx, vy = eff_v_max*np.cos(meta['theta']), eff_v_max*np.sin(meta['theta'])
             elif y_new <= y_min:
                 y_new = y_min
                 vy =  abs(vy)
                 if mode == 1:
-                    meta['theta'] = -meta['theta']
-                    vx, vy = v_max*np.cos(meta['theta']), v_max*np.sin(meta['theta'])
+                    meta['theta'] = self._wrap_angle(-float(meta['theta']))
+                    vx, vy = eff_v_max*np.cos(meta['theta']), eff_v_max*np.sin(meta['theta'])
 
             # Write back
             self.obs[i, 0] = x_new
             self.obs[i, 1] = y_new
             self.obs[i, 3] = vx
             self.obs[i, 4] = vy
+        self._dyn_behavior_step_counter += 1
         
     def render_dyn_obs(self):
         if not self.plot_dyn_obs:
@@ -291,11 +1134,11 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             if occluded_mask is not None:
                 is_occ = int(bool(occluded_mask[i]))
                 if self._last_occluded_mask is None or self._last_occluded_mask[i] != is_occ:
-                    patch.set_facecolor('orange' if is_occ else 'gray')
+                    patch.set_facecolor(self.plot_dyn_obs_hidden_color if is_occ else self.plot_dyn_obs_visible_color)
                     if self._last_occluded_mask is not None:
                         self._last_occluded_mask[i] = is_occ
             else:
-                patch.set_facecolor('gray')
+                patch.set_facecolor(self.plot_dyn_obs_visible_color)
 
             # Check if there are arrows to update
             if self.plot_dyn_obs_arrows and i < len(self.obs_vel_arrows):
@@ -370,35 +1213,49 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         if sensing_range is None:
             return None
 
-        try:
-            visible_obs, _ = occ_filter_fn(self.robot.X, self.obs)
-        except Exception:
-            return None
-
         obs_arr = np.asarray(self.obs, dtype=float)
         visible_mask = np.zeros(obs_arr.shape[0], dtype=bool)
-        row_to_indices = {}
-        for i, row in enumerate(obs_arr):
-            key = tuple(row.tolist())
-            if key in row_to_indices:
-                row_to_indices[key].append(i)
-            else:
-                row_to_indices[key] = [i]
 
-        unresolved = []
-        for vis in visible_obs:
-            vis_row = np.asarray(vis, dtype=float).reshape(-1)
-            idxs = row_to_indices.get(tuple(vis_row.tolist()), None)
-            if idxs is not None:
-                visible_mask[idxs] = True
-            else:
-                unresolved.append(vis_row)
+        # Fast path: request visible indices directly from occlusion filter.
+        try:
+            _, _, vis_idx = occ_filter_fn(self.robot.X, self.obs, return_indices=True)
+            if vis_idx is None:
+                vis_idx = []
+            vis_idx = np.asarray(vis_idx, dtype=int).reshape(-1)
+            if vis_idx.size > 0:
+                vis_idx = vis_idx[(vis_idx >= 0) & (vis_idx < visible_mask.shape[0])]
+                visible_mask[vis_idx] = True
+        except TypeError:
+            # Backward-compatible path for filters that do not support return_indices.
+            try:
+                visible_obs, _ = occ_filter_fn(self.robot.X, self.obs)
+            except Exception:
+                return None
 
-        if unresolved:
-            for vis_row in unresolved:
-                matches = np.all(np.isclose(obs_arr, vis_row, rtol=0.0, atol=1e-9), axis=1)
-                if np.any(matches):
-                    visible_mask |= matches
+            row_to_indices = {}
+            for i, row in enumerate(obs_arr):
+                key = tuple(row.tolist())
+                if key in row_to_indices:
+                    row_to_indices[key].append(i)
+                else:
+                    row_to_indices[key] = [i]
+
+            unresolved = []
+            for vis in visible_obs:
+                vis_row = np.asarray(vis, dtype=float).reshape(-1)
+                idxs = row_to_indices.get(tuple(vis_row.tolist()), None)
+                if idxs is not None:
+                    visible_mask[idxs] = True
+                else:
+                    unresolved.append(vis_row)
+
+            if unresolved:
+                for vis_row in unresolved:
+                    matches = np.all(np.isclose(obs_arr, vis_row, rtol=0.0, atol=1e-9), axis=1)
+                    if np.any(matches):
+                        visible_mask |= matches
+        except Exception:
+            return None
 
         # Orange for all non-visible obstacles:
         # - occluded in sensing range
@@ -471,7 +1328,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             if self.dyn_obs_patch is None:
                 # Initialize moving obstacles
                 self.dyn_obs_patch = [self.ax.add_patch(plt.Circle(
-                    (0, 0), 0, edgecolor='black', facecolor='gray', fill=True)) for _ in range(len(self.obs))]
+                    (0, 0), 0, edgecolor='black', facecolor=self.plot_dyn_obs_visible_color, fill=True)) for _ in range(len(self.obs))]
                 self.dyn_obs_labels = [None] * len(self.obs)
                 self.init_obs_info = self.obs.copy()
                 
@@ -480,9 +1337,11 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 return
             
             self.render_dyn_obs()
+            self._update_trajectory_artist(self.ax, "robot_trajectory_collection")
             self._update_infeasible_marker()
             self._update_qp_stats_text()
             self._update_backup_rollout_plot()
+            self._update_tracking_view()
 
             self.fig.canvas.draw_idle()
             self.fig.canvas.flush_events()
@@ -490,10 +1349,11 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             if self.save_animation:
                 self.ani_idx += 1
                 if force_save or self.ani_idx % self.save_per_frame == 0:
-                    plt.savefig(self.current_directory_path +
-                                "/output/animations/" + "t_step_" + str(self.ani_idx//self.save_per_frame).zfill(4) + ".png", dpi=300)
-                    # plt.savefig(self.current_directory_path +
-                    #             "/output/animations/" + "t_step_" + str(self.ani_idx//self.save_per_frame).zfill(4) + ".svg")
+                    plt.savefig(
+                        self._frame_output_path(self.ani_idx // self.save_per_frame),
+                        dpi=self.save_frame_dpi,
+                        format=self.save_frame_ext,
+                    )
 
     def _update_infeasible_marker(self):
         if not self.show_animation:
@@ -501,6 +1361,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         if not self._infeasible_active:
             if self._infeasible_text is not None:
                 self._infeasible_text.set_visible(False)
+            if self._tracking_infeasible_text is not None:
+                self._tracking_infeasible_text.set_visible(False)
             return
         current_position = self.robot.get_position()
         pos = (current_position[0] + 0.5, current_position[1] + 0.5)
@@ -512,6 +1374,16 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         else:
             self._infeasible_text.set_position(pos)
             self._infeasible_text.set_visible(True)
+        if self.tracking_view_enabled:
+            tracking_pos = (current_position[0] + 0.35, current_position[1] + 0.35)
+            if self._tracking_infeasible_text is None:
+                self._tracking_infeasible_text = self.tracking_view_ax.text(
+                    tracking_pos[0], tracking_pos[1], '!',
+                    color='red', weight='bold', fontsize=22, zorder=50
+                )
+            else:
+                self._tracking_infeasible_text.set_position(tracking_pos)
+                self._tracking_infeasible_text.set_visible(True)
 
     def draw_infeasible(self):
         """
@@ -537,8 +1409,16 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             return
         scenarios = getattr(pos_controller, "occlusion_scenarios", None)
         if not scenarios:
+            scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
+        if not scenarios:
             if self.backup_rollout_line is not None:
                 self.backup_rollout_line.set_visible(False)
+            if self.backup_rollout_end_marker is not None:
+                self.backup_rollout_end_marker.set_offsets(np.empty((0, 2)))
+            if self.tracking_view_backup_rollout_line is not None:
+                self.tracking_view_backup_rollout_line.set_visible(False)
+            if self.tracking_view_backup_rollout_end_marker is not None:
+                self.tracking_view_backup_rollout_end_marker.set_offsets(np.empty((0, 2)))
             if self.backup_safe_contour:
                 self.robot._clear_artists(self.backup_safe_contour)
             return
@@ -572,23 +1452,59 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
 
         xy = traj[:, 0:2]
         if xy.size == 0:
+            if self.backup_rollout_line is not None:
+                self.backup_rollout_line.set_visible(False)
+            if self.backup_rollout_end_marker is not None:
+                self.backup_rollout_end_marker.set_offsets(np.empty((0, 2)))
+            if self.tracking_view_backup_rollout_line is not None:
+                self.tracking_view_backup_rollout_line.set_visible(False)
+            if self.tracking_view_backup_rollout_end_marker is not None:
+                self.tracking_view_backup_rollout_end_marker.set_offsets(np.empty((0, 2)))
             return
+
+        xy_plot = xy
+        end_xy = xy[-1, :].reshape(1, 2)
 
         if self.backup_rollout_line is None:
             (line,) = self.ax.plot(
-                xy[:, 0], xy[:, 1],
-                linestyle='--', color='tab:green',
-                linewidth=2.0, alpha=0.9, zorder=2
+                xy_plot[:, 0], xy_plot[:, 1],
+                linestyle='-', color='tab:green',
+                linewidth=2.4, alpha=1.0, zorder=20
             )
+            line.set_path_effects([
+                path_effects.Stroke(linewidth=4.2, foreground='white'),
+                path_effects.Normal(),
+            ])
             self.backup_rollout_line = line
+            self.backup_rollout_end_marker = self.ax.scatter(
+                end_xy[:, 0], end_xy[:, 1],
+                s=26, facecolors='tab:green', edgecolors='white',
+                linewidths=0.8, alpha=1.0, zorder=21
+            )
         else:
-            self.backup_rollout_line.set_data(xy[:, 0], xy[:, 1])
+            self.backup_rollout_line.set_data(xy_plot[:, 0], xy_plot[:, 1])
             self.backup_rollout_line.set_visible(True)
+            if self.backup_rollout_end_marker is not None:
+                self.backup_rollout_end_marker.set_offsets(end_xy)
+
+        if self.tracking_view_backup_rollout_line is not None:
+            self.tracking_view_backup_rollout_line.set_data(xy_plot[:, 0], xy_plot[:, 1])
+            self.tracking_view_backup_rollout_line.set_visible(True)
+        if self.tracking_view_backup_rollout_end_marker is not None:
+            self.tracking_view_backup_rollout_end_marker.set_offsets(end_xy)
 
         # Safe-harbor contour is intentionally disabled for now.
 
     def _update_qp_stats_text(self):
         if not self.show_animation:
+            return
+        if not bool(self.robot_spec.get("show_qp_stats_text", True)):
+            if self.qp_stats_text is not None:
+                try:
+                    self.qp_stats_text.remove()
+                except Exception:
+                    pass
+                self.qp_stats_text = None
             return
         pos_controller = getattr(self, "pos_controller", None)
         if pos_controller is None:
@@ -634,9 +1550,16 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             f"Computation   : {time_text:<{value_width}}\n"
             f"Control Policy: {policy_text:<{value_width}}"
         )
+        text_ax = self.tracking_view_ax if self.tracking_view_enabled else self.ax
+        if self.qp_stats_text is not None and getattr(self.qp_stats_text, "axes", None) is not text_ax:
+            try:
+                self.qp_stats_text.remove()
+            except Exception:
+                pass
+            self.qp_stats_text = None
         if self.qp_stats_text is None:
-            self.qp_stats_text = self.ax.text(
-                0.02, 0.98, text, transform=self.ax.transAxes,
+            self.qp_stats_text = text_ax.text(
+                0.02, 0.98, text, transform=text_ax.transAxes,
                 ha='left', va='top', fontsize=9, family='monospace',
                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2.0))
         else:
@@ -694,7 +1617,14 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         # 4. Update the CBF constraints & 5. Solve the control problem
         control_ref = {'state_machine': self.state_machine,
                        'u_ref': u_ref,
-                       'goal': self.goal}
+                       'goal': self.goal,
+                       'waypoints': None if getattr(self, 'waypoints', None) is None else np.asarray(self.waypoints, dtype=float),
+                       'goal_index': int(getattr(self, 'current_goal_index', 0))}
+        try:
+            # Common bookkeeping for benchmark diagnostics across controllers.
+            self.pos_controller.last_u_ref = np.asarray(u_ref, dtype=float).reshape(-1, 1)
+        except Exception:
+            pass
         
         control_obs = self.nearest_multi_obs
         # For pure baseline CBF-QP, apply visibility filtering so only currently
@@ -727,6 +1657,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             else:
                 self._infeasible_seen = True
                 u = self.robot.stop()
+        try:
+            self.pos_controller.last_u = np.asarray(u, dtype=float).reshape(-1, 1)
+        except Exception:
+            pass
 
         if self.show_animation and self.fig is not None:
             plt.figure(self.fig.number)
@@ -780,6 +1714,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         # 9. Step the robot
         self.robot.step(u, self.u_att)
         self.u_pos = u
+        self._record_trajectory_sample()
 
         if self.plot_occ_polygons and hasattr(self.robot, "update_occlusion_polygons"):
             scenarios = getattr(self.pos_controller, "occlusion_scenarios", None)

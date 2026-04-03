@@ -101,6 +101,63 @@ class OcclusionUtils:
         radius = float(radius)
         vals = A @ center
         return np.all(vals <= (b0 - radius + eps))
+
+    def _occlusion_polygon_v1(self, p, c, R_o, sensing_R, dir1, dir2, t1, t2):
+        """
+        Legacy occlusion polygon:
+        front facet is the chord connecting tangent points [t1, t2].
+        """
+        far1 = p + sensing_R * dir1
+        far2 = p + sensing_R * dir2
+        poly_pts = np.vstack([t1, t2, far2, far1])
+        return poly_pts, {"far1": far1, "far2": far2, "front1": t1, "front2": t2}
+
+    def _occlusion_polygon_v2(self, p, c, R_o, sensing_R, dir1, dir2, t1, t2):
+        """
+        Conservative occlusion polygon:
+        keep side/rear facets, but move the front facet toward the robot to the
+        supporting line perpendicular to the robot-obstacle line-of-sight and
+        tangent to the obstacle at the nearest point. This makes the polygon
+        include the full visible obstacle body.
+        """
+        del t1, t2  # front facet no longer uses the tangent chord directly
+
+        los = np.asarray(c, dtype=float).reshape(2,) - np.asarray(p, dtype=float).reshape(2,)
+        d = float(np.linalg.norm(los))
+        if d <= max(float(R_o), 1e-9):
+            return None, None
+        n = los / d
+        support_pt = np.asarray(c, dtype=float).reshape(2,) - float(R_o) * n
+        rhs = float(n @ support_pt)
+        p_rhs = float(n @ p)
+
+        denom1 = float(n @ dir1)
+        denom2 = float(n @ dir2)
+        if abs(denom1) <= 1e-9 or abs(denom2) <= 1e-9:
+            return None, None
+
+        lam1 = (rhs - p_rhs) / denom1
+        lam2 = (rhs - p_rhs) / denom2
+        if (not np.isfinite(lam1)) or (not np.isfinite(lam2)):
+            return None, None
+        if lam1 <= 1e-9 or lam2 <= 1e-9:
+            return None, None
+        if lam1 >= sensing_R or lam2 >= sensing_R:
+            return None, None
+
+        front1 = p + lam1 * dir1
+        front2 = p + lam2 * dir2
+        far1 = p + sensing_R * dir1
+        far2 = p + sensing_R * dir2
+        poly_pts = np.vstack([front1, front2, far2, far1])
+        return poly_pts, {
+            "far1": far1,
+            "far2": far2,
+            "front1": front1,
+            "front2": front2,
+            "support_point": support_pt,
+            "los_unit": n,
+        }
     
     def _build_occlusion_scenario(self, robot_state, obs, is_static=False):
         """
@@ -116,12 +173,11 @@ class OcclusionUtils:
               'poly'      : (4, 2) occlusion polygon vertices
             }
             Returns None if no valid occlusion is formed.
-        Polygon Order: [t1, t2, far2, far1] where
-        # Edge 0: t1 -> t2 (Front Facet)
-        # Edge 1: t2 -> far2 (Side Facet 1)
-        # Edge 2: far2 -> far1 (Back Facet)
-        # Edge 3: far1 -> t1 (Side Facet 2)
-        poly = np.vstack([t1, t2, far2, far1])
+        Polygon Order: [front1, front2, far2, far1] where
+        # Edge 0: front1 -> front2 (Front Facet)
+        # Edge 1: front2 -> far2   (Side Facet 1)
+        # Edge 2: far2 -> far1     (Back Facet)
+        # Edge 3: far1 -> front1   (Side Facet 2)
         """
 
         px = float(robot_state[0, 0])
@@ -167,16 +223,28 @@ class OcclusionUtils:
             return None
         dir2 /= n2  # tangenet 2 unit vector
 
-        far1 = p + sensing_R * dir1
-        far2 = p + sensing_R * dir2
+        occ_version = str(self.robot_spec.get("occ_version", "v1")).strip().lower()
+        if occ_version not in {"v1", "v2"}:
+            occ_version = "v1"
 
-        # occlusion polygon: [t1, t2, far2, far1]
-        poly_pts = np.vstack([t1, t2, far2, far1])
-        poly = Path(poly_pts)
+        if occ_version == "v2":
+            poly_pts, geom_meta = self._occlusion_polygon_v2(p, c, R_o, sensing_R, dir1, dir2, t1, t2)
+            if poly_pts is None:
+                poly_pts, geom_meta = self._occlusion_polygon_v1(p, c, R_o, sensing_R, dir1, dir2, t1, t2)
+                occ_version = "v1_fallback"
+        else:
+            poly_pts, geom_meta = self._occlusion_polygon_v1(p, c, R_o, sensing_R, dir1, dir2, t1, t2)
 
         A, b0 = self._polygon_to_halfspaces(poly_pts)
         if A is None:
             return None
+
+        if occ_version.startswith("v2") and not self._circle_fully_in_halfspaces(c, R_o, A, b0):
+            poly_pts, geom_meta = self._occlusion_polygon_v1(p, c, R_o, sensing_R, dir1, dir2, t1, t2)
+            A, b0 = self._polygon_to_halfspaces(poly_pts)
+            if A is None:
+                return None
+            occ_version = "v1_fallback"
 
         # generate expand velocity vectors (default is all v_adv)
         v_expand_vec = np.full(len(b0), v_adv)
@@ -199,6 +267,7 @@ class OcclusionUtils:
             'v_adv_max': v_adv,
             'arc_adv': arc_adv,
             'poly': poly_pts,
+            'occ_version': occ_version,
             ## For arc softmax
             'robot_pos': p,
             'obs_center': c,
@@ -206,6 +275,8 @@ class OcclusionUtils:
             't1': t1,
             't2': t2,
         }
+        if geom_meta:
+            scenario.update(geom_meta)
         
         fn = getattr(self, "_occ_barrier_fn", None)
         if fn is None:
@@ -218,12 +289,15 @@ class OcclusionUtils:
         
         return scenario
     
-    def _filter_visible_and_build_occ(self, robot_state, obs_list):
+    def _filter_visible_and_build_occ(self, robot_state, obs_list, return_indices=False):
         
         visible_obs = []
         occl_scenarios = []
+        visible_indices = []
 
         if obs_list is None:
+            if return_indices:
+                return visible_obs, occl_scenarios, visible_indices
             return visible_obs, occl_scenarios
 
         obs_arr = np.array(obs_list, dtype=float)
@@ -239,6 +313,8 @@ class OcclusionUtils:
             if (o[0]-px)**2 + (o[1]-py)**2 <= R_sense2:
                 keep.append(k)
         if not keep:
+            if return_indices:
+                return visible_obs, occl_scenarios, visible_indices
             return visible_obs, occl_scenarios
 
         obs_arr = obs_arr[keep]
@@ -272,6 +348,8 @@ class OcclusionUtils:
                 continue
 
             visible_obs.append(obs)
+            if return_indices:
+                visible_indices.append(int(keep[int(idx)]))
 
             # verify type flag
             obs_type = None
@@ -289,6 +367,8 @@ class OcclusionUtils:
             if sc is not None and sc.get('poly') is not None:
                 occl_scenarios.append(sc)
 
+        if return_indices:
+            return visible_obs, occl_scenarios, visible_indices
         return visible_obs, occl_scenarios
     
     def _u_pi_at(self, x, scenarios, t=0.0):

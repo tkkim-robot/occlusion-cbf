@@ -34,6 +34,35 @@ def angle_normalize(x):
 
 
 if _JAX_AVAILABLE:
+    def _jax_occ_target_normals(
+        p,
+        A_pad,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
+    ):
+        use_los = jnp.logical_and(front_mode_los, obs_center_valid > 0.5)
+        los = p[None, :] - obs_center_pad
+        los_norm = jnp.linalg.norm(los, axis=1, keepdims=True)
+        los_dir = los / jnp.maximum(los_norm, 1e-9)
+        replace_front = jnp.logical_and(use_los, los_norm[:, 0] > 1e-9)
+        front_normal = jnp.where(replace_front[:, None], los_dir, A_pad[:, 0, :])
+        return A_pad.at[:, 0, :].set(front_normal)
+
+    def _jax_occ_weighted_scenario_average(targets, scores, use_target, kappa):
+        valid_scores = jnp.where(use_target, scores, -jnp.inf)
+        max_score = jnp.max(valid_scores)
+        max_score_safe = jnp.where(jnp.isfinite(max_score), max_score, 0.0)
+        z = jnp.where(
+            use_target,
+            jnp.exp(kappa * (valid_scores - max_score_safe)),
+            0.0,
+        )
+        z_sum = jnp.sum(z)
+        weights = z / jnp.maximum(z_sum, 1e-9)
+        weighted = jnp.sum(weights[:, None] * targets, axis=0)
+        return jnp.where(z_sum > 0.0, weighted, jnp.zeros((2,), dtype=targets.dtype))
+
     def _jax_occ_vref_from_pos_strict(
         p,
         A_pad,
@@ -41,14 +70,18 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         radius,
+        scenario_kappa,
     ):
         """
         Strict-active occlusion v_ref (legacy DI behavior):
         - Per scenario: average active facets (h_k >= 0)
         - If no active facet: use argmax(h_k)
-        - Then average per-scenario v_target across scenarios
+        - Then urgency-weight per-scenario v_target using max(h_k)
         """
         h = (
             jnp.einsum("skd,d->sk", A_pad, p)
@@ -59,14 +92,17 @@ if _JAX_AVAILABLE:
         valid_bool = valid_mask > 0.5
         neg_inf = jnp.full_like(h, -jnp.inf)
         h_valid = jnp.where(valid_bool, h, neg_inf)
+        A_target = _jax_occ_target_normals(
+            p, A_pad, obs_center_pad, obs_center_valid, front_mode_los
+        )
 
         active_bool = jnp.logical_and(valid_bool, h_valid >= 0.0)
         active_count = jnp.sum(active_bool.astype(A_pad.dtype), axis=1, keepdims=True)
-        active_sum = jnp.einsum("sk,skd->sd", active_bool.astype(A_pad.dtype), A_pad)
+        active_sum = jnp.einsum("sk,skd->sd", active_bool.astype(A_pad.dtype), A_target)
         active_mean = active_sum / jnp.maximum(active_count, 1.0)
 
         best_idx = jnp.argmax(h_valid, axis=1)
-        best_normal = A_pad[jnp.arange(A_pad.shape[0]), best_idx, :]
+        best_normal = A_target[jnp.arange(A_pad.shape[0]), best_idx, :]
 
         use_active = active_count[:, 0] > 0.0
         normal = jnp.where(use_active[:, None], active_mean, best_normal)
@@ -76,11 +112,13 @@ if _JAX_AVAILABLE:
         scenario_present = jnp.any(valid_bool, axis=1)
         use_target = jnp.logical_and(scenario_present, norm > 1e-9)
         targets = jnp.where(use_target[:, None], direction * v_adv_vec[:, None], 0.0)
-
-        count = jnp.sum(use_target.astype(A_pad.dtype))
-        v_sum = jnp.sum(targets, axis=0)
-        v_ref = v_sum / jnp.maximum(count, 1.0)
-        return jnp.where(count > 0.0, v_ref, jnp.zeros((2,), dtype=A_pad.dtype))
+        scores = jnp.max(h_valid, axis=1)
+        return _jax_occ_weighted_scenario_average(
+            targets,
+            scores,
+            use_target,
+            scenario_kappa,
+        )
 
     def _jax_occ_vref_from_pos(
         p,
@@ -89,8 +127,12 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         radius,
+        scenario_kappa,
     ):
         """Vectorized occlusion velocity reference from position only."""
         h = (
@@ -102,6 +144,9 @@ if _JAX_AVAILABLE:
         valid_bool = valid_mask > 0.5
         neg_inf = jnp.full_like(h, -jnp.inf)
         h_valid = jnp.where(valid_bool, h, neg_inf)
+        A_target = _jax_occ_target_normals(
+            p, A_pad, obs_center_pad, obs_center_valid, front_mode_los
+        )
 
         # Smooth facet blend to avoid discontinuous facet switching,
         # which is particularly harmful for non-holonomic heading control.
@@ -115,7 +160,7 @@ if _JAX_AVAILABLE:
         )
         z_sum = jnp.sum(z, axis=1, keepdims=True)
         lam = z / jnp.maximum(z_sum, 1e-9)
-        normal = jnp.einsum("sk,skd->sd", lam, A_pad)
+        normal = jnp.einsum("sk,skd->sd", lam, A_target)
 
         norm = jnp.linalg.norm(normal, axis=1)
         direction = normal / jnp.maximum(norm[:, None], 1e-9)
@@ -123,11 +168,13 @@ if _JAX_AVAILABLE:
         scenario_present = jnp.any(valid_bool, axis=1)
         use_target = jnp.logical_and(scenario_present, norm > 1e-9)
         targets = jnp.where(use_target[:, None], direction * v_adv_vec[:, None], 0.0)
-
-        count = jnp.sum(use_target.astype(A_pad.dtype))
-        v_sum = jnp.sum(targets, axis=0)
-        v_ref = v_sum / jnp.maximum(count, 1.0)
-        return jnp.where(count > 0.0, v_ref, jnp.zeros((2,), dtype=A_pad.dtype))
+        scores = jnp.max(h_valid, axis=1)
+        return _jax_occ_weighted_scenario_average(
+            targets,
+            scores,
+            use_target,
+            scenario_kappa,
+        )
 
 
     _jax_occ_vref_pos_jac_strict = jax.jacfwd(_jax_occ_vref_from_pos_strict, argnums=0)
@@ -141,16 +188,22 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         Kp,
         k_d,
         a_lim,
         v_max,
         radius,
+        scenario_kappa,
     ):
         v = x[2:4]
         v_ref = _jax_occ_vref_from_pos_strict(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau, radius, scenario_kappa
         )
         e = v - v_ref
         u_unsat = -Kp * e - k_d * v
@@ -170,17 +223,23 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         Kp,
         k_d,
         a_lim,
         v_max,
         radius,
+        scenario_kappa,
         eps_fd,
     ):
         del eps_fd
         Jp = _jax_occ_vref_pos_jac_strict(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau, radius, scenario_kappa
         )
 
         Bv = -(Kp + k_d) * jnp.eye(2, dtype=x.dtype)
@@ -190,7 +249,7 @@ if _JAX_AVAILABLE:
         return jnp.concatenate([top, bottom], axis=0)
 
 
-    @partial(jax.jit, static_argnums=(7,))
+    @partial(jax.jit, static_argnums=(10,))
     def _jax_rollout_kernel_di(
         x0,
         A_pad,
@@ -198,6 +257,9 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         dt,
         n_steps,
         Kp,
@@ -205,6 +267,7 @@ if _JAX_AVAILABLE:
         a_lim,
         v_max,
         radius,
+        scenario_kappa,
         eps_fd,
     ):
         """
@@ -219,26 +282,31 @@ if _JAX_AVAILABLE:
 
             k1 = _jax_di_f_cl(
                 x, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t, Kp, k_d, a_lim, v_max, radius
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t, Kp, k_d, a_lim, v_max, radius, scenario_kappa
             )
             k2 = _jax_di_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa
             )
             k3 = _jax_di_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa
             )
             k4 = _jax_di_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + dt, Kp, k_d, a_lim, v_max, radius
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
             x_mid = x + 0.5 * dt * k2
             A_mid = _jax_di_F_cl_jac(
                 x_mid, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, eps_fd
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa, eps_fd
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -254,7 +322,8 @@ if _JAX_AVAILABLE:
         t_last = dt * (n_steps - 1)
         f_last = _jax_di_f_cl(
             x_final, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-            t_last, Kp, k_d, a_lim, v_max, radius
+            obs_center_pad, obs_center_valid, front_mode_los,
+            t_last, Kp, k_d, a_lim, v_max, radius, scenario_kappa
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -275,33 +344,85 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         ref_speed,
         radius,
         use_strict,
+        use_norm_mode,
+        scenario_kappa,
     ):
         v_ref = jax.lax.cond(
             use_strict,
             lambda _: _jax_occ_vref_from_pos_strict(
-                pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
+                pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
+                tau, radius, scenario_kappa
             ),
             lambda _: _jax_occ_vref_from_pos(
-                pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, radius
+                pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
+                tau, radius, scenario_kappa
             ),
             operand=None,
         )
-        v_ref_norm = jnp.linalg.norm(v_ref)
-        use_norm = ref_speed > 0.0
-        scale = jnp.where(use_norm, ref_speed / jnp.maximum(v_ref_norm, 1e-9), 1.0)
-        v_ref = jnp.where(v_ref_norm > 1e-9, v_ref * scale, v_ref)
+        del ref_speed, use_norm_mode
         return v_ref, jnp.linalg.norm(v_ref)
 
+
+    # def _jax_uni_virtual_cmd_from_vref(
+    #     theta,
+    #     v_ref,
+    #     v_ref_prev,
+    #     dt,
+    #     v_max,
+    #     w_max,
+    #     k_theta_p,
+    #     k_theta_d,
+    #     k_v_p,
+    #     k_v_d,
+    #     k_turn_boost,
+    #     turn_boost_angle,
+    #     v_min_cmd,
+    # ):
+    #     v_ref_norm = jnp.linalg.norm(v_ref)
+    #     v_ref_prev_norm = jnp.linalg.norm(v_ref_prev)
+    #     theta_ref = jnp.arctan2(v_ref[1], v_ref[0])
+    #     theta_ref_prev = jnp.arctan2(v_ref_prev[1], v_ref_prev[0])
+    #     e_theta = _jax_angle_normalize(theta_ref - theta)
+    #     e_theta_prev = _jax_angle_normalize(theta_ref_prev - theta)
+
+    #     dt_safe = jnp.maximum(dt, 1e-6)
+    #     theta_ref_dot = _jax_angle_normalize(theta_ref - theta_ref_prev) / dt_safe
+    #     e_theta_dot = theta_ref_dot
+
+    #     boost = 1.0 + k_turn_boost * jnp.minimum(
+    #         1.0, jnp.abs(e_theta) / jnp.maximum(turn_boost_angle, 1e-3)
+    #     )
+    #     omega_unsat = boost * (k_theta_p * e_theta + k_theta_d * e_theta_dot)
+    #     omega = jnp.clip(omega_unsat, -w_max, w_max)
+
+    #     gate = jnp.maximum(0.0, jnp.cos(e_theta))
+    #     gate_prev = jnp.maximum(0.0, jnp.cos(e_theta_prev))
+    #     v_des = jnp.clip(v_ref_norm * gate, 0.0, v_max)
+    #     v_des_prev = jnp.clip(v_ref_prev_norm * gate_prev, 0.0, v_max)
+    #     v_des_dot = (v_des - v_des_prev) / dt_safe
+
+    #     v_cmd_unsat = k_v_p * v_des + k_v_d * v_des_dot
+    #     v_cmd = jnp.clip(v_cmd_unsat, 0.0, v_max)
+    #     v_cmd = jnp.where(v_ref_norm > 1e-9, jnp.maximum(v_cmd, v_min_cmd), 0.0)
+
+    #     omega = jnp.where(v_ref_norm < 1e-9, 0.0, omega)
+    #     return jnp.array([v_cmd, omega], dtype=v_ref.dtype)
 
     def _jax_uni_virtual_cmd_from_vref(
         theta,
         v_ref,
         v_ref_prev,
         dt,
+        v_min,
         v_max,
         w_max,
         k_theta_p,
@@ -311,35 +432,61 @@ if _JAX_AVAILABLE:
         k_turn_boost,
         turn_boost_angle,
         v_min_cmd,
+        v_min_cmd_rev,
+        reverse_bias,
+        reverse_gate_angle,
+        reverse_gate_power,
     ):
         v_ref_norm = jnp.linalg.norm(v_ref)
         v_ref_prev_norm = jnp.linalg.norm(v_ref_prev)
         theta_ref = jnp.arctan2(v_ref[1], v_ref[0])
         theta_ref_prev = jnp.arctan2(v_ref_prev[1], v_ref_prev[0])
-        e_theta = _jax_angle_normalize(theta_ref - theta)
-        e_theta_prev = _jax_angle_normalize(theta_ref_prev - theta)
+
+        e_fwd = _jax_angle_normalize(theta_ref - theta)
+        e_rev = _jax_angle_normalize(theta_ref + jnp.pi - theta)
+        use_reverse = (jnp.abs(e_rev) + reverse_bias) < jnp.abs(e_fwd)
+        e_track = jnp.where(use_reverse, e_rev, e_fwd)
+
+        e_fwd_prev = _jax_angle_normalize(theta_ref_prev - theta)
+        e_rev_prev = _jax_angle_normalize(theta_ref_prev + jnp.pi - theta)
+        use_reverse_prev = (jnp.abs(e_rev_prev) + reverse_bias) < jnp.abs(e_fwd_prev)
+        e_track_prev = jnp.where(use_reverse_prev, e_rev_prev, e_fwd_prev)
 
         dt_safe = jnp.maximum(dt, 1e-6)
-        theta_ref_dot = _jax_angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-        e_theta_dot = theta_ref_dot
+        e_track_dot = _jax_angle_normalize(e_track - e_track_prev) / dt_safe
 
         boost = 1.0 + k_turn_boost * jnp.minimum(
-            1.0, jnp.abs(e_theta) / jnp.maximum(turn_boost_angle, 1e-3)
+            1.0, jnp.abs(e_track) / jnp.maximum(turn_boost_angle, 1e-3)
         )
-        omega_unsat = boost * (k_theta_p * e_theta + k_theta_d * e_theta_dot)
+        omega_unsat = boost * (k_theta_p * e_track + k_theta_d * e_track_dot)
         omega = jnp.clip(omega_unsat, -w_max, w_max)
 
-        gate = jnp.maximum(0.0, jnp.cos(e_theta))
-        gate_prev = jnp.maximum(0.0, jnp.cos(e_theta_prev))
-        v_des = jnp.clip(v_ref_norm * gate, 0.0, v_max)
-        v_des_prev = jnp.clip(v_ref_prev_norm * gate_prev, 0.0, v_max)
+        fwd_gate = jnp.maximum(0.0, jnp.cos(e_fwd))
+        fwd_gate_prev = jnp.maximum(0.0, jnp.cos(e_fwd_prev))
+        reverse_gate_angle = jnp.maximum(reverse_gate_angle, 1e-3)
+        reverse_gate_power = jnp.maximum(reverse_gate_power, 1.0)
+        rev_gate = jnp.clip(1.0 - jnp.abs(e_rev) / reverse_gate_angle, 0.0, 1.0) ** reverse_gate_power
+        rev_gate_prev = jnp.clip(1.0 - jnp.abs(e_rev_prev) / reverse_gate_angle, 0.0, 1.0) ** reverse_gate_power
+        rev_cap = jnp.maximum(0.0, jnp.abs(jnp.minimum(v_min, 0.0)))
+
+        v_des_fwd = jnp.clip(v_ref_norm * fwd_gate, 0.0, v_max)
+        v_des_fwd_prev = jnp.clip(v_ref_prev_norm * fwd_gate_prev, 0.0, v_max)
+        v_des_rev = -jnp.clip(v_ref_norm * rev_gate, 0.0, rev_cap)
+        v_des_rev_prev = -jnp.clip(v_ref_prev_norm * rev_gate_prev, 0.0, rev_cap)
+        v_des = jnp.where(use_reverse, v_des_rev, v_des_fwd)
+        v_des_prev = jnp.where(use_reverse_prev, v_des_rev_prev, v_des_fwd_prev)
         v_des_dot = (v_des - v_des_prev) / dt_safe
 
         v_cmd_unsat = k_v_p * v_des + k_v_d * v_des_dot
-        v_cmd = jnp.clip(v_cmd_unsat, 0.0, v_max)
-        v_cmd = jnp.where(v_ref_norm > 1e-9, jnp.maximum(v_cmd, v_min_cmd), 0.0)
+        v_cmd = jnp.clip(v_cmd_unsat, v_min, v_max)
+
+        fwd_floor = jnp.minimum(v_min_cmd, v_max)
+        rev_floor = jnp.minimum(v_min_cmd_rev, jnp.abs(v_min))
+        v_cmd = jnp.where(v_cmd > 1e-9, jnp.maximum(v_cmd, fwd_floor), v_cmd)
+        v_cmd = jnp.where(v_cmd < -1e-9, jnp.minimum(v_cmd, -rev_floor), v_cmd)
 
         omega = jnp.where(v_ref_norm < 1e-9, 0.0, omega)
+        v_cmd = jnp.where(v_ref_norm < 1e-9, 0.0, v_cmd)
         return jnp.array([v_cmd, omega], dtype=v_ref.dtype)
 
     def _jax_uni_backup_input_occ(
@@ -349,8 +496,12 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         dt,
+        v_min,
         v_max,
         w_max,
         k_theta_p,
@@ -360,23 +511,34 @@ if _JAX_AVAILABLE:
         k_turn_boost,
         turn_boost_angle,
         v_min_cmd,
+        v_min_cmd_rev,
+        reverse_bias,
+        reverse_gate_angle,
+        reverse_gate_power,
         uni_vref_speed,
         radius,
         use_strict_vref,
+        use_norm_mode,
+        scenario_kappa,
     ):
         theta = x[2]
         tau_prev = jnp.maximum(tau - dt, 0.0)
         v_ref, _ = _jax_scale_occ_vref(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, uni_vref_speed, radius, use_strict_vref
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau, uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
         v_ref_prev, _ = _jax_scale_occ_vref(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev, uni_vref_speed, radius, use_strict_vref
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau_prev, uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
         return _jax_uni_virtual_cmd_from_vref(
             theta,
             v_ref,
             v_ref_prev,
             dt,
+            v_min,
             v_max,
             w_max,
             k_theta_p,
@@ -386,6 +548,10 @@ if _JAX_AVAILABLE:
             k_turn_boost,
             turn_boost_angle,
             v_min_cmd,
+            v_min_cmd_rev,
+            reverse_bias,
+            reverse_gate_angle,
+            reverse_gate_power,
         )
 
     def _jax_du_backup_input_occ(
@@ -395,6 +561,9 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         dt,
         v_min,
@@ -415,6 +584,8 @@ if _JAX_AVAILABLE:
         du_vref_speed,
         radius,
         use_strict_vref,
+        use_norm_mode,
+        scenario_kappa,
     ):
         v_cur = x[3]
         tau_prev = jnp.maximum(tau - dt, 0.0)
@@ -426,13 +597,19 @@ if _JAX_AVAILABLE:
         a_stop = jnp.clip(-k_brake * v_cur, a_lb_base, a_ub_base)
 
         v_ref, v_ref_norm = _jax_scale_occ_vref(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau, du_vref_speed, radius, use_strict_vref
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau, du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
         v_ref_prev, _ = _jax_scale_occ_vref(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev, du_vref_speed, radius, use_strict_vref
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau_prev, du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
         v_ref_prev2, _ = _jax_scale_occ_vref(
-            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, tau_prev2, du_vref_speed, radius, use_strict_vref
+            x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
+            tau_prev2, du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
 
         theta = x[2]
@@ -442,6 +619,7 @@ if _JAX_AVAILABLE:
             v_ref,
             v_ref_prev,
             dt,
+            v_min,
             v_max,
             w_max,
             k_theta_p,
@@ -451,12 +629,17 @@ if _JAX_AVAILABLE:
             k_turn_boost,
             turn_boost_angle,
             v_min_cmd_emu,
+            v_min_cmd_emu,
+            0.05,
+            0.45,
+            2.0,
         )
         u_uni_prev = _jax_uni_virtual_cmd_from_vref(
             theta,
             v_ref_prev,
             v_ref_prev2,
             dt,
+            v_min,
             v_max,
             w_max,
             k_theta_p,
@@ -466,6 +649,10 @@ if _JAX_AVAILABLE:
             k_turn_boost,
             turn_boost_angle,
             v_min_cmd_emu,
+            v_min_cmd_emu,
+            0.05,
+            0.45,
+            2.0,
         )
         v_cmd = u_uni[0]
         omega = u_uni[1]
@@ -487,8 +674,12 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         dt,
+        v_min,
         v_max,
         w_max,
         k_theta_p,
@@ -498,9 +689,15 @@ if _JAX_AVAILABLE:
         k_turn_boost,
         turn_boost_angle,
         v_min_cmd,
+        v_min_cmd_rev,
+        reverse_bias,
+        reverse_gate_angle,
+        reverse_gate_power,
         uni_vref_speed,
         radius,
         use_strict_vref,
+        use_norm_mode,
+        scenario_kappa,
     ):
         u = _jax_uni_backup_input_occ(
             x,
@@ -509,8 +706,12 @@ if _JAX_AVAILABLE:
             v_expand_pad,
             v_adv_vec,
             valid_mask,
+            obs_center_pad,
+            obs_center_valid,
+            front_mode_los,
             tau,
             dt,
+            v_min,
             v_max,
             w_max,
             k_theta_p,
@@ -520,9 +721,15 @@ if _JAX_AVAILABLE:
             k_turn_boost,
             turn_boost_angle,
             v_min_cmd,
+            v_min_cmd_rev,
+            reverse_bias,
+            reverse_gate_angle,
+            reverse_gate_power,
             uni_vref_speed,
             radius,
             use_strict_vref,
+            use_norm_mode,
+            scenario_kappa,
         )
         theta = x[2]
         v_cmd = u[0]
@@ -539,6 +746,9 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         tau,
         dt,
         v_min,
@@ -559,6 +769,8 @@ if _JAX_AVAILABLE:
         du_vref_speed,
         radius,
         use_strict_vref,
+        use_norm_mode,
+        scenario_kappa,
     ):
         u = _jax_du_backup_input_occ(
             x,
@@ -567,6 +779,9 @@ if _JAX_AVAILABLE:
             v_expand_pad,
             v_adv_vec,
             valid_mask,
+            obs_center_pad,
+            obs_center_valid,
+            front_mode_los,
             tau,
             dt,
             v_min,
@@ -587,6 +802,8 @@ if _JAX_AVAILABLE:
             du_vref_speed,
             radius,
             use_strict_vref,
+            use_norm_mode,
+            scenario_kappa,
         )
         theta = x[2]
         v = x[3]
@@ -602,7 +819,7 @@ if _JAX_AVAILABLE:
     _jax_du_F_cl_jac = jax.jacfwd(_jax_du_f_cl, argnums=0)
 
 
-    @partial(jax.jit, static_argnums=(7,))
+    @partial(jax.jit, static_argnums=(10,))
     def _jax_rollout_kernel_uni(
         x0,
         A_pad,
@@ -610,8 +827,12 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         dt,
         n_steps,
+        v_min,
         v_max,
         w_max,
         k_theta_p,
@@ -621,9 +842,15 @@ if _JAX_AVAILABLE:
         k_turn_boost,
         turn_boost_angle,
         v_min_cmd,
+        v_min_cmd_rev,
+        reverse_bias,
+        reverse_gate_angle,
+        reverse_gate_power,
         uni_vref_speed,
         radius,
         use_strict_vref,
+        use_norm_mode,
+        scenario_kappa,
     ):
         I = jnp.eye(3, dtype=x0.dtype)
 
@@ -633,31 +860,46 @@ if _JAX_AVAILABLE:
 
             k1 = _jax_uni_f_cl(
                 x, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
+                k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
+                reverse_gate_angle, reverse_gate_power,
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             k2 = _jax_uni_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + 0.5 * dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
+                k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
+                reverse_gate_angle, reverse_gate_power,
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             k3 = _jax_uni_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + 0.5 * dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
+                k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
+                reverse_gate_angle, reverse_gate_power,
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             k4 = _jax_uni_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
+                k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
+                reverse_gate_angle, reverse_gate_power,
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
             x_mid = x + 0.5 * dt * k2
             A_mid = _jax_uni_F_cl_jac(
                 x_mid, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-                t + 0.5 * dt, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-                k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
+                obs_center_pad, obs_center_valid, front_mode_los,
+                t + 0.5 * dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
+                k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
+                reverse_gate_angle, reverse_gate_power,
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -673,8 +915,11 @@ if _JAX_AVAILABLE:
         t_last = dt * (n_steps - 1)
         f_last = _jax_uni_f_cl(
             x_final, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
-            t_last, dt, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
-            k_turn_boost, turn_boost_angle, v_min_cmd, uni_vref_speed, radius, use_strict_vref
+            obs_center_pad, obs_center_valid, front_mode_los,
+            t_last, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
+            k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
+            reverse_gate_angle, reverse_gate_power,
+            uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -684,7 +929,7 @@ if _JAX_AVAILABLE:
         return traj, stm, t_grid, fcl
 
 
-    @partial(jax.jit, static_argnums=(7,))
+    @partial(jax.jit, static_argnums=(10,))
     def _jax_rollout_kernel_du(
         x0,
         A_pad,
@@ -692,6 +937,9 @@ if _JAX_AVAILABLE:
         v_expand_pad,
         v_adv_vec,
         valid_mask,
+        obs_center_pad,
+        obs_center_valid,
+        front_mode_los,
         dt,
         n_steps,
         v_min,
@@ -712,6 +960,8 @@ if _JAX_AVAILABLE:
         du_vref_speed,
         radius,
         use_strict_vref,
+        use_norm_mode,
+        scenario_kappa,
     ):
         I = jnp.eye(4, dtype=x0.dtype)
 
@@ -721,41 +971,46 @@ if _JAX_AVAILABLE:
 
             k1 = _jax_du_f_cl(
                 x, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
                 t, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             k2 = _jax_du_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
                 t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             k3 = _jax_du_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
                 t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             k4 = _jax_du_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
                 t + dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
             x_mid = x + 0.5 * dt * k2
             A_mid = _jax_du_F_cl_jac(
                 x_mid, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+                obs_center_pad, obs_center_valid, front_mode_los,
                 t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -771,10 +1026,11 @@ if _JAX_AVAILABLE:
         t_last = dt * (n_steps - 1)
         f_last = _jax_du_f_cl(
             x_final, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
+            obs_center_pad, obs_center_valid, front_mode_los,
             t_last, dt, v_min, v_max, w_max, a_max,
             k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
             k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-            du_vref_speed, radius, use_strict_vref
+            du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -975,6 +1231,10 @@ class OcclusionController(BackupController):
         k_turn_boost = float(cfg.get("k_turn_boost_occ_uni", 1.0))
         turn_boost_angle = float(cfg.get("turn_boost_angle_occ_uni", np.pi / 6.0))
         v_min_cmd = float(cfg.get("v_min_occ_uni", 0.05))
+        v_min_cmd_rev = float(cfg.get("v_min_cmd_rev_occ_uni", v_min_cmd))
+        reverse_bias = float(cfg.get("reverse_bias_occ_uni", 0.05))
+        reverse_gate_angle = float(cfg.get("reverse_speed_gate_angle_occ_uni", 0.45))
+        reverse_gate_power = float(cfg.get("reverse_speed_gate_power_occ_uni", 2.0))
         if not np.isfinite(k_theta_p):
             k_theta_p = 2.5
         if not np.isfinite(k_theta_d):
@@ -989,6 +1249,14 @@ class OcclusionController(BackupController):
             turn_boost_angle = np.pi / 6.0
         if (not np.isfinite(v_min_cmd)) or (v_min_cmd < 0.0):
             v_min_cmd = 0.0
+        if (not np.isfinite(v_min_cmd_rev)) or (v_min_cmd_rev < 0.0):
+            v_min_cmd_rev = v_min_cmd
+        if not np.isfinite(reverse_bias):
+            reverse_bias = 0.05
+        if (not np.isfinite(reverse_gate_angle)) or (reverse_gate_angle <= 1e-3):
+            reverse_gate_angle = 0.45
+        if (not np.isfinite(reverse_gate_power)) or (reverse_gate_power < 1.0):
+            reverse_gate_power = 2.0
         return {
             "k_theta_p": k_theta_p,
             "k_theta_d": k_theta_d,
@@ -997,13 +1265,17 @@ class OcclusionController(BackupController):
             "k_turn_boost": k_turn_boost,
             "turn_boost_angle": turn_boost_angle,
             "v_min_cmd": v_min_cmd,
+            "v_min_cmd_rev": v_min_cmd_rev,
+            "reverse_bias": reverse_bias,
+            "reverse_gate_angle": reverse_gate_angle,
+            "reverse_gate_power": reverse_gate_power,
         }
 
     def _uni_occ_vref_speed(self):
         cfg = self.robot_spec.get("backup_cbf", {})
         s = cfg.get(
             "v_ref_norm_occ_uni",
-            self.robot_spec.get("v_obs_max", self.robot_spec.get("v_adv_max_occ", 0.0)),
+            self.robot_spec.get("v_adv_max_occ", self.robot_spec.get("v_obs_max", 0.0)),
         )
         try:
             s = float(s)
@@ -1034,7 +1306,7 @@ class OcclusionController(BackupController):
         # UNI-equivalent minimum crawl speed at virtual-command level.
         v_min_cmd_emu = float(cfg.get("v_min_occ_du_cmd", 0.03))
         # Comparison-friendly option: keep DU speed nonnegative in emulation mode.
-        du_nonnegative_speed = bool(cfg.get("du_nonnegative_speed_occ_du", True))
+        du_nonnegative_speed = bool(cfg.get("du_nonnegative_speed_occ_du", False))
 
         if not np.isfinite(k_a_p):
             k_a_p = 2.99
@@ -1097,7 +1369,7 @@ class OcclusionController(BackupController):
                 s = self._uni_occ_vref_speed()
             else:
                 # Legacy DU behavior: environment speed hint fallback.
-                s = self.robot_spec.get("v_obs_max", self.robot_spec.get("v_adv_max_occ", 0.0))
+                s = self.robot_spec.get("v_adv_max_occ", self.robot_spec.get("v_obs_max", 0.0))
         try:
             s = float(s)
         except Exception:
@@ -1121,6 +1393,18 @@ class OcclusionController(BackupController):
             v_min = v_max
         return v_min, v_max
 
+    def _use_occ_vref_normalization(self):
+        # Final v_ref magnitude normalization has been retired.
+        # Keep this helper so existing call-sites stay simple.
+        return False
+
+    def _occ_vref_scenario_softmax_kappa(self):
+        cfg = self.robot_spec.get("backup_cbf", {})
+        kappa = float(cfg.get("vref_scenario_softmax_kappa", 8.0))
+        if not np.isfinite(kappa):
+            return 8.0
+        return max(kappa, 0.0)
+
     def _occ_vref_mode(self):
         if self.model == "DoubleIntegrator2D":
             return "strict"
@@ -1136,56 +1420,163 @@ class OcclusionController(BackupController):
             mode = "strict"
         return mode
 
+    def _occ_vref_front_mode(self):
+        cfg = self.robot_spec.get("backup_cbf", {})
+        if self.model == "Unicycle2D":
+            mode = cfg.get("vref_front_mode_occ_uni", cfg.get("vref_front_mode_occ", "default"))
+        elif self.model == "DynamicUnicycle2D":
+            mode = cfg.get("vref_front_mode_occ_du", cfg.get("vref_front_mode_occ", "default"))
+        else:
+            mode = cfg.get("vref_front_mode_occ", "default")
+        mode = str(mode).strip().lower()
+        if mode not in {"default", "los"}:
+            mode = "default"
+        return mode
+
     def _use_strict_occ_vref(self):
         return self._occ_vref_mode() == "strict"
 
-    def _scale_occ_vref_rollout(self, X, occlusion_scenarios, tau, ref_speed):
-        v_ref = self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, tau)
-        v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
-        v_ref_norm = float(np.linalg.norm(v_ref))
-        if ref_speed > 1e-9 and v_ref_norm > 1e-9:
-            v_ref = v_ref * (float(ref_speed) / max(v_ref_norm, 1e-9))
-        return v_ref
+    def _occ_target_normals(self, scenario, p):
+        A = np.asarray(scenario["A"], dtype=float)
+        if A.ndim != 2 or A.shape[1] != 2 or A.shape[0] == 0:
+            return A
+        if self._occ_vref_front_mode() != "los":
+            return A
+        c = scenario.get("obs_center", None)
+        if c is None:
+            return A
+        c = np.asarray(c, dtype=float).reshape(2,)
+        p = np.asarray(p, dtype=float).reshape(2,)
+        los = p - c
+        n = float(np.linalg.norm(los))
+        if (not np.isfinite(n)) or n <= 1e-9:
+            return A
+        A_eff = A.copy()
+        A_eff[0] = los / n
+        return A_eff
 
-    def _uni_virtual_cmd_from_vref(self, theta, v_ref, v_ref_prev, gains=None, v_max=None, w_max=None):
+    def _scale_occ_vref_rollout(self, X, occlusion_scenarios, tau, ref_speed):
+        del ref_speed
+        return np.asarray(
+            self._occ_safe_velocity_reference_rollout(X, occlusion_scenarios, tau),
+            dtype=float,
+        ).reshape(2,)
+
+    # def _uni_virtual_cmd_from_vref(self, theta, v_ref, v_ref_prev, gains=None, v_max=None, w_max=None):
+    #     v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
+    #     v_ref_prev = np.asarray(v_ref_prev, dtype=float).reshape(2,)
+    #     v_ref_norm = float(np.linalg.norm(v_ref))
+    #     if v_ref_norm < 1e-9:
+    #         return 0.0, 0.0
+
+    #     theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
+    #     theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
+    #     if w_max is None:
+    #         w_max = float(self.robot_spec.get("w_max", 0.8))
+    #     else:
+    #         w_max = float(w_max)
+    #     if v_max is None:
+    #         v_max = float(self.robot_spec.get("v_max", 1.0))
+    #     else:
+    #         v_max = float(v_max)
+    #     if gains is None:
+    #         gains = self._uni_occ_gains()
+    #     e_theta = angle_normalize(theta_ref - float(theta))
+    #     e_theta_prev = angle_normalize(theta_ref_prev - float(theta))
+    #     dt_safe = max(float(self.dt), 1e-6)
+    #     theta_ref_dot = angle_normalize(theta_ref - theta_ref_prev) / dt_safe
+    #     e_theta_dot = theta_ref_dot
+
+    #     boost = 1.0 + gains["k_turn_boost"] * min(
+    #         1.0, abs(e_theta) / max(gains["turn_boost_angle"], 1e-3)
+    #     )
+    #     omega_unsat = boost * (gains["k_theta_p"] * e_theta + gains["k_theta_d"] * e_theta_dot)
+    #     omega = float(np.clip(omega_unsat, -w_max, w_max))
+
+    #     gate = max(0.0, np.cos(e_theta))
+    #     gate_prev = max(0.0, np.cos(e_theta_prev))
+    #     v_des = float(np.clip(v_ref_norm * gate, 0.0, v_max))
+    #     v_des_prev = float(np.clip(np.linalg.norm(v_ref_prev) * gate_prev, 0.0, v_max))
+    #     v_des_dot = (v_des - v_des_prev) / dt_safe
+    #     v_cmd_unsat = gains["k_v_p"] * v_des + gains["k_v_d"] * v_des_dot
+    #     v_cmd = float(np.clip(v_cmd_unsat, 0.0, v_max))
+    #     v_cmd = max(v_cmd, min(gains["v_min_cmd"], v_max))
+    #     return v_cmd, omega
+
+    def _uni_virtual_cmd_from_vref(self, theta, v_ref, v_ref_prev, gains=None, v_min=None, v_max=None, w_max=None):
         v_ref = np.asarray(v_ref, dtype=float).reshape(2,)
         v_ref_prev = np.asarray(v_ref_prev, dtype=float).reshape(2,)
         v_ref_norm = float(np.linalg.norm(v_ref))
+        v_ref_prev_norm = float(np.linalg.norm(v_ref_prev))
         if v_ref_norm < 1e-9:
             return 0.0, 0.0
 
-        theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
-        theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
-        if w_max is None:
-            w_max = float(self.robot_spec.get("w_max", 0.8))
-        else:
-            w_max = float(w_max)
-        if v_max is None:
-            v_max = float(self.robot_spec.get("v_max", 1.0))
-        else:
-            v_max = float(v_max)
         if gains is None:
             gains = self._uni_occ_gains()
-        e_theta = angle_normalize(theta_ref - float(theta))
-        e_theta_prev = angle_normalize(theta_ref_prev - float(theta))
+
+        if v_max is None:
+            v_max = float(self.robot_spec.get("v_max", 1.0))
+        if v_min is None:
+            v_min = float(self.robot_spec.get("v_min", -v_max))
+        if w_max is None:
+            w_max = float(self.robot_spec.get("w_max", 0.8))
+
+        reverse_bias = float(gains.get("reverse_bias", 0.05))
+        v_min_cmd_rev = float(gains.get("v_min_cmd_rev", gains["v_min_cmd"]))
+        reverse_gate_angle = float(gains.get("reverse_gate_angle", 0.45))
+        reverse_gate_power = float(gains.get("reverse_gate_power", 2.0))
+        if (not np.isfinite(reverse_gate_angle)) or (reverse_gate_angle <= 1e-3):
+            reverse_gate_angle = 0.45
+        if (not np.isfinite(reverse_gate_power)) or (reverse_gate_power < 1.0):
+            reverse_gate_power = 2.0
+
+        theta_ref = float(np.arctan2(v_ref[1], v_ref[0]))
+        theta_ref_prev = float(np.arctan2(v_ref_prev[1], v_ref_prev[0]))
+
+        e_fwd = angle_normalize(theta_ref - float(theta))
+        e_rev = angle_normalize(theta_ref + np.pi - float(theta))
+        use_reverse = (abs(e_rev) + reverse_bias) < abs(e_fwd)
+        e_track = e_rev if use_reverse else e_fwd
+
+        e_fwd_prev = angle_normalize(theta_ref_prev - float(theta))
+        e_rev_prev = angle_normalize(theta_ref_prev + np.pi - float(theta))
+        use_reverse_prev = (abs(e_rev_prev) + reverse_bias) < abs(e_fwd_prev)
+        e_track_prev = e_rev_prev if use_reverse_prev else e_fwd_prev
+
         dt_safe = max(float(self.dt), 1e-6)
-        theta_ref_dot = angle_normalize(theta_ref - theta_ref_prev) / dt_safe
-        e_theta_dot = theta_ref_dot
+        e_track_dot = angle_normalize(e_track - e_track_prev) / dt_safe
 
         boost = 1.0 + gains["k_turn_boost"] * min(
-            1.0, abs(e_theta) / max(gains["turn_boost_angle"], 1e-3)
+            1.0, abs(e_track) / max(gains["turn_boost_angle"], 1e-3)
         )
-        omega_unsat = boost * (gains["k_theta_p"] * e_theta + gains["k_theta_d"] * e_theta_dot)
+        omega_unsat = boost * (gains["k_theta_p"] * e_track + gains["k_theta_d"] * e_track_dot)
         omega = float(np.clip(omega_unsat, -w_max, w_max))
 
-        gate = max(0.0, np.cos(e_theta))
-        gate_prev = max(0.0, np.cos(e_theta_prev))
-        v_des = float(np.clip(v_ref_norm * gate, 0.0, v_max))
-        v_des_prev = float(np.clip(np.linalg.norm(v_ref_prev) * gate_prev, 0.0, v_max))
+        fwd_gate = max(0.0, np.cos(e_fwd))
+        fwd_gate_prev = max(0.0, np.cos(e_fwd_prev))
+        rev_gate = max(0.0, 1.0 - abs(e_rev) / reverse_gate_angle) ** reverse_gate_power
+        rev_gate_prev = max(0.0, 1.0 - abs(e_rev_prev) / reverse_gate_angle) ** reverse_gate_power
+        rev_cap = max(0.0, abs(min(v_min, 0.0)))
+
+        if use_reverse:
+            v_des = -float(np.clip(v_ref_norm * rev_gate, 0.0, rev_cap))
+        else:
+            v_des = float(np.clip(v_ref_norm * fwd_gate, 0.0, v_max))
+
+        if use_reverse_prev:
+            v_des_prev = -float(np.clip(v_ref_prev_norm * rev_gate_prev, 0.0, rev_cap))
+        else:
+            v_des_prev = float(np.clip(v_ref_prev_norm * fwd_gate_prev, 0.0, v_max))
         v_des_dot = (v_des - v_des_prev) / dt_safe
+
         v_cmd_unsat = gains["k_v_p"] * v_des + gains["k_v_d"] * v_des_dot
-        v_cmd = float(np.clip(v_cmd_unsat, 0.0, v_max))
-        v_cmd = max(v_cmd, min(gains["v_min_cmd"], v_max))
+        v_cmd = float(np.clip(v_cmd_unsat, v_min, v_max))
+
+        # optional crawl floor
+        if v_cmd > 1e-9:
+            v_cmd = max(v_cmd, min(gains["v_min_cmd"], v_max))
+        elif v_cmd < -1e-9:
+            v_cmd = min(v_cmd, -min(v_min_cmd_rev, abs(v_min)))
         return v_cmd, omega
 
     def set_occ_barrier_fn(self, fn):
@@ -1214,13 +1605,16 @@ class OcclusionController(BackupController):
         R     = self.robot_spec['radius']
 
         use_strict = self._use_strict_occ_vref()
+        scenario_kappa = self._occ_vref_scenario_softmax_kappa()
 
         if use_strict:
             v_targets = []
+            scenario_scores = []
             for sc in scenarios:
                 A = sc["A"]
                 b0 = sc["b0"]
                 vadv = float(sc["v_adv_max"])
+                A_target = self._occ_target_normals(sc, p)
 
                 if "v_expand_vec" in sc:
                     v_expand = sc["v_expand_vec"]
@@ -1237,21 +1631,29 @@ class OcclusionController(BackupController):
 
                 active = h_vec >= 0.0
                 if np.any(active):
-                    avg_normal = A[active].mean(axis=0)
+                    avg_normal = A_target[active].mean(axis=0)
                 else:
                     best_idx = int(np.argmax(h_vec))
-                    avg_normal = A[best_idx]
+                    avg_normal = A_target[best_idx]
 
                 n = float(np.linalg.norm(avg_normal))
                 if n <= 1e-9:
                     continue
                 direction = avg_normal / n
                 v_targets.append(direction * vadv)
+                scenario_scores.append(float(np.max(h_vec)))
 
             if len(v_targets) == 0:
                 return np.zeros(2, dtype=float)
 
-            v_avg = np.vstack(v_targets).mean(axis=0)
+            scores = np.asarray(scenario_scores, dtype=float)
+            max_score = float(np.max(scores))
+            z = np.exp(scenario_kappa * (scores - max_score))
+            z_sum = float(np.sum(z))
+            if (not np.isfinite(z_sum)) or z_sum <= 1e-12:
+                return np.zeros(2, dtype=float)
+            weights = z / z_sum
+            v_avg = (weights[:, None] * np.vstack(v_targets)).sum(axis=0)
         else:
             kappa_vref = float(
                 self.robot_spec.get("backup_cbf", {}).get("vref_softmax_kappa", 8.0)
@@ -1260,10 +1662,12 @@ class OcclusionController(BackupController):
                 kappa_vref = 8.0
 
             v_targets = []
+            scenario_scores = []
             for sc in scenarios:
                 A    = sc['A']
                 b0   = sc['b0']
                 vadv = sc['v_adv_max']
+                A_target = self._occ_target_normals(sc, p)
 
                 if 'v_expand_vec' in sc:
                     v_expand = sc['v_expand_vec']
@@ -1284,28 +1688,25 @@ class OcclusionController(BackupController):
                 if (not np.isfinite(z_sum)) or z_sum <= 1e-12:
                     continue
                 lam = z / z_sum
-                avg_normal = (lam[:, None] * A).sum(axis=0)
+                avg_normal = (lam[:, None] * A_target).sum(axis=0)
                 norm = float(np.linalg.norm(avg_normal))
                 if norm > 1e-9:
                     direction = avg_normal / norm
                     v_targets.append(direction * vadv)
+                    scenario_scores.append(max_h)
 
             if len(v_targets) == 0:
                 return np.zeros(2, dtype=float)
 
-            v_avg = np.vstack(v_targets).mean(axis=0)
+            scores = np.asarray(scenario_scores, dtype=float)
+            max_score = float(np.max(scores))
+            z = np.exp(scenario_kappa * (scores - max_score))
+            z_sum = float(np.sum(z))
+            if (not np.isfinite(z_sum)) or z_sum <= 1e-12:
+                return np.zeros(2, dtype=float)
+            weights = z / z_sum
+            v_avg = (weights[:, None] * np.vstack(v_targets)).sum(axis=0)
 
-        if self.model == "Unicycle2D":
-            s = self._uni_occ_vref_speed()
-            n = float(np.linalg.norm(v_avg))
-            if s > 0.0 and n > 1e-9:
-                v_avg = (v_avg / n) * s
-        elif self.model == "DynamicUnicycle2D":
-            s = self._du_occ_vref_speed()
-            n = float(np.linalg.norm(v_avg))
-            if s > 0.0 and n > 1e-9:
-                v_avg = (v_avg / n) * s
-        
         return v_avg
 
     def f_cl(self, X, occlusion_scenarios=None, t=None):
@@ -1525,9 +1926,11 @@ class OcclusionController(BackupController):
         v_expand_pad = np.zeros((S, K), dtype=np.float32)
         v_adv_vec = np.zeros((S,), dtype=np.float32)
         valid_mask = np.zeros((S, K), dtype=np.float32)
+        obs_center_pad = np.zeros((S, 2), dtype=np.float32)
+        obs_center_valid = np.zeros((S,), dtype=np.float32)
 
         if not occlusion_scenarios:
-            return A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask
+            return A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, obs_center_pad, obs_center_valid
 
         for i, sc in enumerate(list(occlusion_scenarios)[:S]):
             if not isinstance(sc, dict):
@@ -1559,8 +1962,14 @@ class OcclusionController(BackupController):
             v_expand_pad[i, :m] = v_expand_arr[:m]
             v_adv_vec[i] = v_adv
             valid_mask[i, :m] = 1.0
+            obs_center = sc.get("obs_center", None)
+            if obs_center is not None:
+                obs_center_arr = np.asarray(obs_center, dtype=np.float32).reshape(-1)
+                if obs_center_arr.size >= 2 and np.all(np.isfinite(obs_center_arr[:2])):
+                    obs_center_pad[i, :] = obs_center_arr[:2]
+                    obs_center_valid[i] = 1.0
 
-        return A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask
+        return A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask, obs_center_pad, obs_center_valid
 
     def _warm_start_jax_rollout(self, n_steps):
         if not self._jax_enabled:
@@ -1571,10 +1980,14 @@ class OcclusionController(BackupController):
             v_expand_pad = np.zeros((self._jax_max_scenarios, self._jax_max_halfspaces), dtype=np.float32)
             v_adv_vec = np.zeros((self._jax_max_scenarios,), dtype=np.float32)
             valid_mask = np.zeros((self._jax_max_scenarios, self._jax_max_halfspaces), dtype=np.float32)
+            obs_center_pad = np.zeros((self._jax_max_scenarios, 2), dtype=np.float32)
+            obs_center_valid = np.zeros((self._jax_max_scenarios,), dtype=np.float32)
+            front_mode_los = np.bool_(self._occ_vref_front_mode() == "los")
 
             # Compile ahead of control loop; no JIT should happen inside step loop.
             if self.model == "DoubleIntegrator2D":
                 x0 = np.zeros((4,), dtype=np.float32)
+                scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, _, _, _ = _jax_rollout_kernel_di(
                     jnp.asarray(x0),
                     jnp.asarray(A_pad),
@@ -1582,6 +1995,9 @@ class OcclusionController(BackupController):
                     jnp.asarray(v_expand_pad),
                     jnp.asarray(v_adv_vec),
                     jnp.asarray(valid_mask),
+                    jnp.asarray(obs_center_pad),
+                    jnp.asarray(obs_center_valid),
+                    front_mode_los,
                     np.float32(self.dt),
                     int(n_steps),
                     np.float32(self.pid_occ_gains.get("Kp", 1.0)),
@@ -1589,11 +2005,15 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("a_max", 1.0)),
                     np.float32(self.robot_spec.get("v_max", 1.0)),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    scenario_kappa,
                     np.float32(self._jax_eps_fd),
                 )
             elif self.model == "Unicycle2D":
                 x0 = np.zeros((3,), dtype=np.float32)
                 ug = self._uni_occ_gains()
+                v_max = float(self.robot_spec.get("v_max", 1.0))
+                v_min = float(self.robot_spec.get("v_min", -v_max))
+                scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, _, _, _ = _jax_rollout_kernel_uni(
                     jnp.asarray(x0),
                     jnp.asarray(A_pad),
@@ -1601,9 +2021,13 @@ class OcclusionController(BackupController):
                     jnp.asarray(v_expand_pad),
                     jnp.asarray(v_adv_vec),
                     jnp.asarray(valid_mask),
+                    jnp.asarray(obs_center_pad),
+                    jnp.asarray(obs_center_valid),
+                    front_mode_los,
                     np.float32(self.dt),
                     int(n_steps),
-                    np.float32(self.robot_spec.get("v_max", 1.0)),
+                    np.float32(v_min),
+                    np.float32(v_max),
                     np.float32(self.robot_spec.get("w_max", 0.8)),
                     np.float32(ug["k_theta_p"]),
                     np.float32(ug["k_theta_d"]),
@@ -1612,14 +2036,21 @@ class OcclusionController(BackupController):
                     np.float32(ug["k_turn_boost"]),
                     np.float32(ug["turn_boost_angle"]),
                     np.float32(ug["v_min_cmd"]),
+                    np.float32(ug.get("v_min_cmd_rev", ug["v_min_cmd"])),
+                    np.float32(ug.get("reverse_bias", 0.05)),
+                    np.float32(ug.get("reverse_gate_angle", 0.45)),
+                    np.float32(ug.get("reverse_gate_power", 2.0)),
                     np.float32(self._uni_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
+                    np.bool_(self._use_occ_vref_normalization()),
+                    scenario_kappa,
                 )
             else:
                 x0 = np.zeros((4,), dtype=np.float32)
                 dg = self._du_occ_gains()
                 v_min, v_max = self._du_speed_bounds()
+                scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, _, _, _ = _jax_rollout_kernel_du(
                     jnp.asarray(x0),
                     jnp.asarray(A_pad),
@@ -1627,6 +2058,9 @@ class OcclusionController(BackupController):
                     jnp.asarray(v_expand_pad),
                     jnp.asarray(v_adv_vec),
                     jnp.asarray(valid_mask),
+                    jnp.asarray(obs_center_pad),
+                    jnp.asarray(obs_center_valid),
+                    front_mode_los,
                     np.float32(self.dt),
                     int(n_steps),
                     np.float32(v_min),
@@ -1647,6 +2081,8 @@ class OcclusionController(BackupController):
                     np.float32(self._du_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
+                    np.bool_(self._use_occ_vref_normalization()),
+                    scenario_kappa,
                 )
             _ = np.asarray(traj[0])
             self._jax_warm_n_steps = int(n_steps)
@@ -1705,17 +2141,31 @@ class OcclusionController(BackupController):
         """
         del eps_A
         N = int(np.floor(T / dt)) + 1
-        if (not self._jax_enabled) or (not self._jax_warmed) or N != self._jax_warm_n_steps:
+        if (
+            (not self._jax_enabled)
+            or (not self._jax_warmed)
+            or N != self._jax_warm_n_steps
+        ):
             return self._simulate_backup_trajectory_numpy(
                 x0, T, dt, occlusion_scenarios=occlusion_scenarios
             )
 
         try:
-            A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask = self._pack_scenarios_for_jax(
+            (
+                A_pad,
+                b0_pad,
+                v_expand_pad,
+                v_adv_vec,
+                valid_mask,
+                obs_center_pad,
+                obs_center_valid,
+            ) = self._pack_scenarios_for_jax(
                 occlusion_scenarios, x_ref=x0
             )
+            front_mode_los = np.bool_(self._occ_vref_front_mode() == "los")
             if self.model == "DoubleIntegrator2D":
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(4,)
+                scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, stm, t_grid, fcl = _jax_rollout_kernel_di(
                     jnp.asarray(x0_vec),
                     jnp.asarray(A_pad),
@@ -1723,6 +2173,9 @@ class OcclusionController(BackupController):
                     jnp.asarray(v_expand_pad),
                     jnp.asarray(v_adv_vec),
                     jnp.asarray(valid_mask),
+                    jnp.asarray(obs_center_pad),
+                    jnp.asarray(obs_center_valid),
+                    front_mode_los,
                     np.float32(dt),
                     int(N),
                     np.float32(self.pid_occ_gains.get("Kp", 1.0)),
@@ -1730,11 +2183,15 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("a_max", 1.0)),
                     np.float32(self.robot_spec.get("v_max", 1.0)),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    scenario_kappa,
                     np.float32(self._jax_eps_fd),
                 )
             elif self.model == "Unicycle2D":
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(3,)
                 ug = self._uni_occ_gains()
+                v_max = float(self.robot_spec.get("v_max", 1.0))
+                v_min = float(self.robot_spec.get("v_min", -v_max))
+                scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, stm, t_grid, fcl = _jax_rollout_kernel_uni(
                     jnp.asarray(x0_vec),
                     jnp.asarray(A_pad),
@@ -1742,9 +2199,13 @@ class OcclusionController(BackupController):
                     jnp.asarray(v_expand_pad),
                     jnp.asarray(v_adv_vec),
                     jnp.asarray(valid_mask),
+                    jnp.asarray(obs_center_pad),
+                    jnp.asarray(obs_center_valid),
+                    front_mode_los,
                     np.float32(dt),
                     int(N),
-                    np.float32(self.robot_spec.get("v_max", 1.0)),
+                    np.float32(v_min),
+                    np.float32(v_max),
                     np.float32(self.robot_spec.get("w_max", 0.8)),
                     np.float32(ug["k_theta_p"]),
                     np.float32(ug["k_theta_d"]),
@@ -1753,14 +2214,21 @@ class OcclusionController(BackupController):
                     np.float32(ug["k_turn_boost"]),
                     np.float32(ug["turn_boost_angle"]),
                     np.float32(ug["v_min_cmd"]),
+                    np.float32(ug.get("v_min_cmd_rev", ug["v_min_cmd"])),
+                    np.float32(ug.get("reverse_bias", 0.05)),
+                    np.float32(ug.get("reverse_gate_angle", 0.45)),
+                    np.float32(ug.get("reverse_gate_power", 2.0)),
                     np.float32(self._uni_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
+                    np.bool_(self._use_occ_vref_normalization()),
+                    scenario_kappa,
                 )
             else:
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(4,)
                 dg = self._du_occ_gains()
                 v_min, v_max = self._du_speed_bounds()
+                scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, stm, t_grid, fcl = _jax_rollout_kernel_du(
                     jnp.asarray(x0_vec),
                     jnp.asarray(A_pad),
@@ -1768,6 +2236,9 @@ class OcclusionController(BackupController):
                     jnp.asarray(v_expand_pad),
                     jnp.asarray(v_adv_vec),
                     jnp.asarray(valid_mask),
+                    jnp.asarray(obs_center_pad),
+                    jnp.asarray(obs_center_valid),
+                    front_mode_los,
                     np.float32(dt),
                     int(N),
                     np.float32(v_min),
@@ -1788,6 +2259,8 @@ class OcclusionController(BackupController):
                     np.float32(self._du_occ_vref_speed()),
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
+                    np.bool_(self._use_occ_vref_normalization()),
+                    scenario_kappa,
                 )
             return (
                 np.asarray(traj, dtype=float),
