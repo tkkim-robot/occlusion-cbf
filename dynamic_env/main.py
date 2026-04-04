@@ -1,14 +1,17 @@
 from safe_control.dynamic_env.main import LocalTrackingControllerDyn
+from safe_control.position_control.cbf_qp import CBFQP as BaseCBFQP
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.patheffects as path_effects
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap, Normalize
+import cvxpy as cp
 import os
 import glob
 import subprocess
 import csv
+import time
 
 class InfeasibleError(Exception):
     '''
@@ -20,7 +23,316 @@ class InfeasibleError(Exception):
         self.message = message
         super().__init__(self.message)
 
+
+class LocalCBFQP(BaseCBFQP):
+
+    def __init__(self, robot, robot_spec, num_obs=1):
+        self.status = "optimal"
+        self.last_u = None
+        self.last_u_ref = None
+        self.last_intervention = "u_ref"
+        self.last_num_constraints = 0
+        self.last_qp_solve_time_ms = 0.0
+        self.last_total_compute_time_ms = 0.0
+        self.last_profile = {}
+        super().__init__(robot, robot_spec, num_obs=num_obs)
+
+    def _get_position_corridor(self):
+        cfg = self.robot_spec.get("position_corridor", None)
+        if not isinstance(cfg, dict):
+            return None
+        if not bool(cfg.get("enabled", True)):
+            return None
+        x_min = cfg.get("x_min", None)
+        x_max = cfg.get("x_max", None)
+        if x_min is None or x_max is None:
+            return None
+        try:
+            x_min = float(x_min)
+            x_max = float(x_max)
+        except Exception:
+            return None
+        if (not np.isfinite(x_min)) or (not np.isfinite(x_max)) or x_min >= x_max:
+            return None
+        buffer = cfg.get("buffer", self.robot_spec.get("radius", 0.0))
+        try:
+            buffer = float(buffer)
+        except Exception:
+            buffer = 0.0
+        if (not np.isfinite(buffer)) or buffer < 0.0:
+            buffer = 0.0
+        x_min_eff = x_min + buffer
+        x_max_eff = x_max - buffer
+        if x_min_eff >= x_max_eff:
+            return None
+        return {
+            "x_min": x_min_eff,
+            "x_max": x_max_eff,
+            "alpha": float(cfg.get("alpha", self.cbf_param.get("alpha", 1.0))),
+            "alpha1": float(cfg.get("alpha1", self.cbf_param.get("alpha1", 1.5))),
+            "alpha2": float(cfg.get("alpha2", self.cbf_param.get("alpha2", 1.5))),
+        }
+
+    def _build_position_corridor_constraints(self, robot_state):
+        cfg = self._get_position_corridor()
+        if cfg is None:
+            return []
+        X = np.asarray(robot_state, dtype=float).reshape(-1, 1)
+        model_name = str(self.robot_spec.get("model", "")).strip()
+        rows = []
+
+        def _append_row(A_row, b_row):
+            A_row = np.asarray(A_row, dtype=float).reshape(1, -1)
+            b_row = float(b_row)
+            if np.all(np.isfinite(A_row)) and np.isfinite(b_row):
+                rows.append((A_row, np.array([[b_row]])))
+
+        if model_name == 'DoubleIntegrator2D':
+            x = float(X[0, 0])
+            vx = float(X[2, 0])
+            gamma1 = float(cfg["alpha1"]) + float(cfg["alpha2"])
+            gamma2 = float(cfg["alpha1"]) * float(cfg["alpha2"])
+            _append_row(np.array([[1.0, 0.0]]), gamma1 * vx + gamma2 * (x - float(cfg["x_min"])))
+            _append_row(np.array([[-1.0, 0.0]]), gamma1 * (-vx) + gamma2 * (float(cfg["x_max"]) - x))
+            return rows
+
+        if model_name == 'Unicycle2D':
+            c = float(np.cos(X[2, 0]))
+            alpha = float(cfg["alpha"])
+            _append_row(np.array([[c, 0.0]]), alpha * (float(X[0, 0]) - float(cfg["x_min"])))
+            _append_row(np.array([[-c, 0.0]]), alpha * (float(cfg["x_max"]) - float(X[0, 0])))
+            return rows
+
+        if model_name == 'DynamicUnicycle2D':
+            x = float(X[0, 0])
+            theta = float(X[2, 0])
+            v = float(X[3, 0])
+            c = float(np.cos(theta))
+            s = float(np.sin(theta))
+            gamma1 = float(cfg["alpha1"]) + float(cfg["alpha2"])
+            gamma2 = float(cfg["alpha1"]) * float(cfg["alpha2"])
+            _append_row(np.array([[c, -v * s]]), gamma1 * (v * c) + gamma2 * (x - float(cfg["x_min"])))
+            _append_row(np.array([[-c, v * s]]), gamma1 * (-v * c) + gamma2 * (float(cfg["x_max"]) - x))
+            return rows
+
+        return []
+
+    def _count_active_constraint_rows(self):
+        try:
+            A = np.asarray(self.A1.value, dtype=float)
+            b = np.asarray(self.b1.value, dtype=float).reshape(-1)
+        except Exception:
+            return 0
+        if A.ndim != 2 or A.shape[0] == 0:
+            return 0
+        used = np.any(np.abs(A) > 1e-12, axis=1)
+        if b.shape[0] == A.shape[0]:
+            used = np.logical_or(used, np.abs(b) > 1e-12)
+        return int(np.count_nonzero(used))
+
+    def _finalize_runtime_stats(self, t_all0, u_ref, u_out, solve_ms=None, num_constraints=None):
+        self.last_u_ref = np.asarray(u_ref, dtype=float).reshape(-1, 1)
+        self.last_u = self.last_u_ref if u_out is None else np.asarray(u_out, dtype=float).reshape(-1, 1)
+        if num_constraints is None:
+            num_constraints = self._count_active_constraint_rows()
+        self.last_num_constraints = int(num_constraints)
+        if solve_ms is None:
+            solve_ms = (time.perf_counter() - t_all0) * 1000.0
+        self.last_qp_solve_time_ms = float(solve_ms)
+        self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
+        tol = float(self.robot_spec.get("intervention_tol", 1e-3))
+        m = min(self.last_u.shape[0], self.last_u_ref.shape[0])
+        delta = float(np.linalg.norm(self.last_u[:m] - self.last_u_ref[:m])) if m > 0 else 0.0
+        self.last_intervention = "u_ref" if delta <= tol else "backup_qp"
+        self.last_profile = {
+            "total_ms": float(self.last_total_compute_time_ms),
+            "solve_ms": float(self.last_qp_solve_time_ms),
+            "num_constraints": int(self.last_num_constraints),
+        }
+
+    def setup_control_problem(self):
+        if self._get_position_corridor() is None:
+            self._corridor_num_rows = 0
+            return super().setup_control_problem()
+
+        corridor_rows = 2
+        self._corridor_num_rows = int(corridor_rows)
+        total_rows = int(max(1, self.num_obs + self._corridor_num_rows))
+        self.u = cp.Variable((2, 1))
+        self.u_ref = cp.Parameter((2, 1), value=np.zeros((2, 1)))
+        self.A1 = cp.Parameter((total_rows, 2), value=np.zeros((total_rows, 2)))
+        self.b1 = cp.Parameter((total_rows, 1), value=np.zeros((total_rows, 1)))
+        objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
+
+        if self.robot_spec['model'] == 'SingleIntegrator2D':
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           cp.abs(self.u[0]) <=  self.robot_spec['v_max'],
+                           cp.abs(self.u[1]) <=  self.robot_spec['v_max']]
+        elif self.robot_spec['model'] == 'Unicycle2D':
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           cp.abs(self.u[0]) <= self.robot_spec['v_max'],
+                           cp.abs(self.u[1]) <= self.robot_spec['w_max']]
+        elif self.robot_spec['model'] == 'DynamicUnicycle2D':
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           cp.abs(self.u[0]) <= self.robot_spec['a_max'],
+                           cp.abs(self.u[1]) <= self.robot_spec['w_max']]
+        elif self.robot_spec['model'] == 'DoubleIntegrator2D':
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           cp.abs(self.u[0]) <= self.robot_spec['a_max'],
+                           cp.abs(self.u[1]) <= self.robot_spec['a_max']]
+        elif 'KinematicBicycle2D' in self.robot_spec['model']:
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           cp.abs(self.u[0]) <= self.robot_spec['a_max'],
+                           cp.abs(self.u[1]) <= self.robot_spec['beta_max']]
+        elif self.robot_spec['model'] == 'Quad2D':
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           self.robot_spec["f_min"] <= self.u[0],
+                           self.u[0] <= self.robot_spec["f_max"],
+                           self.robot_spec["f_min"] <= self.u[1],
+                           self.u[1] <= self.robot_spec["f_max"]]
+        elif self.robot_spec['model'] == 'Quad3D':
+            self.u = cp.Variable((4, 1))
+            self.u_ref = cp.Parameter((4, 1), value=np.zeros((4, 1)))
+            self.A1 = cp.Parameter((1, 4), value=np.zeros((1, 4)))
+            self.b1 = cp.Parameter((1, 1), value=np.zeros((1, 1)))
+            objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           self.u[0] <= self.robot_spec['u_max'],
+                            self.u[0] >= 0.0,
+                           cp.abs(self.u[1]) <= self.robot_spec['u_max'],
+                           cp.abs(self.u[2]) <= self.robot_spec['u_max'],
+                           cp.abs(self.u[3]) <= self.robot_spec['u_max']]
+        elif self.robot_spec['model'] == 'Manipulator2D':
+            self.u = cp.Variable((3, 1))
+            self.u_ref = cp.Parameter((3, 1), value=np.zeros((3, 1)))
+            self.A1 = cp.Parameter((self.num_obs, 3), value=np.zeros((self.num_obs, 3)))
+            self.b1 = cp.Parameter((self.num_obs, 1), value=np.zeros((self.num_obs, 1)))
+            objective = cp.Minimize(cp.sum_squares(self.u - self.u_ref))
+            constraints = [self.A1 @ self.u + self.b1 >= 0,
+                           cp.abs(self.u) <= self.robot_spec['w_max']]
+
+        self.cbf_controller = cp.Problem(objective, constraints)
+
+    def solve_control_problem(self, robot_state, control_ref, obs_list):
+        if self._get_position_corridor() is None:
+            t_all0 = time.perf_counter()
+            u_out = super().solve_control_problem(robot_state, control_ref, obs_list)
+            solve_ms = 0.0 if obs_list is None else None
+            self._finalize_runtime_stats(t_all0, control_ref['u_ref'], u_out, solve_ms=solve_ms)
+            return u_out
+
+        t_all0 = time.perf_counter()
+        self.A1.value[:] = 0
+        self.b1.value[:] = 0
+        corridor_rows = self._build_position_corridor_constraints(robot_state)
+
+        if obs_list is None and len(corridor_rows) == 0:
+            self.u_ref.value = control_ref['u_ref']
+            if self.robot_spec['model'] in ['Quad3D']:
+                self.u_ref.value = np.vstack((self.u_ref.value, self.u_ref.value))
+            self.status = 'optimal'
+            u_out = np.asarray(self.u_ref.value, dtype=float).reshape(-1, 1)
+            self._finalize_runtime_stats(t_all0, self.u_ref.value, u_out, solve_ms=0.0, num_constraints=0)
+            return u_out
+
+        mode = self.robot_spec.get('cbf_mode', 'cbf')
+        obs_iter = [] if obs_list is None else obs_list
+        max_obs_rows = int(self.A1.shape[0]) - int(getattr(self, "_corridor_num_rows", 0))
+        row_idx = 0
+        for obs in obs_iter:
+            if obs is None:
+                continue
+            if row_idx >= max_obs_rows:
+                break
+
+            if self.robot_spec['model'] == 'Manipulator2D':
+                h_list, dh_dx_list = self.robot.agent_barrier(obs)
+                for h, dh_dx in zip(h_list, dh_dx_list):
+                    if row_idx >= max_obs_rows:
+                        break
+                    dt = self.robot.dt
+                    if mode == 'hard':
+                        self.A1.value[row_idx, :] = dh_dx @ self.robot.g()
+                        self.b1.value[row_idx, :] = h / dt + (dh_dx @ self.robot.f())
+                    else:
+                        self.A1.value[row_idx, :] = dh_dx
+                        self.b1.value[row_idx, :] = self.cbf_param['alpha'] * h
+                    row_idx += 1
+                continue
+
+            dt = self.robot.dt
+            if self.robot_spec['model'] in ['SingleIntegrator2D', 'Unicycle2D', 'KinematicBicycle2D_C3BF', 'KinematicBicycle2D_DPCBF', 'Quad3D']:
+                h_t = 0.0
+                dyn_barrier = getattr(self.robot.robot, 'dynamic_agent_barrier', None)
+                if callable(dyn_barrier) and self._is_dynamic_obs(obs):
+                    res = dyn_barrier(self.robot.X, obs, self.robot.robot_radius)
+                    if isinstance(res, (tuple, list)) and len(res) >= 3:
+                        h, dh_dx, h_t = res[:3]
+                    else:
+                        h, dh_dx = self.robot.agent_barrier(obs)
+                else:
+                    h, dh_dx = self.robot.agent_barrier(obs)
+                if mode == 'hard':
+                    self.A1.value[row_idx, :] = dh_dx @ self.robot.g()
+                    self.b1.value[row_idx, :] = h / dt + dh_dx @ self.robot.f() + h_t
+                else:
+                    self.A1.value[row_idx, :] = dh_dx @ self.robot.g()
+                    self.b1.value[row_idx, :] = dh_dx @ self.robot.f() + h_t + self.cbf_param['alpha'] * h
+            elif self.robot_spec['model'] in ['DynamicUnicycle2D', 'DoubleIntegrator2D', 'KinematicBicycle2D', 'Quad2D']:
+                h_dot_t = 0.0
+                dyn_barrier = getattr(self.robot.robot, 'dynamic_agent_barrier', None)
+                if callable(dyn_barrier) and self._is_dynamic_obs(obs):
+                    res = dyn_barrier(self.robot.X, obs, self.robot.robot_radius)
+                else:
+                    res = self.robot.agent_barrier(obs)
+                if isinstance(res, (tuple, list)) and len(res) >= 4:
+                    h, h_dot, dh_dot_dx, h_dot_t = res[:4]
+                else:
+                    h, h_dot, dh_dot_dx = res[:3]
+                if mode == 'hard':
+                    self.A1.value[row_idx, :] = dh_dot_dx @ self.robot.g()
+                    self.b1.value[row_idx, :] = h / (dt**2) + 2 * h_dot / dt + dh_dot_dx @ self.robot.f() + h_dot_t
+                else:
+                    gamma1 = self.cbf_param['alpha1'] + self.cbf_param['alpha2']
+                    gamma2 = self.cbf_param['alpha1'] * self.cbf_param['alpha2']
+                    self.A1.value[row_idx, :] = dh_dot_dx @ self.robot.g()
+                    self.b1.value[row_idx, :] = dh_dot_dx @ self.robot.f() + h_dot_t + gamma1 * h_dot + gamma2 * h
+            row_idx += 1
+
+        for A_row, b_row in corridor_rows:
+            if row_idx >= int(self.A1.shape[0]):
+                break
+            self.A1.value[row_idx, :] = np.asarray(A_row, dtype=float).reshape(1, -1)
+            self.b1.value[row_idx, :] = np.asarray(b_row, dtype=float).reshape(1, -1)
+            row_idx += 1
+
+        self.u_ref.value = control_ref['u_ref']
+        t_solve0 = time.perf_counter()
+        self.cbf_controller.solve(solver=cp.GUROBI, reoptimize=True)
+        self.status = self.cbf_controller.status
+        solve_ms = (time.perf_counter() - t_solve0) * 1000.0
+        u_out = self.u.value
+        self._finalize_runtime_stats(t_all0, self.u_ref.value, u_out, solve_ms=solve_ms, num_constraints=row_idx)
+        return u_out
+
 class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
+
+    def setup_animation_plot(self):
+        if self.ax is None:
+            self.ax = plt.axes()
+        if self.fig is None:
+            self.fig = plt.figure()
+        plt.ion()
+        self.ax.set_xlabel("X [m]")
+        if self.robot_spec['model'] in ['Quad2D', 'VTOL2D']:
+            self.ax.set_ylabel("Z [m]")
+        else:
+            self.ax.set_ylabel("Y [m]")
+        self.ax.set_aspect(1)
+        if len(getattr(self.fig, "axes", [])) <= 1:
+            self.fig.tight_layout()
+        self.waypoints_scatter = self.ax.scatter(
+            [], [], s=10, facecolors='g', edgecolors='g', alpha=0.5)
 
     def __init__(self, X0, robot_spec,
                  controller_type=None,
@@ -29,16 +341,27 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                  enable_rotation=True, raise_error=False,
                  ax=None, fig=None, env=None, rand_seed=42,
                  tracking_view_ax=None, tracking_view_window_size=None):
+        requested_pos_type = str((controller_type or {}).get("pos", "")).strip().lower()
+        bootstrap_controller_type = controller_type
+        if requested_pos_type == "oacp_mpc":
+            bootstrap_controller_type = dict(controller_type or {})
+            bootstrap_controller_type["pos"] = "cbf_qp"
         super().__init__(X0, robot_spec,
-                         controller_type=controller_type,
+                         controller_type=bootstrap_controller_type,
                          dt=dt,
                          show_animation=show_animation, save_animation=save_animation, show_mpc_traj=show_mpc_traj,
                          enable_rotation=enable_rotation, raise_error=raise_error,
                          ax=ax, fig=fig, env=env)
         
-        if self.pos_controller_type == 'occlusion_cbf_qp':
+        if requested_pos_type == 'cbf_qp':
+            self.pos_controller = LocalCBFQP(self.robot, self.robot_spec, num_obs=self.num_constraints)
+        elif self.pos_controller_type == 'occlusion_cbf_qp':
             from position_control.occlusion_cbf_qp import OcclusionCBFQP
             self.pos_controller = OcclusionCBFQP(self.robot, self.robot_spec, num_obs=30)
+        elif requested_pos_type == 'oacp_mpc':
+            from position_control.oacp_mpc import OACPMPC
+            self.pos_controller_type = 'oacp_mpc'
+            self.pos_controller = OACPMPC(self.robot, self.robot_spec, num_obs=self.num_constraints)
         
         self.qp_stats_text = None
         self.backup_rollout_line = None
@@ -1750,3 +2073,77 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             self.last_terminal_event = "success"
             return -1  # all waypoints reached
         return beyond_flag
+
+    def run_all_steps(self, tf=30, write_csv=False):
+        print("===================================")
+        print("============ Tracking =============")
+        print("Start following the generated path.")
+        unexpected_beh = 0
+        compute_ms_sum = 0.0
+        compute_ms_count = 0
+
+        if write_csv:
+            with open('output.csv', 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['states', 'control_inputs', 'alpha1', 'alpha2'])
+
+        for _ in range(int(tf / self.dt)):
+            ret = self.control_step()
+            self.draw_plot()
+            unexpected_beh += ret
+
+            pos_controller = getattr(self, "pos_controller", None)
+            step_compute_ms = None
+            if pos_controller is not None:
+                step_compute_ms = getattr(pos_controller, "last_total_compute_time_ms", None)
+                if step_compute_ms is None:
+                    profile = getattr(pos_controller, "last_profile", None)
+                    if isinstance(profile, dict):
+                        step_compute_ms = profile.get("total_ms", None)
+                if step_compute_ms is None:
+                    step_compute_ms = getattr(pos_controller, "last_qp_solve_time_ms", None)
+            if step_compute_ms is not None and np.isfinite(step_compute_ms):
+                compute_ms_sum += float(step_compute_ms)
+                compute_ms_count += 1
+
+            robot_state = self.robot.X[:, 0].flatten()
+            control_input = self.get_control_input().flatten()
+
+            if write_csv:
+                with open('output.csv', 'a', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(
+                        np.append(
+                            robot_state,
+                            np.append(
+                                control_input,
+                                [
+                                    self.pos_controller.cbf_param['alpha1'],
+                                    self.pos_controller.cbf_param['alpha2'],
+                                ],
+                            ),
+                        )
+                    )
+
+            if ret == -1 or ret == -2:
+                break
+
+        self.export_video()
+
+        self.avg_compute_time_ms = (
+            (compute_ms_sum / compute_ms_count) if compute_ms_count > 0 else None
+        )
+        self.compute_time_sample_count = int(compute_ms_count)
+        if self.avg_compute_time_ms is not None:
+            print(
+                f"[STATS] Avg computation time (preprocess+solver, no plotting): "
+                f"{self.avg_compute_time_ms:.3f} ms over {self.compute_time_sample_count} steps"
+            )
+
+        print("=====   Tracking finished    =====")
+        print("===================================\n")
+        if self.show_animation:
+            plt.ioff()
+            plt.close()
+
+        return unexpected_beh
