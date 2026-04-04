@@ -20,8 +20,6 @@ If you want MP4 export for any command below, append:
 `examples/test_campus.py` is a 2D benchmark scenario built on top of the
 `examples/test_crowd.py` controller stack.
 
-It is not a MetaUrban simulator. Instead:
-
 - `occlusion-cbf` owns the robot dynamics, control, obstacle motion, and collision logic
 - `test_campus.py` generates the deterministic 2D benchmark case
 - external visualization or 3D wrappers can mirror the resulting trajectories
