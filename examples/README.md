@@ -1,6 +1,6 @@
 # Campus Benchmark Reproduction Guide
 
-This document is the collaborator-facing run guide for `examples/test_campus.py`.
+This document is the run guide for `examples/test_campus.py`.
 It records the current narrow-and-long hallway benchmark setup and the selected
 case indices that were useful for qualitative comparison videos.
 
@@ -8,7 +8,11 @@ Use this file when you want to:
 
 - reproduce the exact campus benchmark cases from this repo
 - run all baselines on the same deterministic obstacle layout
-- save the animations for later import into MetaUrban or other visualization code
+- save the animations for later import into other visualization code
+
+If you want MP4 export for any command below, append:
+
+- `--save-animation true`
 
 
 ## 1. What This Scenario Is
@@ -109,11 +113,11 @@ Campus default occlusion-backup configuration:
 - `T_horizon = 1.0`
 - `vref_scenario_softmax_kappa = 0.0`
 - `rho_T = auto`
+- `vref_mode_occ = strict`
 
 For the selected DI case below, we use:
 
 - `--vref los`
-- `vref_mode_occ` is left at the controller default (`strict`)
 - visible-obstacle HOCBF inside `occlusion_cbf` is left disabled
 
 
@@ -132,20 +136,20 @@ Campus default occlusion-backup configuration:
 
 - `T_horizon = 0.5`
 - `vref_scenario_softmax_kappa = 0.0`
+- `vref_mode_occ = strict`
 
 For the selected Unicycle cases below, we use the tuned occlusion-CBF parameters:
 
 - `--vref los`
 - `--uni-reverse-gate-angle 0.625`
 - `--uni-reverse-gate-power 1.05`
-- `vref_mode_occ` is left at the controller default (`strict`)
 - visible-obstacle HOCBF inside `occlusion_cbf` is left disabled
 
 These are the tuned `Unicycle2D` parameters that gave the best success rate in
 the current campus setup for `T_horizon = 0.5`.
 
 
-## 6. Supported Baselines For Campus
+## 6. Supported Baselines For `test_campus.py`
 
 These are the supported campus baselines:
 
@@ -156,29 +160,14 @@ These are the supported campus baselines:
 - `oacp_mpc`
 - `oa_mpc`
 
-Notes:
+Important:
 
-- `backup_cbf_qp` is intentionally not used here.
-- For `oa_mpc`, the commands below disable the safe-stop solver fallback:
+- For `oa_mpc`, disabling the safe-stop solver fallback is mandatory in this guide.
+- Always use:
   - `--oa-allow-solver-fallback false`
 
 
-## 7. Common Shell Helper
-
-All one-shot animation commands below use the same helper.
-
-```bash
-run_save() {
-  local out_name="$1"
-  shift
-  rm -f output/animations/tracking.mp4
-  uv run python examples/test_campus.py "$@" "${COMMON_ARGS[@]}" &&
-  mv output/animations/tracking.mp4 "${OUT_DIR}/${out_name}.mp4"
-}
-```
-
-
-## 8. Double Integrator Reference Case
+## 7. Double Integrator Reference Case
 
 Selected case:
 
@@ -187,7 +176,11 @@ Selected case:
 
 This is the current DI reference case for the campus benchmark.
 
-### 8.1 Single occlusion-CBF command
+### 7.1 Per-baseline commands
+
+All commands below use the same DI obstacle/layout setting and differ only in baseline choice.
+
+`occlusion_cbf`
 
 ```bash
 uv run python examples/test_campus.py \
@@ -204,54 +197,128 @@ uv run python examples/test_campus.py \
   --ped-radius 0.35 \
   --occ-visible-scale 0.7 \
   --hidden-obs-velocity 1.0 \
+  --occ-enable-visible-hocbf false \
   --vref los
 ```
 
-### 8.2 One-shot animation export for all baselines
+`cbf_qp`
 
 ```bash
-mkdir -p output/animations/campus_di_idx76 && \
-OUT_DIR=output/animations/campus_di_idx76 && \
-COMMON_ARGS=(
-  --model di
-  --seed 0
-  --n-rand 30
-  --tf 200
-  --idx 76
-  --goal-threshold 0.5
-  --sensing-range 8.0
-  --ped-speed-min 0.3
-  --ped-speed-max 0.5
-  --ped-radius 0.35
-  --occ-visible-scale 0.7
+uv run python examples/test_campus.py \
+  --model di \
+  --baseline cbf_qp \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 76 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
   --hidden-obs-velocity 1.0
-  --save-animation true
-) && \
-run_save() {
-  local out_name="$1"
-  shift
-  rm -f output/animations/tracking.mp4
-  uv run python examples/test_campus.py "$@" "${COMMON_ARGS[@]}" &&
-  mv output/animations/tracking.mp4 "${OUT_DIR}/${out_name}.mp4"
-} && \
-run_save occlusion_cbf_vref_los_idx76 \
-  --baseline occlusion_cbf \
-  --vref los && \
-run_save cbf_qp_idx76 \
-  --baseline cbf_qp && \
-run_save single_risk_mpc_idx76 \
-  --baseline single_risk_mpc && \
-run_save control_tree_mpc_idx76 \
-  --baseline control_tree_mpc && \
-run_save oacp_mpc_idx76 \
-  --baseline oacp_mpc && \
-run_save oa_mpc_no_fallback_idx76 \
-  --baseline oa_mpc \
+```
+
+`single_risk_mpc`
+
+```bash
+uv run python examples/test_campus.py \
+  --model di \
+  --baseline single_risk_mpc \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 76 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0
+```
+
+`control_tree_mpc`
+
+```bash
+uv run python examples/test_campus.py \
+  --model di \
+  --baseline control_tree_mpc \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 76 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0
+```
+
+`oacp_mpc`
+
+```bash
+uv run python examples/test_campus.py \
+  --model di \
+  --baseline oacp_mpc \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 76 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0
+```
+
+`oa_mpc` default `wmax`
+
+```bash
+uv run python examples/test_campus.py \
+  --model di \
+  --baseline oa_mpc --wmax default \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 76 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0 \
+  --oa-allow-solver-fallback false
+```
+
+`oa_mpc` with `wmax=pi`
+
+```bash
+uv run python examples/test_campus.py \
+  --model di \
+  --baseline oa_mpc --wmax pi \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 76 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0 \
   --oa-allow-solver-fallback false
 ```
 
 
-## 9. Unicycle Reference Cases
+## 8. Unicycle Reference Cases
 
 Selected cases:
 
@@ -260,7 +327,7 @@ Selected cases:
 
 These are the current Unicycle reference cases for the campus benchmark.
 
-### 9.1 Shared occlusion-CBF setting for both Unicycle cases
+### 8.1 Shared `occlusion_cbf` setting for both Unicycle cases
 
 Use these extra flags for `occlusion_cbf`:
 
@@ -268,19 +335,22 @@ Use these extra flags for `occlusion_cbf`:
 - `--uni-reverse-gate-angle 0.625`
 - `--uni-reverse-gate-power 1.05`
 
-### 9.2 Single occlusion-CBF command template
+### 8.2 Per-baseline commands
 
-Replace `IDX` with `17` or `25`.
+Use the `occlusion_cbf` command below for either `idx 17` or `idx 25` by changing `--idx`.
+The other baselines use the same obstacle/layout setting and do not need the Unicycle-specific
+occlusion-backup tuning flags.
+
+`occlusion_cbf`
 
 ```bash
-IDX=17
 uv run python examples/test_campus.py \
   --model uni \
   --baseline occlusion_cbf \
   --seed 0 \
   --n-rand 30 \
   --tf 200 \
-  --idx "${IDX}" \
+  --idx 17 \
   --goal-threshold 0.5 \
   --sensing-range 8.0 \
   --ped-speed-min 0.3 \
@@ -288,128 +358,145 @@ uv run python examples/test_campus.py \
   --ped-radius 0.35 \
   --occ-visible-scale 0.7 \
   --hidden-obs-velocity 1.0 \
+  --occ-enable-visible-hocbf false \
   --vref los \
   --uni-reverse-gate-angle 0.625 \
   --uni-reverse-gate-power 1.05
 ```
 
-### 9.3 One-shot animation export for `idx 17`
+`cbf_qp`
 
 ```bash
-mkdir -p output/animations/campus_uni_idx17 && \
-OUT_DIR=output/animations/campus_uni_idx17 && \
-COMMON_ARGS=(
-  --model uni
-  --seed 0
-  --n-rand 30
-  --tf 200
-  --idx 17
-  --goal-threshold 0.5
-  --sensing-range 8.0
-  --ped-speed-min 0.3
-  --ped-speed-max 0.5
-  --ped-radius 0.35
-  --occ-visible-scale 0.7
+uv run python examples/test_campus.py \
+  --model uni \
+  --baseline cbf_qp \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 17 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
   --hidden-obs-velocity 1.0
-  --save-animation true
-) && \
-run_save() {
-  local out_name="$1"
-  shift
-  rm -f output/animations/tracking.mp4
-  uv run python examples/test_campus.py "$@" "${COMMON_ARGS[@]}" &&
-  mv output/animations/tracking.mp4 "${OUT_DIR}/${out_name}.mp4"
-} && \
-run_save occlusion_cbf_vref_los_a0625_p105_idx17 \
-  --baseline occlusion_cbf \
-  --vref los \
-  --uni-reverse-gate-angle 0.625 \
-  --uni-reverse-gate-power 1.05 && \
-run_save cbf_qp_idx17 \
-  --baseline cbf_qp && \
-run_save single_risk_mpc_idx17 \
-  --baseline single_risk_mpc && \
-run_save control_tree_mpc_idx17 \
-  --baseline control_tree_mpc && \
-run_save oacp_mpc_idx17 \
-  --baseline oacp_mpc && \
-run_save oa_mpc_no_fallback_idx17 \
+```
+
+`single_risk_mpc`
+
+```bash
+uv run python examples/test_campus.py \
+  --model uni \
+  --baseline single_risk_mpc \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 17 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0
+```
+
+`control_tree_mpc`
+
+```bash
+uv run python examples/test_campus.py \
+  --model uni \
+  --baseline control_tree_mpc \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 17 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0
+```
+
+`oacp_mpc`
+
+```bash
+uv run python examples/test_campus.py \
+  --model uni \
+  --baseline oacp_mpc \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 17 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0
+```
+
+`oa_mpc` default `wmax`
+
+```bash
+uv run python examples/test_campus.py \
+  --model uni \
   --baseline oa_mpc \
+  --wmax default \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 17 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0 \
   --oa-allow-solver-fallback false
 ```
 
-### 9.4 One-shot animation export for `idx 25`
+`oa_mpc` with `wmax=pi`
 
 ```bash
-mkdir -p output/animations/campus_uni_idx25 && \
-OUT_DIR=output/animations/campus_uni_idx25 && \
-COMMON_ARGS=(
-  --model uni
-  --seed 0
-  --n-rand 30
-  --tf 200
-  --idx 25
-  --goal-threshold 0.5
-  --sensing-range 8.0
-  --ped-speed-min 0.3
-  --ped-speed-max 0.5
-  --ped-radius 0.35
-  --occ-visible-scale 0.7
-  --hidden-obs-velocity 1.0
-  --save-animation true
-) && \
-run_save() {
-  local out_name="$1"
-  shift
-  rm -f output/animations/tracking.mp4
-  uv run python examples/test_campus.py "$@" "${COMMON_ARGS[@]}" &&
-  mv output/animations/tracking.mp4 "${OUT_DIR}/${out_name}.mp4"
-} && \
-run_save occlusion_cbf_vref_los_a0625_p105_idx25 \
-  --baseline occlusion_cbf \
-  --vref los \
-  --uni-reverse-gate-angle 0.625 \
-  --uni-reverse-gate-power 1.05 && \
-run_save cbf_qp_idx25 \
-  --baseline cbf_qp && \
-run_save single_risk_mpc_idx25 \
-  --baseline single_risk_mpc && \
-run_save control_tree_mpc_idx25 \
-  --baseline control_tree_mpc && \
-run_save oacp_mpc_idx25 \
-  --baseline oacp_mpc && \
-run_save oa_mpc_no_fallback_idx25 \
-  --baseline oa_mpc \
-  --oa-allow-solver-fallback false
-```
-
-
-## 10. Optional OA-MPC Variant For Unicycle
-
-If you also want the `OA-MPC` Unicycle `wmax=pi` variant, add this command
-after the one-shot block above:
-
-```bash
-run_save oa_mpc_wmax_pi_no_fallback_idx25 \
+uv run python examples/test_campus.py \
+  --model uni \
   --baseline oa_mpc \
   --wmax pi \
+  --seed 0 \
+  --n-rand 30 \
+  --tf 200 \
+  --idx 17 \
+  --goal-threshold 0.5 \
+  --sensing-range 8.0 \
+  --ped-speed-min 0.3 \
+  --ped-speed-max 0.5 \
+  --ped-radius 0.35 \
+  --occ-visible-scale 0.7 \
+  --hidden-obs-velocity 1.0 \
   --oa-allow-solver-fallback false
 ```
 
-Replace `idx25` with `idx17` if needed.
 
-
-## 11. Practical Notes For Collaborators
+## 9. Practical Notes For Collaborators
 
 - Keep `--seed 0` fixed when using the `idx` values in this file.
 - Keep `--n-rand 30` and `--tf 200` fixed.
+- Keep `--goal-threshold 0.5` and `--sensing-range 8.0` fixed.
+- Keep `--ped-speed-min 0.3`, `--ped-speed-max 0.5`, and `--ped-radius 0.35` fixed.
 - Keep `--occ-visible-scale 0.7` and `--hidden-obs-velocity 1.0` fixed.
 - Keep `--occ-enable-visible-hocbf` disabled.
+- Always keep `oa_mpc` fallback disabled:
+  - `--oa-allow-solver-fallback false`
 - Keep the Unicycle occlusion-CBF gate parameters fixed:
   - `angle = 0.625`
   - `power = 1.05`
 - For `cbf_qp`, the `--vref los` and Unicycle reverse-gate parameters are not used.
-- For `oa_mpc`, the commands above intentionally disable the safe-stop solver fallback.
 
 If you change any of the above, the selected `idx` cases may no longer produce
 the same qualitative comparison.
