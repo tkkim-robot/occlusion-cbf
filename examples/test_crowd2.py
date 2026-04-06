@@ -18,13 +18,27 @@ import sys
 
 import numpy as np
 
-from _baseline_defs import CROWD_ALGO_CHOICES, CROWD_BASELINE_CHOICES, CROWD_BASELINE_MAP, resolve_baseline_alias
+try:
+    from examples._baseline_defs import (
+        CROWD_ALGO_CHOICES,
+        CROWD_BASELINE_CHOICES,
+        CROWD_BASELINE_MAP,
+        resolve_baseline_alias,
+    )
+    from examples import test_crowd as crowd1
+except ImportError:
+    from _baseline_defs import (
+        CROWD_ALGO_CHOICES,
+        CROWD_BASELINE_CHOICES,
+        CROWD_BASELINE_MAP,
+        resolve_baseline_alias,
+    )
 
-THIS_DIR = Path(__file__).resolve().parent
-if str(THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(THIS_DIR))
+    THIS_DIR = Path(__file__).resolve().parent
+    if str(THIS_DIR) not in sys.path:
+        sys.path.insert(0, str(THIS_DIR))
 
-import test_crowd as crowd1
+    import test_crowd as crowd1
 
 ENV_WIDTH = 30.0
 ENV_HEIGHT = 30.0

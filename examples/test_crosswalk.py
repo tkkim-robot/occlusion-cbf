@@ -14,8 +14,16 @@ import matplotlib.patheffects as path_effects
 import matplotlib.patches as patches
 import numpy as np
 
-from _baseline_defs import CROSSWALK_BASELINE_CHOICES, CROSSWALK_BASELINE_MAP, resolve_baseline_alias
-from _runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
+try:
+    from examples._baseline_defs import (
+        CROSSWALK_BASELINE_CHOICES,
+        CROSSWALK_BASELINE_MAP,
+        resolve_baseline_alias,
+    )
+    from examples._runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
+except ImportError:
+    from _baseline_defs import CROSSWALK_BASELINE_CHOICES, CROSSWALK_BASELINE_MAP, resolve_baseline_alias
+    from _runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
 
 REPO_ROOT = ensure_repo_root()
 install_position_controller_shims()

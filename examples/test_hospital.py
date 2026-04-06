@@ -9,8 +9,12 @@ import argparse
 
 import numpy as np
 
-from _baseline_defs import HOSPITAL_ALGO_CHOICES
-from _runtime import ensure_repo_root, load_local_occ_controller
+try:
+    from examples._baseline_defs import HOSPITAL_ALGO_CHOICES
+    from examples._runtime import ensure_repo_root, load_local_occ_controller
+except ImportError:
+    from _baseline_defs import HOSPITAL_ALGO_CHOICES
+    from _runtime import ensure_repo_root, load_local_occ_controller
 
 ensure_repo_root()
 LocalTrackingControllerDyn_OCC = load_local_occ_controller("hospital")

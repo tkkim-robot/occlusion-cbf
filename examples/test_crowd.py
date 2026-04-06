@@ -10,14 +10,24 @@ from collections import deque
 
 import numpy as np
 
-from _baseline_defs import (
-    CROWD_ALGO_CHOICES,
-    CROWD_BASELINE_CHOICES,
-    CROWD_BASELINE_MAP,
-    CROWD_PLANNER_LABELS,
-    resolve_baseline_alias,
-)
-from _runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
+try:
+    from examples._baseline_defs import (
+        CROWD_ALGO_CHOICES,
+        CROWD_BASELINE_CHOICES,
+        CROWD_BASELINE_MAP,
+        CROWD_PLANNER_LABELS,
+        resolve_baseline_alias,
+    )
+    from examples._runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
+except ImportError:
+    from _baseline_defs import (
+        CROWD_ALGO_CHOICES,
+        CROWD_BASELINE_CHOICES,
+        CROWD_BASELINE_MAP,
+        CROWD_PLANNER_LABELS,
+        resolve_baseline_alias,
+    )
+    from _runtime import ensure_repo_root, install_position_controller_shims, load_local_occ_controller
 
 ensure_repo_root()
 install_position_controller_shims()
@@ -889,9 +899,9 @@ def run_crowd_scenario(
     oa_wmax="default",
     oa_dt=None,
     crowd_mode="random",
-    forced_events=3,
+    forced_events=6,
     forced_bg_rand=None,
-    forced_hidden_speed=0.5,
+    forced_hidden_speed=1.0,
     forced_occluder_radius_min=0.8,
     forced_occluder_radius_max=1.0,
     forced_validate_occlusion=True,
@@ -1007,8 +1017,8 @@ def run_crowd_scenario(
         # DI is sensitive to sharp multi-scenario occlusion velocity aggregation
         # and overly deep terminal stop margins in dense forced-emergence scenes.
         di_backup_cfg = {
-            "T_horizon": 1.0,
-            "vref_scenario_softmax_kappa": 1.0,
+            "T_horizon": 0.5,
+            "vref_scenario_softmax_kappa": 0.0,
             "rho_T": "auto",
         }
         di_backup_cfg.update(backup_cbf_overrides)
