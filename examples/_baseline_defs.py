@@ -23,11 +23,11 @@ CROWD_ALGO_CHOICES = tuple(
 CROWD_BASELINE_CHOICES = tuple(CROWD_BASELINE_MAP.keys())
 
 CROWD_PLANNER_LABELS = {
-    "occlusion_cbf_qp": "OCBF-QP",
+    "occlusion_cbf_qp": "Occlusion CBF-QP",
     "cbf_qp": "CBF-QP",
     "oa_mpc": "OA-MPC",
     "single_risk_mpc": "Single-Risk MPC",
-    "control_tree_mpc": "Control-Tree MPC",
+    "control_tree_mpc": "Single Tree MPC",
     "oacp_mpc": "OACP-MPC",
 }
 

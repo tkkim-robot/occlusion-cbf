@@ -6,7 +6,6 @@ Run:
 """
 
 import argparse
-from collections import deque
 
 import numpy as np
 
@@ -918,11 +917,10 @@ def run_crowd_scenario(
     return_metrics=False,
     max_steps=None,
     max_sim_time=None,
-    deadlock_window_steps=120,
-    deadlock_progress_eps=0.05,
     tracking_view_enable=False,
     tracking_view_window_size=5.0,
     scenario_name="Crowd1",
+    hide_env_boundary=False,
 ):
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
@@ -1018,7 +1016,7 @@ def run_crowd_scenario(
         # and overly deep terminal stop margins in dense forced-emergence scenes.
         di_backup_cfg = {
             "T_horizon": 0.5,
-            "vref_scenario_softmax_kappa": 0.0,
+            "vref_scenario_softmax_kappa": 2.0,
             "rho_T": "auto",
         }
         di_backup_cfg.update(backup_cbf_overrides)
@@ -1076,7 +1074,7 @@ def run_crowd_scenario(
     elif model == "Unicycle2D":
         uni_backup_cfg = {
             "T_horizon": 0.5,
-            "vref_scenario_softmax_kappa": 0.0,
+            "vref_scenario_softmax_kappa": 1.0,
         }
         if vref_mode_occ is not None:
             uni_backup_cfg["vref_mode_occ_uni"] = str(vref_mode_occ).strip().lower()
@@ -1137,9 +1135,9 @@ def run_crowd_scenario(
         oa_cfg = robot_spec.setdefault("oa_mpc", {})
         # Fix OA-MPC to paper-mode behavior in crowd benchmark.
         oa_cfg["paper_mode"] = True
-        oa_cfg["N"] = 10
-        oa_cfg["auto_scale_N_with_dt"] = True
-        oa_cfg["paper_horizon_time"] = 1.0
+        oa_cfg.setdefault("N", 10)
+        oa_cfg.setdefault("auto_scale_N_with_dt", True)
+        oa_cfg.setdefault("paper_horizon_time", 1.0)
         # oa_cfg.setdefault("dsafe", 0.5)
         # oa_cfg.setdefault("visible_reach_mode", "worst_case")
         # oa_cfg.setdefault("use_nominal_tracking_cost", False)
@@ -1182,17 +1180,19 @@ def run_crowd_scenario(
     planner_label_map["oa_mpc"] = f"OA-MPC (wmax={str(oa_wmax).strip().lower()})"
     planner_label = planner_label_map.get(pos_name, str(controller_type.get("pos", "")).strip())
     model_label_map = {
-        "DoubleIntegrator2D": "DI",
-        "DynamicUnicycle2D": "DU",
-        "Unicycle2D": "Uni",
+        "DoubleIntegrator2D": "Double Integrator2D",
+        "DynamicUnicycle2D": "Dynamic Unicycle2D",
+        "Unicycle2D": "Unicycle2D",
     }
     model_label = model_label_map.get(model, model)
-    figure_title = f"{scenario_name} | {planner_label} | model={model_label}"
+    figure_title = f"{scenario_name} | {planner_label} | {model_label}"
 
     x_init = waypoints[0]
 
     if show_animation:
         plot_handler = plotting.Plotting(width=env_width, height=env_height, known_obs=known_obs)
+        if bool(hide_env_boundary):
+            plot_handler.obs_bound = []
         tracking_view_ax = None
         if bool(tracking_view_enable):
             (ax, tracking_view_ax, _), fig = plot_handler.plot_grid(
@@ -1256,7 +1256,14 @@ def run_crowd_scenario(
     v_ref_floor_eff = []
     selected_branch_vals = []
     intervention_l2_sq = []
+    intervention_v_abs = []
+    intervention_v_sq = []
+    intervention_w_abs = []
+    intervention_w_sq = []
     intervention_active_steps = 0
+    terminal_slack_l1_vals = []
+    terminal_slack_max_vals = []
+    terminal_slack_active_steps = 0
     total_steps = 0
     nominal_speed = 0.8
 
@@ -1311,9 +1318,6 @@ def run_crowd_scenario(
                     min_reveal_distance_to_path_actual.append(float(d_path))
                     min_reveal_ttc_actual.append(float(meta["reveal_ttc_nominal_actual_s"]))
 
-    deadlock_window = int(max(0, deadlock_window_steps if deadlock_window_steps is not None else 0))
-    deadlock_eps = float(max(0.0, deadlock_progress_eps))
-    goal_dist_window = deque(maxlen=max(1, deadlock_window)) if deadlock_window > 0 else None
     deadlock_detected = False
 
     for _ in range(n_steps):
@@ -1360,20 +1364,47 @@ def run_crowd_scenario(
         if pos_controller is not None:
             u_cmd = getattr(pos_controller, "last_u", None)
             u_nom = getattr(pos_controller, "last_u_ref", None)
+            term_slack_l1 = getattr(pos_controller, "last_terminal_slack_l1", None)
+            term_slack_max = getattr(pos_controller, "last_terminal_slack_max", None)
+            term_slack_active_count = getattr(pos_controller, "last_terminal_slack_active_count", None)
             if u_cmd is not None and u_nom is not None:
                 try:
                     uc = np.asarray(u_cmd, dtype=float).reshape(-1)
                     un = np.asarray(u_nom, dtype=float).reshape(-1)
                     m = min(len(uc), len(un))
                     if m > 0:
-                        val = float(np.sum((uc[:m] - un[:m]) ** 2))
+                        du = uc[:m] - un[:m]
+                        val = float(np.sum(du ** 2))
                         if np.isfinite(val):
                             intervention_l2_sq.append(val)
                             tol = float(robot_spec.get("intervention_tol", 1e-3))
                             if val > (tol * tol):
                                 intervention_active_steps += 1
+                        if m >= 1:
+                            dv_abs = float(abs(du[0]))
+                            dv_sq = float(du[0] ** 2)
+                            if np.isfinite(dv_abs):
+                                intervention_v_abs.append(dv_abs)
+                            if np.isfinite(dv_sq):
+                                intervention_v_sq.append(dv_sq)
+                        if m >= 2:
+                            dw_abs = float(abs(du[1]))
+                            dw_sq = float(du[1] ** 2)
+                            if np.isfinite(dw_abs):
+                                intervention_w_abs.append(dw_abs)
+                            if np.isfinite(dw_sq):
+                                intervention_w_sq.append(dw_sq)
                 except Exception:
                     pass
+            if term_slack_l1 is not None and np.isfinite(term_slack_l1):
+                terminal_slack_l1_vals.append(float(term_slack_l1))
+            if term_slack_max is not None and np.isfinite(term_slack_max):
+                terminal_slack_max_vals.append(float(term_slack_max))
+            try:
+                if int(term_slack_active_count or 0) > 0:
+                    terminal_slack_active_steps += 1
+            except Exception:
+                pass
         if step_ms is not None and np.isfinite(step_ms):
             compute_ms.append(float(step_ms))
 
@@ -1409,17 +1440,6 @@ def run_crowd_scenario(
 
         if ret in (-1, -2):
             break
-
-        # Simple deadlock detector for full-rollout benchmarking:
-        # if goal distance does not improve over a sliding window, terminate as timeout/deadlock.
-        if goal_dist_window is not None:
-            cur_xy = np.asarray(tracking_controller.robot.X[:2, 0], dtype=float).reshape(2,)
-            cur_goal_dist = float(np.linalg.norm(cur_xy - final_goal))
-            goal_dist_window.append(cur_goal_dist)
-            if len(goal_dist_window) >= goal_dist_window.maxlen:
-                if (max(goal_dist_window) - min(goal_dist_window)) <= deadlock_eps:
-                    deadlock_detected = True
-                    break
 
     if terminal_event == "success" or ret_last == -1:
         outcome = "success"
@@ -1496,6 +1516,26 @@ def run_crowd_scenario(
         "avg_control_intervention_l2_sq": (
             None if len(intervention_l2_sq) == 0 else float(np.mean(intervention_l2_sq))
         ),
+        "avg_control_intervention_v_abs": (
+            None if len(intervention_v_abs) == 0 else float(np.mean(intervention_v_abs))
+        ),
+        "avg_control_intervention_v_sq": (
+            None if len(intervention_v_sq) == 0 else float(np.mean(intervention_v_sq))
+        ),
+        "avg_control_intervention_w_abs": (
+            None if len(intervention_w_abs) == 0 else float(np.mean(intervention_w_abs))
+        ),
+        "avg_control_intervention_w_sq": (
+            None if len(intervention_w_sq) == 0 else float(np.mean(intervention_w_sq))
+        ),
+        "avg_terminal_slack_l1": (
+            None if len(terminal_slack_l1_vals) == 0 else float(np.mean(terminal_slack_l1_vals))
+        ),
+        "avg_terminal_slack_max": (
+            None if len(terminal_slack_max_vals) == 0 else float(np.mean(terminal_slack_max_vals))
+        ),
+        "terminal_slack_active_steps": int(terminal_slack_active_steps),
+        "terminal_slack_active_ratio": float(terminal_slack_active_steps) / float(max(1, steps_executed)),
         "intervention_active_steps": int(intervention_active_steps),
         "intervention_active_ratio": float(intervention_active_ratio),
         "selected_branch_counts": selected_branch_counts,
@@ -1628,6 +1668,25 @@ def main():
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_power_occ_uni.")
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None, help="Override backup_cbf.v_min_cmd_rev_occ_uni.")
     parser.add_argument("--occ-dt-backup", type=float, default=None, help="Override backup_cbf.dt_backup for occlusion backup rollout.")
+    parser.add_argument(
+        "--occ-rollout-mode",
+        type=str,
+        choices=["common", "per_scenario"],
+        default=None,
+        help="Override backup_cbf.occ_rollout_mode for occlusion backup rollout construction.",
+    )
+    parser.add_argument(
+        "--occ-terminal-slack-weight",
+        type=float,
+        default=None,
+        help="Override backup_cbf.terminal_slack_weight for terminal-set rows only.",
+    )
+    parser.add_argument(
+        "--occ-terminal-slack-max",
+        type=float,
+        default=None,
+        help="Override backup_cbf.terminal_slack_max for terminal-set rows only.",
+    )
     parser.add_argument(
         "--vref-mode-occ",
         type=str,
@@ -1802,6 +1861,12 @@ def main():
         backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
     if args.occ_dt_backup is not None:
         backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if args.occ_rollout_mode is not None:
+        backup_cbf_overrides["occ_rollout_mode"] = str(args.occ_rollout_mode).strip().lower()
+    if args.occ_terminal_slack_weight is not None:
+        backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
+    if args.occ_terminal_slack_max is not None:
+        backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
     if args.vref is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     robot_spec_overrides = {}

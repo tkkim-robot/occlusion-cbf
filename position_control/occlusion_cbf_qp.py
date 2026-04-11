@@ -199,6 +199,10 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_constraint_meta = []
         self.last_A_cbf_val = None
         self.last_b_cbf_val = None
+        self.last_terminal_slack_val = None
+        self.last_terminal_slack_l1 = 0.0
+        self.last_terminal_slack_max = 0.0
+        self.last_terminal_slack_active_count = 0
         self._last_qp_constraint_count = None
 
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
@@ -208,7 +212,21 @@ class OcclusionCBFQP(BackupCBFQP):
         self.T_horizon = float(cfg.get("T_horizon", 2.0))
         self.dt_backup = float(cfg.get("dt_backup", 0.05))
         alpha = float(cfg.get("alpha", 1.0))
-        cfg.update({"T_horizon": self.T_horizon, "dt_backup": self.dt_backup, "alpha": alpha})
+        self.occ_rollout_mode = str(cfg.get("occ_rollout_mode", "common")).strip().lower()
+        if self.occ_rollout_mode not in {"common", "per_scenario"}:
+            self.occ_rollout_mode = "common"
+        self.terminal_slack_weight = float(cfg.get("terminal_slack_weight", 0.0))
+        term_slack_max_cfg = cfg.get("terminal_slack_max", None)
+        self.terminal_slack_max = None if term_slack_max_cfg is None else float(term_slack_max_cfg)
+        self._terminal_slack_enabled = self.terminal_slack_weight > 0.0
+        cfg.update(
+            {
+                "T_horizon": self.T_horizon,
+                "dt_backup": self.dt_backup,
+                "alpha": alpha,
+                "occ_rollout_mode": self.occ_rollout_mode,
+            }
+        )
         model_name = str(robot_spec.get("model", "")).strip()
         self._model_name = model_name
 
@@ -316,6 +334,30 @@ class OcclusionCBFQP(BackupCBFQP):
             sc_present[s] = True
 
         return A_pad, b0_pad, v_expand_pad, valid_mask, sc_present
+
+    def _simulate_occ_rollouts(self, robot_state, occ_for_qp, no_occ):
+        if no_occ or self.occ_rollout_mode == "common":
+            return {
+                "common": self.occlusion_backup.simulate_backup_trajectory(
+                    robot_state,
+                    self.T_horizon,
+                    self.dt_backup,
+                    occlusion_scenarios=None if no_occ else occ_for_qp,
+                ),
+                "per_scenario": None,
+            }
+
+        per_scenario = []
+        for scenario in occ_for_qp:
+            per_scenario.append(
+                self.occlusion_backup.simulate_backup_trajectory(
+                    robot_state,
+                    self.T_horizon,
+                    self.dt_backup,
+                    occlusion_scenarios=[scenario],
+                )
+            )
+        return {"common": None, "per_scenario": per_scenario}
 
     def _warm_start_jax_occ_constraints(self, n_tau):
         if not self._jax_occ_enabled:
@@ -474,26 +516,44 @@ class OcclusionCBFQP(BackupCBFQP):
         err = self.u - self.u_ref
         model_name = str(self.robot_spec.get("model", "")).strip()
         u_dim = int(getattr(self.robot, "u_dim", self.robot_spec.get("u_dim", 2)))
+        def _valid_weight(val, default=1.0):
+            try:
+                val = float(val)
+            except Exception:
+                return float(default)
+            if (not np.isfinite(val)) or val <= 0.0:
+                return float(default)
+            return float(val)
+
         if bool(use_visible_hocbf_objective) and model_name == "DoubleIntegrator2D" and u_dim == 2:
-            w_ax = float(
+            w_ax = _valid_weight(
                 self.robot_spec.get(
                     "qp_weight_ax_visible_hocbf",
                     self.robot_spec.get("qp_weight_ax", 1.0),
                 )
             )
-            w_ay = float(
+            w_ay = _valid_weight(
                 self.robot_spec.get(
                     "qp_weight_ay_visible_hocbf",
                     self.robot_spec.get("qp_weight_ay", 1.0),
                 )
             )
-            if (not np.isfinite(w_ax)) or (w_ax <= 0.0):
-                w_ax = 1.0
-            if (not np.isfinite(w_ay)) or (w_ay <= 0.0):
-                w_ay = 1.0
             w_sqrt = np.array([[np.sqrt(w_ax)], [np.sqrt(w_ay)]], dtype=float)
-            return cp.Minimize(cp.sum_squares(cp.multiply(w_sqrt, err)))
-        return cp.Minimize(cp.sum_squares(err))
+            track_cost = cp.sum_squares(cp.multiply(w_sqrt, err))
+        elif model_name == "Unicycle2D" and u_dim == 2:
+            w_v = _valid_weight(self.robot_spec.get("qp_weight_v", 1.0))
+            w_w = _valid_weight(self.robot_spec.get("qp_weight_w", 1.0))
+            if abs(w_v - 1.0) > 1e-12 or abs(w_w - 1.0) > 1e-12:
+                w_sqrt = np.array([[np.sqrt(w_v)], [np.sqrt(w_w)]], dtype=float)
+                track_cost = cp.sum_squares(cp.multiply(w_sqrt, err))
+            else:
+                track_cost = cp.sum_squares(err)
+        else:
+            track_cost = cp.sum_squares(err)
+
+        if self._terminal_slack_enabled and hasattr(self, "terminal_slack"):
+            track_cost += self.terminal_slack_weight * cp.sum_squares(self.terminal_slack)
+        return cp.Minimize(track_cost)
 
     def _rebuild_qp_problem(self, num_constraints=None, use_visible_hocbf_objective=None):
         u_dim = int(getattr(self.robot, "u_dim", self.robot_spec.get("u_dim", 2)))
@@ -510,6 +570,12 @@ class OcclusionCBFQP(BackupCBFQP):
 
         self.A_cbf = cp.Parameter((capacity, u_dim), value=np.zeros((capacity, u_dim)))
         self.b_cbf = cp.Parameter((capacity, 1), value=np.zeros((capacity, 1)))
+        if self._terminal_slack_enabled:
+            self.terminal_slack = cp.Variable((capacity, 1), nonneg=True)
+            self.terminal_slack_ub = cp.Parameter((capacity, 1), value=np.zeros((capacity, 1)))
+        else:
+            self.terminal_slack = None
+            self.terminal_slack_ub = None
 
         if use_visible_hocbf_objective is None:
             use_visible_hocbf_objective = bool(getattr(self, "_qp_objective_visible_hocbf", False))
@@ -517,7 +583,13 @@ class OcclusionCBFQP(BackupCBFQP):
             use_visible_hocbf_objective = bool(use_visible_hocbf_objective)
         self._qp_objective_visible_hocbf = use_visible_hocbf_objective
         objective = self._build_qp_objective(use_visible_hocbf_objective=use_visible_hocbf_objective)
-        constraints = [self.A_cbf @ self.u <= self.b_cbf]
+        if self._terminal_slack_enabled:
+            constraints = [
+                self.A_cbf @ self.u - self.terminal_slack <= self.b_cbf,
+                self.terminal_slack <= self.terminal_slack_ub,
+            ]
+        else:
+            constraints = [self.A_cbf @ self.u <= self.b_cbf]
 
         ic_fn = getattr(self.robot, "input_constraints", None)
         if callable(ic_fn):
@@ -548,7 +620,7 @@ class OcclusionCBFQP(BackupCBFQP):
 
         self.cbf_controller = cp.Problem(objective, constraints)
 
-    def _assign_qp_data(self, A_cbf_val, b_cbf_val):
+    def _assign_qp_data(self, A_cbf_val, b_cbf_val, terminal_slack_ub_val=None):
         num_constraints = int(np.asarray(A_cbf_val).shape[0])
         capacity = int(self.A_cbf.shape[0])
         if num_constraints > capacity:
@@ -559,8 +631,39 @@ class OcclusionCBFQP(BackupCBFQP):
         self.b_cbf.value[:, :] = 1e6
         self.A_cbf.value[:num_constraints, :] = A_cbf_val
         self.b_cbf.value[:num_constraints, :] = b_cbf_val
+        if self._terminal_slack_enabled and self.terminal_slack_ub is not None:
+            self.terminal_slack_ub.value[:, :] = 0.0
+            if terminal_slack_ub_val is not None:
+                terminal_slack_ub_val = np.asarray(terminal_slack_ub_val, dtype=float).reshape(-1, 1)
+                self.terminal_slack_ub.value[:num_constraints, :] = terminal_slack_ub_val[:num_constraints, :]
 
-    def _solve_qp_with_fallbacks(self, A_cbf_val, b_cbf_val, num_constraints, timings):
+    def _terminal_slack_cap(self):
+        if self.terminal_slack_max is None:
+            return 1e6
+        return max(float(self.terminal_slack_max), 0.0)
+
+    def _build_terminal_slack_ub(self, meta_list):
+        if not self._terminal_slack_enabled:
+            return None
+        slack_ub = np.zeros((len(meta_list), 1), dtype=float)
+        cap = self._terminal_slack_cap()
+        for i, meta in enumerate(meta_list):
+            if isinstance(meta, dict) and meta.get("kind") == "terminal":
+                slack_ub[i, 0] = cap
+        return slack_ub
+
+    def _effective_constraint_violation(self, A_cbf_val, b_cbf_val, u_cmd, slack_val=None):
+        A = np.asarray(A_cbf_val, dtype=float)
+        b = np.asarray(b_cbf_val, dtype=float).reshape(-1, 1)
+        u = np.asarray(u_cmd, dtype=float).reshape(-1, 1)
+        violation = A @ u - b
+        if slack_val is not None:
+            slack_val = np.asarray(slack_val, dtype=float).reshape(-1, 1)
+            if slack_val.shape[0] == violation.shape[0]:
+                violation = violation - slack_val
+        return violation
+
+    def _solve_qp_with_fallbacks(self, A_cbf_val, b_cbf_val, num_constraints, timings, terminal_slack_ub_val=None):
         solve_exception = None
         solver_attempts = []
 
@@ -584,7 +687,7 @@ class OcclusionCBFQP(BackupCBFQP):
             if rebuild:
                 self._rebuild_qp_problem(num_constraints)
                 t_assign0 = time.perf_counter()
-                self._assign_qp_data(A_cbf_val, b_cbf_val)
+                self._assign_qp_data(A_cbf_val, b_cbf_val, terminal_slack_ub_val=terminal_slack_ub_val)
                 timings["param_assign_ms"] = timings.get("param_assign_ms", 0.0) + (
                     (time.perf_counter() - t_assign0) * 1000.0
                 )
@@ -623,7 +726,7 @@ class OcclusionCBFQP(BackupCBFQP):
         if needs_rebuild:
             self._rebuild_qp_problem(num_constraints)
         t_assign0 = time.perf_counter()
-        self._assign_qp_data(A_cbf_val, b_cbf_val)
+        self._assign_qp_data(A_cbf_val, b_cbf_val, terminal_slack_ub_val=terminal_slack_ub_val)
         timings["param_assign_ms"] = (time.perf_counter() - t_assign0) * 1000.0
 
         total_t0 = time.perf_counter()
@@ -935,14 +1038,14 @@ class OcclusionCBFQP(BackupCBFQP):
             return True
         return float(min_barrier_now) >= -self._fallback_h_tol()
 
-    def _fallback_cmd_feasible(self, u_cmd, A_cbf_val, b_cbf_val, tol_feas):
+    def _fallback_cmd_feasible(self, u_cmd, A_cbf_val, b_cbf_val, tol_feas, slack_ub_val=None):
         try:
             u = np.asarray(u_cmd, dtype=float).reshape(-1, 1)
             A = np.asarray(A_cbf_val, dtype=float)
             b = np.asarray(b_cbf_val, dtype=float).reshape(-1, 1)
             if A.ndim != 2 or b.shape[0] != A.shape[0] or u.shape[0] != A.shape[1]:
                 return False, None
-            violation = A @ u - b
+            violation = self._effective_constraint_violation(A, b, u, slack_val=slack_ub_val)
             max_violation = float(np.max(violation)) if violation.size > 0 else -np.inf
             return bool(max_violation <= float(tol_feas)), max_violation
         except Exception:
@@ -1084,12 +1187,18 @@ class OcclusionCBFQP(BackupCBFQP):
         meta_list = []
 
         t0 = time.perf_counter()
-        phi_b, Phi_b, tau_points, fcl_traj = self.occlusion_backup.simulate_backup_trajectory(
-            robot_state,
-            self.T_horizon,
-            self.dt_backup,
-            occlusion_scenarios=None if no_occ else occ_for_qp,
-        )
+        rollout_data = self._simulate_occ_rollouts(robot_state, occ_for_qp, no_occ)
+        common_rollout = rollout_data["common"]
+        per_scenario_rollouts = rollout_data["per_scenario"]
+        if common_rollout is not None:
+            phi_b, Phi_b, tau_points, fcl_traj = common_rollout
+        else:
+            phi_b = Phi_b = fcl_traj = None
+            tau_points = (
+                per_scenario_rollouts[0][2]
+                if per_scenario_rollouts and len(per_scenario_rollouts) > 0
+                else np.zeros((0,), dtype=float)
+            )
         timings["rollout_stm_ms"] = (time.perf_counter() - t0) * 1000.0
 
         try:
@@ -1134,7 +1243,8 @@ class OcclusionCBFQP(BackupCBFQP):
         if not no_occ:
             used_jax_occ = False
             if (
-                self._jax_occ_enabled
+                self.occ_rollout_mode == "common"
+                and self._jax_occ_enabled
                 and self._jax_occ_warmed
                 and len(tau_points) == self._jax_occ_warm_n_tau
             ):
@@ -1216,9 +1326,13 @@ class OcclusionCBFQP(BackupCBFQP):
 
             if not used_jax_occ:
                 for sc_idx, scenario in enumerate(occ_for_qp):
-                    for i, tau in enumerate(tau_points):
-                        phi_i = phi_b[i].reshape(-1, 1)
-                        Phi_i = Phi_b[i]
+                    if per_scenario_rollouts is not None:
+                        phi_sc, Phi_sc, tau_points_sc, fcl_sc = per_scenario_rollouts[sc_idx]
+                    else:
+                        phi_sc, Phi_sc, tau_points_sc, fcl_sc = phi_b, Phi_b, tau_points, fcl_traj
+                    for i, tau in enumerate(tau_points_sc):
+                        phi_i = phi_sc[i].reshape(-1, 1)
+                        Phi_i = Phi_sc[i]
                         pos_i = phi_i[0:2]
 
                         h_tilde, grad_pos, _, dh_ds, _ = self._occ_smax(pos_i.flatten(), scenario, tau)
@@ -1229,7 +1343,7 @@ class OcclusionCBFQP(BackupCBFQP):
                         pad_cols = max(0, state_dim - grad_pos.shape[1])
                         grad_h_phi = np.hstack([grad_pos, np.zeros((1, pad_cols))])
 
-                        f_pi_phi = fcl_traj[i].reshape(-1, 1)
+                        f_pi_phi = fcl_sc[i].reshape(-1, 1)
                         if f_pi_phi.shape[0] < state_dim:
                             f_pi_pad = np.vstack([f_pi_phi, np.zeros((state_dim - f_pi_phi.shape[0], 1))])
                         else:
@@ -1261,11 +1375,7 @@ class OcclusionCBFQP(BackupCBFQP):
 
         # terminal backup-set constraints
         t0 = time.perf_counter()
-        phi_T = phi_b[-1].reshape(-1, 1)
-        Phi_T = Phi_b[-1]
         term_scenarios = list(occ_for_qp) if not no_occ else []
-
-        state_dim_T = Phi_T.shape[0]
         try:
             f_term = self.robot.f(robot_state)
         except TypeError:
@@ -1275,12 +1385,20 @@ class OcclusionCBFQP(BackupCBFQP):
         except TypeError:
             g_term = self.robot.g()
 
-        if f_term.shape[0] < state_dim_T:
-            f_term = np.vstack([f_term, np.zeros((state_dim_T - f_term.shape[0], 1))])
-        if g_term.shape[0] < state_dim_T:
-            g_term = np.vstack([g_term, np.zeros((state_dim_T - g_term.shape[0], g_term.shape[1]))])
-
         for sc_idx, term_scn in enumerate(term_scenarios):
+            if per_scenario_rollouts is not None:
+                phi_T = per_scenario_rollouts[sc_idx][0][-1].reshape(-1, 1)
+                Phi_T = per_scenario_rollouts[sc_idx][1][-1]
+            else:
+                phi_T = phi_b[-1].reshape(-1, 1)
+                Phi_T = Phi_b[-1]
+            state_dim_T = Phi_T.shape[0]
+            f_term_use = f_term
+            g_term_use = g_term
+            if f_term_use.shape[0] < state_dim_T:
+                f_term_use = np.vstack([f_term_use, np.zeros((state_dim_T - f_term_use.shape[0], 1))])
+            if g_term_use.shape[0] < state_dim_T:
+                g_term_use = np.vstack([g_term_use, np.zeros((state_dim_T - g_term_use.shape[0], g_term_use.shape[1]))])
             rho_term = self._resolve_terminal_rho()
             self.occlusion_backup.set_terminal_backup_context(
                 term_scn, self.T_horizon, kappa=self.kappa, rho_T=rho_term
@@ -1291,8 +1409,8 @@ class OcclusionCBFQP(BackupCBFQP):
             if h_b_T is None or grad_h_b_T is None:
                 continue
 
-            Lfh_b_T = grad_h_b_T @ (Phi_T @ f_term)
-            Lgh_b_T = grad_h_b_T @ (Phi_T @ g_term)
+            Lfh_b_T = grad_h_b_T @ (Phi_T @ f_term_use)
+            Lgh_b_T = grad_h_b_T @ (Phi_T @ g_term_use)
             rhs_b = float(Lfh_b_T + self._alpha(h_b_T))
 
             A_list.append(-Lgh_b_T)
@@ -1306,6 +1424,10 @@ class OcclusionCBFQP(BackupCBFQP):
             self.last_qp_solve_time_ms = 0.0
             self.last_solver_solve_time_ms = 0.0
             self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
+            self.last_terminal_slack_val = None
+            self.last_terminal_slack_l1 = 0.0
+            self.last_terminal_slack_max = 0.0
+            self.last_terminal_slack_active_count = 0
             self.last_intervention = "u_ref"
             u_out = self._clip_du_input_for_speed(robot_state, self.u_ref.value)
             self.last_u = u_out
@@ -1315,9 +1437,14 @@ class OcclusionCBFQP(BackupCBFQP):
         A_cbf_val = np.vstack(A_list).reshape(-1, 2)
         b_cbf_val = np.vstack(b_list).reshape(-1, 1)
         num_constraints = int(A_cbf_val.shape[0])
+        terminal_slack_ub_val = self._build_terminal_slack_ub(meta_list)
         self.last_constraint_meta = list(meta_list)
         self.last_A_cbf_val = np.array(A_cbf_val, dtype=float, copy=True)
         self.last_b_cbf_val = np.array(b_cbf_val, dtype=float, copy=True)
+        self.last_terminal_slack_val = None
+        self.last_terminal_slack_l1 = 0.0
+        self.last_terminal_slack_max = 0.0
+        self.last_terminal_slack_active_count = 0
         timings["stack_constraints_ms"] = (time.perf_counter() - t0) * 1000.0
 
         tol = float(self.robot_spec.get("intervention_tol", 1e-3))
@@ -1370,7 +1497,13 @@ class OcclusionCBFQP(BackupCBFQP):
                 # print(f"[OcclusionCBFQP] u_ref feasible (max_violation={max_violation:.3e}) -> use u_ref")
             return u_out
 
-        solve_exception = self._solve_qp_with_fallbacks(A_cbf_val, b_cbf_val, num_constraints, timings)
+        solve_exception = self._solve_qp_with_fallbacks(
+            A_cbf_val,
+            b_cbf_val,
+            num_constraints,
+            timings,
+            terminal_slack_ub_val=terminal_slack_ub_val,
+        )
         timings["total_ms"] = (time.perf_counter() - t_all0) * 1000.0
         self.last_profile = timings
 
@@ -1389,10 +1522,15 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_qp_exception = None if solve_exception is None else str(solve_exception)
         qp_ok = False
         u_raw = None
+        slack_raw = None
         if solve_exception is None and self.u.value is not None:
             u_raw = np.array(self.u.value, dtype=float).reshape(-1, 1)
+            if self._terminal_slack_enabled and self.terminal_slack is not None and self.terminal_slack.value is not None:
+                slack_raw = np.array(self.terminal_slack.value, dtype=float).reshape(-1, 1)[:num_constraints, :]
             tol_feas = float(self.robot_spec.get("cbf_feas_tol", 1e-4))
-            raw_violation = (A_cbf_val @ u_raw - b_cbf_val).flatten()
+            raw_violation = self._effective_constraint_violation(
+                A_cbf_val, b_cbf_val, u_raw, slack_val=slack_raw
+            ).flatten()
             max_raw_violation = float(np.max(raw_violation)) if raw_violation.size > 0 else -np.inf
             if qp_status == "optimal":
                 qp_ok = True
@@ -1403,6 +1541,11 @@ class OcclusionCBFQP(BackupCBFQP):
             u_safe = np.array(u_raw, dtype=float).reshape(-1, 1)
             u_safe = self._clip_du_input_for_speed(robot_state, u_safe)
             self.last_u = u_safe
+            if slack_raw is not None:
+                self.last_terminal_slack_val = np.array(slack_raw, dtype=float, copy=True)
+                self.last_terminal_slack_l1 = float(np.sum(np.abs(slack_raw)))
+                self.last_terminal_slack_max = float(np.max(slack_raw)) if slack_raw.size > 0 else 0.0
+                self.last_terminal_slack_active_count = int(np.count_nonzero(slack_raw > 1e-9))
             if self.last_u_ref is not None:
                 delta = float(np.linalg.norm(self.last_u - self.last_u_ref))
             else:
@@ -1438,7 +1581,7 @@ class OcclusionCBFQP(BackupCBFQP):
         tol_feas = float(self.robot_spec.get("cbf_feas_tol", 1e-4))
         fallback_state_safe = self._is_fallback_safe(min_barrier_now, has_barrier_value)
         fallback_cmd_feasible, fallback_cmd_max_violation = self._fallback_cmd_feasible(
-            u_safe, A_cbf_val, b_cbf_val, tol_feas
+            u_safe, A_cbf_val, b_cbf_val, tol_feas, slack_ub_val=terminal_slack_ub_val
         )
         self.last_fallback_cmd_max_violation = fallback_cmd_max_violation
         self.last_fallback_cmd_feasible = bool(fallback_cmd_feasible)

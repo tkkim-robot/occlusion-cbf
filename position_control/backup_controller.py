@@ -1079,10 +1079,17 @@ class OcclusionController(BackupController):
         self.pid_occ_gains = {
             "Kp": 1.0,
             "Ki": 0.2,
-            "Kd": 0.1,
+            "Kd": 1.0,
             "aw_limit": 1.0
         }
         cfg = self.robot_spec.setdefault("backup_cbf", {})
+        # DI occlusion backup uses a proportional-plus-damping acceleration law.
+        # Keep these gains configurable through backup_cbf overrides so DI sweeps
+        # can tune them without changing the controller structure.
+        self.pid_occ_gains["Kp"] = float(cfg.get("k_p_occ_di", self.pid_occ_gains["Kp"]))
+        self.pid_occ_gains["Kd"] = float(cfg.get("k_d_occ_di", self.pid_occ_gains["Kd"]))
+        cfg["k_p_occ_di"] = float(self.pid_occ_gains["Kp"])
+        cfg["k_d_occ_di"] = float(self.pid_occ_gains["Kd"])
         self.T_horizon = float(cfg.get("T_horizon", 2.0))
         cfg["T_horizon"] = self.T_horizon
 
@@ -1668,7 +1675,7 @@ class OcclusionController(BackupController):
         X = np.asarray(X, dtype=float).reshape(self._n_state, 1)
         if self.model == "DoubleIntegrator2D":
             Kp = float(self.pid_occ_gains.get("Kp", 1.0))
-            k_d = 1.0
+            k_d = float(self.pid_occ_gains.get("Kd", 1.0))
             Bv = -(Kp + k_d) * np.eye(2)
             if occlusion_scenarios is not None and t is not None:
                 Jp = self._dvref_dp_fd(X, occlusion_scenarios, t)
@@ -1753,6 +1760,7 @@ class OcclusionController(BackupController):
             a_lim = float(self.robot_spec.get("a_max", 1.0))
             v_max = float(self.robot_spec.get("v_max", 1.0))
             Kp = float(self.pid_occ_gains.get("Kp", 1.0))
+            k_d = float(self.pid_occ_gains.get("Kd", k_d))
 
             v = np.array([float(X[2, 0]), float(X[3, 0])], dtype=float)
             e = v - v_ref
@@ -1899,6 +1907,7 @@ class OcclusionController(BackupController):
             if self.model == "DoubleIntegrator2D":
                 x0 = np.zeros((4,), dtype=np.float32)
                 scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
+                kd_occ = np.float32(self.pid_occ_gains.get("Kd", 1.0))
                 traj, _, _, _ = _jax_rollout_kernel_di(
                     jnp.asarray(x0),
                     jnp.asarray(A_pad),
@@ -1912,7 +1921,7 @@ class OcclusionController(BackupController):
                     np.float32(self.dt),
                     int(n_steps),
                     np.float32(self.pid_occ_gains.get("Kp", 1.0)),
-                    np.float32(1.0),
+                    kd_occ,
                     np.float32(self.robot_spec.get("a_max", 1.0)),
                     np.float32(self.robot_spec.get("v_max", 1.0)),
                     np.float32(self.robot_spec.get("radius", 0.25)),
@@ -2077,6 +2086,7 @@ class OcclusionController(BackupController):
             if self.model == "DoubleIntegrator2D":
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(4,)
                 scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
+                kd_occ = np.float32(self.pid_occ_gains.get("Kd", 1.0))
                 traj, stm, t_grid, fcl = _jax_rollout_kernel_di(
                     jnp.asarray(x0_vec),
                     jnp.asarray(A_pad),
@@ -2090,7 +2100,7 @@ class OcclusionController(BackupController):
                     np.float32(dt),
                     int(N),
                     np.float32(self.pid_occ_gains.get("Kp", 1.0)),
-                    np.float32(1.0),
+                    kd_occ,
                     np.float32(self.robot_spec.get("a_max", 1.0)),
                     np.float32(self.robot_spec.get("v_max", 1.0)),
                     np.float32(self.robot_spec.get("radius", 0.25)),

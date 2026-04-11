@@ -84,7 +84,11 @@ def _parse_json_arg(value: str | None) -> dict[str, Any] | None:
     if not s:
         return None
     candidate = Path(s)
-    if candidate.exists():
+    try:
+        candidate_exists = candidate.exists()
+    except OSError:
+        candidate_exists = False
+    if candidate_exists:
         with candidate.open("r") as f:
             data = json.load(f)
     else:
@@ -92,8 +96,23 @@ def _parse_json_arg(value: str | None) -> dict[str, Any] | None:
     if data is None:
         return None
     if not isinstance(data, dict):
-        raise ValueError("--backup-cbf-json must decode to a JSON object")
+        raise ValueError("JSON override must decode to a JSON object")
     return data
+
+
+def _parse_int_list_arg(value: str | None) -> list[int]:
+    if value is None:
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    out: list[int] = []
+    for token in text.split(","):
+        tok = token.strip()
+        if not tok:
+            continue
+        out.append(int(tok))
+    return out
 
 
 def _classify_3way(raw_outcome: str) -> str:
@@ -121,10 +140,16 @@ def _run_baseline_sweep(
     seed: int,
     idx_start: int,
     idx_end: int,
+    exclude_idx: list[int] | None,
     n_rand: int,
     tf: float,
     wmax: str,
     oa_allow_solver_fallback: bool | None,
+    oa_dynamic_occluders: bool | None,
+    oa_dsafe: float | None,
+    oa_visible_reach_mode: str | None,
+    oa_use_nominal_tracking_cost: bool | None,
+    oa_dt: float | None,
     occ_version: str | None,
     occ_visible_scale: float | None,
     occ_enable_visible_hocbf: bool | None,
@@ -157,6 +182,9 @@ def _run_baseline_sweep(
         f"[RUN] scenario={scenario_label} label={run_label} baseline={baseline_alias} pos={controller_pos} model={model} "
         f"seed={seed} idx={idx_start}..{idx_end} n_rand={n_rand} tf={tf} wmax={wmax} "
         f"oa_allow_solver_fallback={oa_allow_solver_fallback} "
+        f"oa_dynamic_occluders={oa_dynamic_occluders} "
+        f"oa_dsafe={oa_dsafe} oa_visible_reach_mode={oa_visible_reach_mode} "
+        f"oa_use_nominal_tracking_cost={oa_use_nominal_tracking_cost} oa_dt={oa_dt} "
         f"occ_version={occ_version} occ_visible_scale={occ_visible_scale} "
         f"occ_enable_visible_hocbf={occ_enable_visible_hocbf} "
         f"crowd_mode={crowd_mode}",
@@ -164,8 +192,13 @@ def _run_baseline_sweep(
     )
     print("[RUN] show_animation=False, save_animation=False", flush=True)
 
-    idx_list = list(range(int(idx_start), int(idx_end) + 1))
+    exclude_set = {int(i) for i in (exclude_idx or [])}
+    idx_list = [idx for idx in range(int(idx_start), int(idx_end) + 1) if idx not in exclude_set]
     total = len(idx_list)
+    if exclude_set:
+        print(f"[RUN] excluding idx: {sorted(exclude_set)}", flush=True)
+    if total <= 0:
+        raise ValueError("No indices remain after applying --exclude-idx.")
 
     if int(workers) <= 1:
         for k, idx in enumerate(idx_list, start=1):
@@ -180,6 +213,11 @@ def _run_baseline_sweep(
                 tf=float(tf),
                 wmax=str(wmax),
                 oa_allow_solver_fallback=oa_allow_solver_fallback,
+                oa_dynamic_occluders=oa_dynamic_occluders,
+                oa_dsafe=oa_dsafe,
+                oa_visible_reach_mode=oa_visible_reach_mode,
+                oa_use_nominal_tracking_cost=oa_use_nominal_tracking_cost,
+                oa_dt=oa_dt,
                 occ_version=occ_version,
                 occ_visible_scale=occ_visible_scale,
                 occ_enable_visible_hocbf=occ_enable_visible_hocbf,
@@ -215,6 +253,11 @@ def _run_baseline_sweep(
                 float(tf),
                 str(wmax),
                 oa_allow_solver_fallback,
+                oa_dynamic_occluders,
+                oa_dsafe,
+                oa_visible_reach_mode,
+                oa_use_nominal_tracking_cost,
+                oa_dt,
                 occ_version,
                 occ_visible_scale,
                 occ_enable_visible_hocbf,
@@ -292,6 +335,9 @@ def _run_baseline_sweep(
 
     avg_ms_all = _mean([_safe_float(r.get("avg_solve_time_ms")) for r in rows])
     avg_intv_all = _mean([_safe_float(r.get("avg_control_intervention_l2_sq")) for r in rows])
+    avg_term_slack_l1_all = _mean([_safe_float(r.get("avg_terminal_slack_l1")) for r in rows])
+    avg_term_slack_max_all = _mean([_safe_float(r.get("avg_terminal_slack_max")) for r in rows])
+    avg_term_slack_active_ratio_all = _mean([_safe_float(r.get("terminal_slack_active_ratio")) for r in rows])
     avg_sim_time_all = _mean([_safe_float(r.get("total_sim_time")) for r in rows])
     avg_wall_time_all = _mean([_safe_float(r.get("case_wall_time_s")) for r in rows])
     avg_forced_init_occ = _mean([_safe_float(r.get("n_forced_initially_occluded")) for r in rows])
@@ -308,6 +354,11 @@ def _run_baseline_sweep(
         "controller_pos",
         "wmax",
         "oa_allow_solver_fallback",
+        "oa_dynamic_occluders",
+        "oa_dsafe",
+        "oa_visible_reach_mode",
+        "oa_use_nominal_tracking_cost",
+        "oa_dt",
         "occ_version",
         "occ_visible_scale",
         "occ_enable_visible_hocbf",
@@ -326,6 +377,10 @@ def _run_baseline_sweep(
         "forced_event_meta",
         "avg_solve_time_ms",
         "avg_control_intervention_l2_sq",
+        "avg_terminal_slack_l1",
+        "avg_terminal_slack_max",
+        "terminal_slack_active_steps",
+        "terminal_slack_active_ratio",
         "total_sim_time",
         "case_wall_time_s",
         "total_steps",
@@ -349,10 +404,16 @@ def _run_baseline_sweep(
             "seed": int(seed),
             "idx_start": int(idx_start),
             "idx_end": int(idx_end),
+            "exclude_idx": sorted(exclude_set),
             "n_rand": int(n_rand),
             "tf": float(tf),
             "oa_wmax": str(wmax),
             "oa_allow_solver_fallback": oa_allow_solver_fallback,
+            "oa_dynamic_occluders": oa_dynamic_occluders,
+            "oa_dsafe": oa_dsafe,
+            "oa_visible_reach_mode": oa_visible_reach_mode,
+            "oa_use_nominal_tracking_cost": oa_use_nominal_tracking_cost,
+            "oa_dt": oa_dt,
             "occ_version": occ_version,
             "occ_visible_scale": occ_visible_scale,
             "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
@@ -386,6 +447,9 @@ def _run_baseline_sweep(
         "averages": {
             "avg_solve_time_ms_over_idx": avg_ms_all,
             "avg_control_intervention_l2_sq_over_idx": avg_intv_all,
+            "avg_terminal_slack_l1_over_idx": avg_term_slack_l1_all,
+            "avg_terminal_slack_max_over_idx": avg_term_slack_max_all,
+            "avg_terminal_slack_active_ratio_over_idx": avg_term_slack_active_ratio_all,
             "avg_total_sim_time_s_over_idx": avg_sim_time_all,
             "avg_case_wall_time_s_over_idx": avg_wall_time_all,
             "avg_n_forced_initially_occluded_over_idx": avg_forced_init_occ,
@@ -412,6 +476,9 @@ def _run_baseline_sweep(
     print(f"infeasible idx: {idx_infeasible}")
     print(f"avg solve time over idx [ms]: {avg_ms_all}")
     print(f"avg control intervention over idx: {avg_intv_all}")
+    print(f"avg terminal slack L1 over idx: {avg_term_slack_l1_all}")
+    print(f"avg terminal slack max over idx: {avg_term_slack_max_all}")
+    print(f"avg terminal slack active ratio over idx: {avg_term_slack_active_ratio_all}")
     print(f"avg sim time over idx [s]: {avg_sim_time_all}")
     print(f"avg wall time per idx [s]: {avg_wall_time_all}")
     print(f"avg forced initially occluded over idx: {avg_forced_init_occ}")
@@ -445,10 +512,16 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
             seed=int(args.seed),
             idx_start=int(args.idx_start),
             idx_end=int(args.idx_end),
+            exclude_idx=list(args.exclude_idx),
             n_rand=int(args.n_rand),
             tf=float(args.tf),
             wmax=str(spec["wmax"]),
             oa_allow_solver_fallback=args.oa_allow_solver_fallback,
+            oa_dynamic_occluders=args.oa_dynamic_occluders,
+            oa_dsafe=args.oa_dsafe,
+            oa_visible_reach_mode=args.oa_visible_reach_mode,
+            oa_use_nominal_tracking_cost=args.oa_use_nominal_tracking_cost,
+            oa_dt=args.oa_dt,
             occ_version=args.occ_version,
             occ_visible_scale=args.occ_visible_scale,
             occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
@@ -525,9 +598,15 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
             "seed": int(args.seed),
             "idx_start": int(args.idx_start),
             "idx_end": int(args.idx_end),
+            "exclude_idx": list(args.exclude_idx),
             "n_rand": int(args.n_rand),
             "tf": float(args.tf),
             "oa_allow_solver_fallback": args.oa_allow_solver_fallback,
+            "oa_dynamic_occluders": args.oa_dynamic_occluders,
+            "oa_dsafe": args.oa_dsafe,
+            "oa_visible_reach_mode": args.oa_visible_reach_mode,
+            "oa_use_nominal_tracking_cost": args.oa_use_nominal_tracking_cost,
+            "oa_dt": args.oa_dt,
             "occ_version": args.occ_version,
             "occ_visible_scale": args.occ_visible_scale,
             "occ_enable_visible_hocbf": args.occ_enable_visible_hocbf,
@@ -591,6 +670,12 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--idx-start", type=int, default=1)
     p.add_argument("--idx-end", type=int, default=100)
+    p.add_argument(
+        "--exclude-idx",
+        type=str,
+        default=None,
+        help="Comma-separated idx list to skip from the inclusive idx range.",
+    )
     p.add_argument(
         "--n-rand",
         type=int,
@@ -656,6 +741,41 @@ def main() -> int:
         const=True,
         default=None,
         help="Forwarded to test_crowd OA-MPC config. If false, OA solver failures are treated as infeasible.",
+    )
+    p.add_argument(
+        "--oa-dynamic-occluders",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Forwarded to test_crowd OA-MPC config.",
+    )
+    p.add_argument(
+        "--oa-dsafe",
+        type=float,
+        default=None,
+        help="Forwarded to test_crowd OA-MPC config.",
+    )
+    p.add_argument(
+        "--oa-visible-reach-mode",
+        type=str,
+        choices=["constant_velocity", "worst_case"],
+        default=None,
+        help="Forwarded to test_crowd OA-MPC config.",
+    )
+    p.add_argument(
+        "--oa-use-nominal-tracking-cost",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Forwarded to test_crowd OA-MPC config.",
+    )
+    p.add_argument(
+        "--oa-dt",
+        type=float,
+        default=None,
+        help="Forwarded to test_crowd OA-MPC config.",
     )
     p.add_argument(
         "--occ-version",
@@ -744,6 +864,25 @@ def main() -> int:
         help="Override backup_cbf.dt_backup for occlusion backup rollout.",
     )
     p.add_argument(
+        "--occ-rollout-mode",
+        type=str,
+        default=None,
+        choices=["common", "per_scenario"],
+        help="Override backup_cbf.occ_rollout_mode for occlusion backup rollout construction.",
+    )
+    p.add_argument(
+        "--occ-terminal-slack-weight",
+        type=float,
+        default=None,
+        help="Override backup_cbf.terminal_slack_weight for terminal-set rows only.",
+    )
+    p.add_argument(
+        "--occ-terminal-slack-max",
+        type=float,
+        default=None,
+        help="Override backup_cbf.terminal_slack_max for terminal-set rows only.",
+    )
+    p.add_argument(
         "--vref",
         type=str,
         default=None,
@@ -764,6 +903,7 @@ def main() -> int:
         help="JSON object or path to JSON file with robot_spec overrides forwarded to examples/test_crowd.py.",
     )
     args = p.parse_args()
+    args.exclude_idx = _parse_int_list_arg(args.exclude_idx)
     args.backup_cbf_overrides = _parse_json_arg(args.backup_cbf_json) or {}
     args.robot_spec_overrides = _parse_json_arg(args.robot_spec_json)
     if args.uni_reverse_bias is not None:
@@ -776,6 +916,12 @@ def main() -> int:
         args.backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
     if args.occ_dt_backup is not None:
         args.backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if args.occ_rollout_mode is not None:
+        args.backup_cbf_overrides["occ_rollout_mode"] = str(args.occ_rollout_mode).strip().lower()
+    if args.occ_terminal_slack_weight is not None:
+        args.backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
+    if args.occ_terminal_slack_max is not None:
+        args.backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
     if args.vref is not None:
         args.backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     if not args.backup_cbf_overrides:
@@ -814,6 +960,8 @@ def main() -> int:
 
     if int(args.idx_start) < 1 or int(args.idx_end) < int(args.idx_start):
         raise ValueError("Require 1 <= idx-start <= idx-end")
+    if any(int(idx) < 1 for idx in args.exclude_idx):
+        raise ValueError("--exclude-idx entries must be >= 1")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -833,10 +981,16 @@ def main() -> int:
         seed=int(args.seed),
         idx_start=int(args.idx_start),
         idx_end=int(args.idx_end),
+        exclude_idx=list(args.exclude_idx),
         n_rand=int(args.n_rand),
         tf=float(args.tf),
         wmax=str(args.wmax),
         oa_allow_solver_fallback=args.oa_allow_solver_fallback,
+        oa_dynamic_occluders=args.oa_dynamic_occluders,
+        oa_dsafe=args.oa_dsafe,
+        oa_visible_reach_mode=args.oa_visible_reach_mode,
+        oa_use_nominal_tracking_cost=args.oa_use_nominal_tracking_cost,
+        oa_dt=args.oa_dt,
         occ_version=args.occ_version,
         occ_visible_scale=args.occ_visible_scale,
         occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
@@ -860,6 +1014,7 @@ def main() -> int:
 def _run_one_idx_job_star(
     task: tuple[
         str, str, str, str, int, int, float, str, bool | None,
+        bool | None, float | None, str | None, bool | None, float | None,
         str | None, float | None, bool | None, str, int, int | None, float, float, float,
         bool, bool, dict[str, Any] | None, dict[str, Any] | None, str
     ]
@@ -875,20 +1030,25 @@ def _run_one_idx_job_star(
         tf=task[7],
         wmax=task[8],
         oa_allow_solver_fallback=task[9],
-        occ_version=task[10],
-        occ_visible_scale=task[11],
-        occ_enable_visible_hocbf=task[12],
-        crowd_mode=task[13],
-        forced_events=task[14],
-        forced_bg_rand=task[15],
-        forced_hidden_speed=task[16],
-        forced_occluder_radius_min=task[17],
-        forced_occluder_radius_max=task[18],
-        forced_validate_occlusion=task[19],
-        forced_require_corridor_conflict=task[20],
-        backup_cbf_overrides=task[21],
-        robot_spec_overrides=task[22],
-        run_label=task[23],
+        oa_dynamic_occluders=task[10],
+        oa_dsafe=task[11],
+        oa_visible_reach_mode=task[12],
+        oa_use_nominal_tracking_cost=task[13],
+        oa_dt=task[14],
+        occ_version=task[15],
+        occ_visible_scale=task[16],
+        occ_enable_visible_hocbf=task[17],
+        crowd_mode=task[18],
+        forced_events=task[19],
+        forced_bg_rand=task[20],
+        forced_hidden_speed=task[21],
+        forced_occluder_radius_min=task[22],
+        forced_occluder_radius_max=task[23],
+        forced_validate_occlusion=task[24],
+        forced_require_corridor_conflict=task[25],
+        backup_cbf_overrides=task[26],
+        robot_spec_overrides=task[27],
+        run_label=task[28],
     )
 
 
@@ -904,6 +1064,11 @@ def _run_one_idx_job(
     tf: float,
     wmax: str,
     oa_allow_solver_fallback: bool | None,
+    oa_dynamic_occluders: bool | None,
+    oa_dsafe: float | None,
+    oa_visible_reach_mode: str | None,
+    oa_use_nominal_tracking_cost: bool | None,
+    oa_dt: float | None,
     occ_version: str | None,
     occ_visible_scale: float | None,
     occ_enable_visible_hocbf: bool | None,
@@ -937,6 +1102,11 @@ def _run_one_idx_job(
             occ_enable_visible_hocbf=occ_enable_visible_hocbf,
             oa_wmax=str(wmax),
             oa_allow_solver_fallback=oa_allow_solver_fallback,
+            oa_dynamic_occluders=oa_dynamic_occluders,
+            oa_dsafe=oa_dsafe,
+            oa_visible_reach_mode=oa_visible_reach_mode,
+            oa_use_nominal_tracking_cost=oa_use_nominal_tracking_cost,
+            oa_dt=oa_dt,
             crowd_mode=str(crowd_mode),
             forced_events=int(forced_events),
             forced_bg_rand=forced_bg_rand,
@@ -957,6 +1127,11 @@ def _run_one_idx_job(
             "controller_pos": str(controller_pos),
             "wmax": str(wmax),
             "oa_allow_solver_fallback": oa_allow_solver_fallback,
+            "oa_dynamic_occluders": oa_dynamic_occluders,
+            "oa_dsafe": oa_dsafe,
+            "oa_visible_reach_mode": oa_visible_reach_mode,
+            "oa_use_nominal_tracking_cost": oa_use_nominal_tracking_cost,
+            "oa_dt": oa_dt,
             "occ_version": occ_version,
             "occ_visible_scale": occ_visible_scale,
             "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
@@ -981,6 +1156,10 @@ def _run_one_idx_job(
             "avg_control_intervention_l2_sq": _safe_float(
                 metrics.get("avg_control_intervention_l2_sq", None)
             ),
+            "avg_terminal_slack_l1": _safe_float(metrics.get("avg_terminal_slack_l1", None)),
+            "avg_terminal_slack_max": _safe_float(metrics.get("avg_terminal_slack_max", None)),
+            "terminal_slack_active_steps": int(metrics.get("terminal_slack_active_steps", 0) or 0),
+            "terminal_slack_active_ratio": _safe_float(metrics.get("terminal_slack_active_ratio", None)),
             "total_sim_time": _safe_float(metrics.get("total_sim_time", None)),
             "case_wall_time_s": float(time.perf_counter() - t0),
             "total_steps": int(metrics.get("total_steps", 0) or 0),
@@ -998,6 +1177,11 @@ def _run_one_idx_job(
             "controller_pos": str(controller_pos),
             "wmax": str(wmax),
             "oa_allow_solver_fallback": oa_allow_solver_fallback,
+            "oa_dynamic_occluders": oa_dynamic_occluders,
+            "oa_dsafe": oa_dsafe,
+            "oa_visible_reach_mode": oa_visible_reach_mode,
+            "oa_use_nominal_tracking_cost": oa_use_nominal_tracking_cost,
+            "oa_dt": oa_dt,
             "occ_version": occ_version,
             "occ_visible_scale": occ_visible_scale,
             "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
@@ -1013,10 +1197,14 @@ def _run_one_idx_job(
             "min_reveal_distance_to_ego_path": None,
             "min_reveal_ttc_to_nominal_ego": None,
             "reveal_steps": "[]",
-            "forced_event_meta": "[]",
-            "avg_solve_time_ms": None,
-            "avg_control_intervention_l2_sq": None,
-            "total_sim_time": None,
+                        "forced_event_meta": "[]",
+                        "avg_solve_time_ms": None,
+                        "avg_control_intervention_l2_sq": None,
+                        "avg_terminal_slack_l1": None,
+                        "avg_terminal_slack_max": None,
+                        "terminal_slack_active_steps": 0,
+                        "terminal_slack_active_ratio": None,
+                        "total_sim_time": None,
             "case_wall_time_s": float(time.perf_counter() - t0),
             "total_steps": 0,
             "final_goal_distance": None,

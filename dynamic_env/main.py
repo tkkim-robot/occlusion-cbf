@@ -379,7 +379,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.plot_dyn_obs_arrow_len_max = float(self.robot_spec.get('plot_dyn_obs_arrow_len_max', 0.8))
         self.plot_dyn_obs_arrow_head = float(self.robot_spec.get('plot_dyn_obs_arrow_head', 6.0))
         self.plot_dyn_obs_visible_color = self.robot_spec.get('plot_dyn_obs_visible_color', 'gray')
-        self.plot_dyn_obs_hidden_color = self.robot_spec.get('plot_dyn_obs_hidden_color', 'deepskyblue')
+        self.plot_dyn_obs_hidden_color = self.robot_spec.get('plot_dyn_obs_hidden_color', 'orange')
+        self.plot_dyn_obs_arrow_color = self.robot_spec.get('plot_dyn_obs_arrow_color', 'deepskyblue')
         self.plot_occ_polygons = bool(self.robot_spec.get('plot_occ_polygons', self.show_animation))
         self.continue_on_infeasible = bool(self.robot_spec.get('continue_on_infeasible', False))
         self._infeasible_active = False
@@ -755,7 +756,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 (0.0, 0.0), (0.0, 0.0),
                 arrowstyle='-|>',
                 mutation_scale=self.plot_dyn_obs_arrow_head,
-                color='orange',
+                color=self.plot_dyn_obs_arrow_color,
                 linewidth=1.0,
                 zorder=5,
             )
@@ -1422,7 +1423,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                         (0, 0), (0, 0),
                         arrowstyle='-|>',
                         mutation_scale=self.plot_dyn_obs_arrow_head,
-                        color='orange',
+                        color=self.plot_dyn_obs_arrow_color,
                         linewidth=1.0,
                         zorder=5
                     )
@@ -1832,11 +1833,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         pos_controller = getattr(self, "pos_controller", None)
         if pos_controller is None:
             return
-        num_constraints = getattr(pos_controller, "last_num_constraints", None)
         total_ms = getattr(pos_controller, "last_total_compute_time_ms", None)
         qp_ms = getattr(pos_controller, "last_qp_solve_time_ms", None)
-        if num_constraints is None:
-            return
 
         # Compute time excluding plotting:
         # prefer controller-reported total (preprocess + solver), fallback to profile/qp only.
@@ -1854,24 +1852,45 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             if isinstance(int_flag, (bool, np.bool_)):
                 intervention = "backup_qp" if bool(int_flag) else "u_ref"
 
+        controller_type = str(getattr(self, "pos_controller_type", "")).strip().lower()
+        controller_label_map = {
+            "occlusion_cbf_qp": "Occlusion CBF-QP",
+            "cbf_qp": "CBF-QP",
+            "oa_mpc": "OA-MPC",
+            "single_risk_mpc": "Single-Risk MPC",
+            "control_tree_mpc": "Single Tree MPC",
+            "oacp_mpc": "OACP-MPC",
+        }
+        controller_label = controller_label_map.get(controller_type, controller_type or "controller")
+
         if intervention == "u_ref":
-            policy_text = "u_ref (nominal)"
+            policy_text = "Nominal (u_ref)"
         elif intervention == "backup_qp":
-            policy_text = "backup_qp (QP)"
+            if controller_type in {"occlusion_cbf_qp", "cbf_qp"}:
+                policy_text = f"Safety Filter ({controller_label})"
+            elif controller_type in {"oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"}:
+                policy_text = f"MPC ({controller_label})"
+            else:
+                policy_text = controller_label
         elif intervention == "backup_fallback":
-            policy_text = "backup_fallback"
+            policy_text = f"Fallback ({controller_label})"
+        elif intervention in controller_label_map:
+            if intervention in {"occlusion_cbf_qp", "cbf_qp"}:
+                policy_text = f"Safety Filter ({controller_label_map.get(intervention, str(intervention))})"
+            else:
+                policy_text = f"MPC ({controller_label_map.get(intervention, str(intervention))})"
+        elif intervention == "infeasible":
+            policy_text = "Infeasible"
         elif intervention is None:
-            policy_text = "unknown"
+            policy_text = "Unknown"
         else:
             policy_text = str(intervention)
 
-        constraints_text = f"{int(num_constraints)}"
         time_text = f"{float(total_ms):.3f} ms" if total_ms is not None else "n/a"
         value_width = 18
         text = (
-            f"Constraints   : {constraints_text:<{value_width}}\n"
             f"Computation   : {time_text:<{value_width}}\n"
-            f"Control Policy: {policy_text:<{value_width}}"
+            f"Control Mode  : {policy_text:<{value_width}}"
         )
         text_ax = self.tracking_view_ax if self.tracking_view_enabled else self.ax
         if self.qp_stats_text is not None and getattr(self.qp_stats_text, "axes", None) is not text_ax:

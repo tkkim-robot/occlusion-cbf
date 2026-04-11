@@ -765,15 +765,19 @@ class OACPMPC(MPCCommonUtils):
         )
 
         if feasible and sol is not None:
-            Xs_val = np.asarray(sol.value(v["Xs"]), dtype=float)
-            Us_val = np.asarray(sol.value(v["Us"]), dtype=float)
-            Xe_val = np.asarray(sol.value(v["Xe"]), dtype=float)
-            Ue_val = np.asarray(sol.value(v["Ue"]), dtype=float)
-            Xf_val = np.asarray(sol.value(v["Xf"]), dtype=float)
-            Uf_val = np.asarray(sol.value(v["Uf"]), dtype=float)
-            Sshared_val = np.asarray(sol.value(v["Sshared"]), dtype=float)
-            Se_val = np.asarray(sol.value(v["Se"]), dtype=float)
-            Sf_val = np.asarray(sol.value(v["Sf"]), dtype=float)
+            def _sol_matrix(var):
+                nrow, ncol = int(var.shape[0]), int(var.shape[1])
+                return np.asarray(sol.value(var), dtype=float).reshape(nrow, ncol)
+
+            Xs_val = _sol_matrix(v["Xs"])
+            Us_val = _sol_matrix(v["Us"])
+            Xe_val = _sol_matrix(v["Xe"])
+            Ue_val = _sol_matrix(v["Ue"])
+            Xf_val = _sol_matrix(v["Xf"])
+            Uf_val = _sol_matrix(v["Uf"])
+            Sshared_val = _sol_matrix(v["Sshared"])
+            Se_val = _sol_matrix(v["Se"])
+            Sf_val = _sol_matrix(v["Sf"])
 
             self._sol_prev = {
                 "Xs": Xs_val, "Us": Us_val, "Xe": Xe_val, "Ue": Ue_val,

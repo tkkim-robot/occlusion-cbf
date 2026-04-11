@@ -777,8 +777,6 @@ def run_crowd_scenario(
     return_metrics=False,
     max_steps=None,
     max_sim_time=None,
-    deadlock_window_steps=160,
-    deadlock_progress_eps=0.06,
 ):
     case_seed = crowd1._compute_case_seed(seed, case_idx)
     mode = str(crowd_mode).strip().lower()
@@ -856,11 +854,10 @@ def run_crowd_scenario(
         return_metrics=return_metrics,
         max_steps=max_steps,
         max_sim_time=max_sim_time,
-        deadlock_window_steps=deadlock_window_steps,
-        deadlock_progress_eps=deadlock_progress_eps,
         tracking_view_enable=True,
         tracking_view_window_size=TRACKING_VIEW_WINDOW_SIZE,
         scenario_name="Crowd2",
+        hide_env_boundary=True,
     )
 
 
@@ -915,6 +912,9 @@ def main():
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None)
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None)
     parser.add_argument("--occ-dt-backup", type=float, default=None)
+    parser.add_argument("--occ-rollout-mode", type=str, choices=["common", "per_scenario"], default=None)
+    parser.add_argument("--occ-terminal-slack-weight", type=float, default=None)
+    parser.add_argument("--occ-terminal-slack-max", type=float, default=None)
     parser.add_argument("--vref-mode-occ", type=str, choices=["soft", "strict"], default=None)
     parser.add_argument("--vref", type=str, choices=["default", "los"], default=None)
     parser.add_argument("--occ-visible-scale", type=float, default=None)
@@ -963,6 +963,12 @@ def main():
         backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
     if args.occ_dt_backup is not None:
         backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if args.occ_rollout_mode is not None:
+        backup_cbf_overrides["occ_rollout_mode"] = str(args.occ_rollout_mode).strip().lower()
+    if args.occ_terminal_slack_weight is not None:
+        backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
+    if args.occ_terminal_slack_max is not None:
+        backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
     if args.vref is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     robot_spec_overrides = {}

@@ -182,6 +182,10 @@ def _build_backup_cbf_overrides(args):
         backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
     if args.occ_dt_backup is not None:
         backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if getattr(args, "occ_terminal_slack_weight", None) is not None:
+        backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
+    if getattr(args, "occ_terminal_slack_max", None) is not None:
+        backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
     if args.vref is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     return backup_cbf_overrides or None
@@ -493,6 +497,8 @@ def main():
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_power_occ_uni.")
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None, help="Override backup_cbf.v_min_cmd_rev_occ_uni.")
     parser.add_argument("--occ-dt-backup", type=float, default=None, help="Override backup_cbf.dt_backup.")
+    parser.add_argument("--occ-terminal-slack-weight", type=float, default=None, help="Override backup_cbf.terminal_slack_weight for terminal-set rows only.")
+    parser.add_argument("--occ-terminal-slack-max", type=float, default=None, help="Override backup_cbf.terminal_slack_max for terminal-set rows only.")
     parser.add_argument("--vref-mode-occ", type=str, choices=["soft", "strict"], default=None)
     parser.add_argument("--vref", type=str, choices=["default", "los"], default=None)
     parser.add_argument("--occ-visible-scale", type=float, default=DEFAULT_OCC_VISIBLE_SCALE)
