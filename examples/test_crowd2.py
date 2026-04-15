@@ -912,6 +912,11 @@ def main():
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None)
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None)
     parser.add_argument("--occ-dt-backup", type=float, default=None)
+    parser.add_argument("--occ-t-horizon", type=float, default=None)
+    parser.add_argument("--occ-rho-T", type=float, default=None)
+    parser.add_argument("--occ-k-p", type=float, default=None)
+    parser.add_argument("--occ-k-d", type=float, default=None)
+    parser.add_argument("--occ-kappa", type=float, default=None)
     parser.add_argument("--occ-rollout-mode", type=str, choices=["common", "per_scenario"], default=None)
     parser.add_argument("--occ-terminal-slack-weight", type=float, default=None)
     parser.add_argument("--occ-terminal-slack-max", type=float, default=None)
@@ -936,10 +941,21 @@ def main():
     parser.add_argument("--oacp-Th", type=float, default=None)
     parser.add_argument("--oacp-N", type=int, default=None)
     parser.add_argument("--oacp-n-shared", type=int, default=None)
+    parser.add_argument("--oacp-backend", type=str, choices=["coupled_nlp", "admm_lowdim"], default=None)
     parser.add_argument("--oacp-risk-explore-scale", type=float, default=None)
     parser.add_argument("--oacp-risk-fallback-scale", type=float, default=None)
     parser.add_argument("--oacp-explore-speed-scale", type=float, default=None)
     parser.add_argument("--oacp-fallback-speed-scale", type=float, default=None)
+    parser.add_argument("--oacp-shared-speed-blend", type=float, default=None)
+    parser.add_argument("--oacp-di-profile-occ-scale", type=float, default=None)
+    parser.add_argument("--oacp-di-profile-visible-scale", type=float, default=None)
+    parser.add_argument("--oacp-di-profile-speed-floor-scale", type=float, default=None)
+    parser.add_argument("--oacp-admm-shared-ctrl-pts", type=int, default=None)
+    parser.add_argument("--oacp-admm-tail-ctrl-pts", type=int, default=None)
+    parser.add_argument("--oacp-admm-rho", type=float, default=None)
+    parser.add_argument("--oacp-admm-max-iter", type=int, default=None)
+    parser.add_argument("--oacp-admm-pri-tol", type=float, default=None)
+    parser.add_argument("--oacp-admm-dual-tol", type=float, default=None)
     parser.add_argument("--oacp-use-nominal-tracking-cost", type=crowd1._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oacp-allow-solver-fallback", type=crowd1._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oacp-dynamic-occluders", type=crowd1._str2bool, nargs="?", const=True, default=None)
@@ -963,6 +979,14 @@ def main():
         backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
     if args.occ_dt_backup is not None:
         backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if args.occ_t_horizon is not None:
+        backup_cbf_overrides["T_horizon"] = float(args.occ_t_horizon)
+    if args.occ_rho_T is not None:
+        backup_cbf_overrides["rho_T"] = float(args.occ_rho_T)
+    if args.occ_k_p is not None:
+        backup_cbf_overrides["k_p_occ_di"] = float(args.occ_k_p)
+    if args.occ_k_d is not None:
+        backup_cbf_overrides["k_d_occ_di"] = float(args.occ_k_d)
     if args.occ_rollout_mode is not None:
         backup_cbf_overrides["occ_rollout_mode"] = str(args.occ_rollout_mode).strip().lower()
     if args.occ_terminal_slack_weight is not None:
@@ -972,6 +996,8 @@ def main():
     if args.vref is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     robot_spec_overrides = {}
+    if args.occ_kappa is not None:
+        robot_spec_overrides["occ_kappa"] = float(args.occ_kappa)
     oacp_cfg = {}
     if args.oacp_dt_plan is not None:
         oacp_cfg["dt_plan"] = float(args.oacp_dt_plan)
@@ -981,6 +1007,8 @@ def main():
         oacp_cfg["N"] = int(args.oacp_N)
     if args.oacp_n_shared is not None:
         oacp_cfg["n_shared"] = int(args.oacp_n_shared)
+    if args.oacp_backend is not None:
+        oacp_cfg["backend"] = str(args.oacp_backend).strip().lower()
     if args.oacp_risk_explore_scale is not None:
         oacp_cfg["risk_explore_scale"] = float(args.oacp_risk_explore_scale)
     if args.oacp_risk_fallback_scale is not None:
@@ -989,6 +1017,26 @@ def main():
         oacp_cfg["explore_speed_scale"] = float(args.oacp_explore_speed_scale)
     if args.oacp_fallback_speed_scale is not None:
         oacp_cfg["fallback_speed_scale"] = float(args.oacp_fallback_speed_scale)
+    if args.oacp_shared_speed_blend is not None:
+        oacp_cfg["shared_speed_blend"] = float(args.oacp_shared_speed_blend)
+    if args.oacp_di_profile_occ_scale is not None:
+        oacp_cfg["di_profile_occ_scale"] = float(args.oacp_di_profile_occ_scale)
+    if args.oacp_di_profile_visible_scale is not None:
+        oacp_cfg["di_profile_visible_scale"] = float(args.oacp_di_profile_visible_scale)
+    if args.oacp_di_profile_speed_floor_scale is not None:
+        oacp_cfg["di_profile_speed_floor_scale"] = float(args.oacp_di_profile_speed_floor_scale)
+    if args.oacp_admm_shared_ctrl_pts is not None:
+        oacp_cfg["admm_shared_ctrl_pts"] = int(args.oacp_admm_shared_ctrl_pts)
+    if args.oacp_admm_tail_ctrl_pts is not None:
+        oacp_cfg["admm_tail_ctrl_pts"] = int(args.oacp_admm_tail_ctrl_pts)
+    if args.oacp_admm_rho is not None:
+        oacp_cfg["admm_rho"] = float(args.oacp_admm_rho)
+    if args.oacp_admm_max_iter is not None:
+        oacp_cfg["admm_max_iter"] = int(args.oacp_admm_max_iter)
+    if args.oacp_admm_pri_tol is not None:
+        oacp_cfg["admm_pri_tol"] = float(args.oacp_admm_pri_tol)
+    if args.oacp_admm_dual_tol is not None:
+        oacp_cfg["admm_dual_tol"] = float(args.oacp_admm_dual_tol)
     if args.oacp_use_nominal_tracking_cost is not None:
         oacp_cfg["use_nominal_tracking_cost"] = bool(args.oacp_use_nominal_tracking_cost)
     if args.oacp_allow_solver_fallback is not None:

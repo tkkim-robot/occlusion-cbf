@@ -102,6 +102,29 @@ class OcclusionUtils:
         vals = A @ center
         return np.all(vals <= (b0 - radius + eps))
 
+    def _normalize_occ_version(self, version, default="v1"):
+        key = default if version is None else str(version).strip().lower()
+        if key not in {"v1", "v2"}:
+            key = str(default).strip().lower()
+        if key not in {"v1", "v2"}:
+            key = "v1"
+        return key
+
+    def _visibility_occ_version(self):
+        return self._normalize_occ_version(
+            self.robot_spec.get("occ_visibility_version", "v1"),
+            default="v1",
+        )
+
+    def _rollout_occ_version(self):
+        return self._normalize_occ_version(
+            self.robot_spec.get(
+                "occ_rollout_version",
+                self.robot_spec.get("occ_version", "v1"),
+            ),
+            default="v1",
+        )
+
     def _occlusion_polygon_v1(self, p, c, R_o, sensing_R, dir1, dir2, t1, t2):
         """
         Legacy occlusion polygon:
@@ -159,7 +182,7 @@ class OcclusionUtils:
             "los_unit": n,
         }
     
-    def _build_occlusion_scenario(self, robot_state, obs, is_static=False):
+    def _build_occlusion_scenario(self, robot_state, obs, is_static=False, occ_version_override=None):
         """
         Build an occlusion scenario for a single circular obstacle.
 
@@ -223,9 +246,9 @@ class OcclusionUtils:
             return None
         dir2 /= n2  # tangenet 2 unit vector
 
-        occ_version = str(self.robot_spec.get("occ_version", "v1")).strip().lower()
-        if occ_version not in {"v1", "v2"}:
-            occ_version = "v1"
+        occ_version = self._rollout_occ_version()
+        if occ_version_override is not None:
+            occ_version = self._normalize_occ_version(occ_version_override, default=occ_version)
 
         if occ_version == "v2":
             poly_pts, geom_meta = self._occlusion_polygon_v2(p, c, R_o, sensing_R, dir1, dir2, t1, t2)
@@ -290,9 +313,10 @@ class OcclusionUtils:
         return scenario
     
     def _filter_visible_and_build_occ(self, robot_state, obs_list, return_indices=False):
-        
+
         visible_obs = []
         occl_scenarios = []
+        visibility_scenarios = []
         visible_indices = []
 
         if obs_list is None:
@@ -334,6 +358,9 @@ class OcclusionUtils:
         dists = np.linalg.norm(obs_arr[:, :2] - p[None, :], axis=1)
         order = np.argsort(dists)
 
+        visibility_occ_version = self._visibility_occ_version()
+        rollout_occ_version = self._rollout_occ_version()
+
         for idx in order:
             obs = obs_arr[idx]
             c = obs[:2]
@@ -342,7 +369,7 @@ class OcclusionUtils:
 
             occluded = any(
                 self._circle_fully_in_halfspaces(c, r_occ, sc.get('A'), sc.get('b0'))
-                for sc in occl_scenarios
+                for sc in visibility_scenarios
             )
             if occluded:
                 continue
@@ -363,9 +390,25 @@ class OcclusionUtils:
                 if obs_type is None or obs_type not in occ_types:
                     continue
 
-            sc = self._build_occlusion_scenario(robot_state, obs, is_static=is_static_obs)
-            if sc is not None and sc.get('poly') is not None:
-                occl_scenarios.append(sc)
+            vis_sc = self._build_occlusion_scenario(
+                robot_state,
+                obs,
+                is_static=is_static_obs,
+                occ_version_override=visibility_occ_version,
+            )
+            if vis_sc is not None and vis_sc.get('poly') is not None:
+                visibility_scenarios.append(vis_sc)
+
+            rollout_sc = vis_sc
+            if rollout_occ_version != visibility_occ_version:
+                rollout_sc = self._build_occlusion_scenario(
+                    robot_state,
+                    obs,
+                    is_static=is_static_obs,
+                    occ_version_override=rollout_occ_version,
+                )
+            if rollout_sc is not None and rollout_sc.get('poly') is not None:
+                occl_scenarios.append(rollout_sc)
 
         if return_indices:
             return visible_obs, occl_scenarios, visible_indices

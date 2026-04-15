@@ -26,9 +26,9 @@ CROWD_PLANNER_LABELS = {
     "occlusion_cbf_qp": "Occlusion CBF-QP",
     "cbf_qp": "CBF-QP",
     "oa_mpc": "OA-MPC",
-    "single_risk_mpc": "Single-Risk MPC",
-    "control_tree_mpc": "Single Tree MPC",
-    "oacp_mpc": "OACP-MPC",
+    "single_risk_mpc": "Single-Hypothesis MPC",
+    "control_tree_mpc": "Control-Tree MPC",
+    "oacp_mpc": "OACP",
 }
 
 CROSSWALK_BASELINE_MAP = {

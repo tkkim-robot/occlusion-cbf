@@ -20,7 +20,7 @@ class SingleRiskMPC(MPCCommonUtils):
 
     This controller intentionally keeps one baseline behavior only:
     - DoubleIntegrator2D / Unicycle2D / DynamicUnicycle2D model
-    - hidden speed bound fixed to 0.5
+    - hidden speed bound taken from benchmark/scenario config
     - single NMPC (no multi-branch / no consensus)
     """
 
@@ -41,13 +41,21 @@ class SingleRiskMPC(MPCCommonUtils):
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
 
         cfg = robot_spec.setdefault("single_risk_mpc", {})
-        self.dt_plan = float(cfg.get("dt_plan", 0.25))
-        self.Th = float(cfg.get("Th", 6.0))
+        self.dt_plan = float(cfg.get("dt_plan", 0.05))
+        self.Th = float(cfg.get("Th", 1.0))
         n_from_h = int(np.round(self.Th / max(self.dt_plan, 1e-6)))
         self.N = max(2, int(cfg.get("N", n_from_h)))
 
-        # Baseline identity: fixed hidden obstacle speed bound.
-        self.hidden_speed = 0.5
+        # Match the hidden-agent worst-case speed bound used by the benchmark.
+        # `v_adv_max_occ` is the occlusion expansion speed shared by the
+        # occlusion-aware controllers; fall back to `v_obs_max` only if the
+        # benchmark did not specify an occlusion-specific bound.
+        self.hidden_speed = float(
+            cfg.get(
+                "hidden_speed",
+                robot_spec.get("v_adv_max_occ", robot_spec.get("v_obs_max", 0.5)),
+            )
+        )
         # Use tracking-level `num_obs` as the default visible/occlusion cap.
         # This keeps visible and occlusion scenario selection scales aligned
         # unless the user explicitly overrides either cap in config.
@@ -375,7 +383,16 @@ class SingleRiskMPC(MPCCommonUtils):
         return points
 
     def _risk_regions_from_scenario(self, scenario, v_ref_nom, nominal_points):
-        if self.hidden_speed <= 1e-9:
+        hidden_speed = scenario.get("v_adv_max", None)
+        if hidden_speed is None:
+            v_expand_vec = np.asarray(scenario.get("v_expand_vec", np.zeros((0,))), dtype=float).reshape(-1)
+            if v_expand_vec.size > 0:
+                hidden_speed = float(np.max(v_expand_vec))
+        if hidden_speed is None:
+            hidden_speed = self.hidden_speed
+        hidden_speed = float(hidden_speed)
+
+        if hidden_speed <= 1e-9:
             return []
 
         p = np.asarray(scenario.get("robot_pos", np.zeros(2)), dtype=float).reshape(2,)
@@ -412,7 +429,7 @@ class SingleRiskMPC(MPCCommonUtils):
                     travel_t = idx * self.dt_plan + float(dists[idx]) / v_nom
                 else:
                     travel_t = float(np.linalg.norm(center - p)) / v_nom
-                rr = travel_t * float(self.hidden_speed) + r_obs + self.risk_sigma
+                rr = travel_t * hidden_speed + r_obs + self.risk_sigma
                 if self.rrisk_max is not None:
                     rr = min(rr, self.rrisk_max)
                 if np.isfinite(rr) and rr > 0.0:
@@ -889,7 +906,16 @@ class SingleRiskMPC(MPCCommonUtils):
             obs_list,
         )
         visible_obs = self._nearest_visible_obs(visible_obs, x0)
-        guidance_xy, guidance_meta = self._select_guidance_point(x0, control_ref, goal_xy, visible_obs)
+        # Benchmark-ready single-risk baseline: track only the final goal.
+        # Keep the single NMPC structure and risk constraints, but do not let
+        # gap-guidance or split-tracking heuristics alter the target.
+        guidance_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
+        guidance_meta = {
+            "guidance_source": "goal_only",
+            "n_guidance_obs_used": 0,
+            "selected_gap_angle": None,
+            "selected_gap_width": None,
+        }
 
         nominal_points = None
         if self.risk_time_model == "nominal_rollout":
@@ -902,16 +928,13 @@ class SingleRiskMPC(MPCCommonUtils):
         nearest_risk_distance = self._nearest_risk_distance(x0, risk_regions)
         nearest_visible_distance = self._nearest_visible_distance(x0, visible_obs)
 
-        mode = str(self.guidance_mode if self.use_guidance_point else "goal")
-        guidance_active, guidance_reason = self._is_guidance_active(mode, guidance_meta)
-        if not guidance_active:
-            guidance_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
+        guidance_active = False
+        guidance_reason = "disabled_goal_only"
+        effective_wtrack = 0.0
+        effective_n_split = 0
 
-        # Keep reference baseline schedule fixed.
-        effective_wtrack = float(self.wtrack) if guidance_active else 0.0
-        effective_n_split = int(self.n_split) if guidance_active else 0
-
-        # In nominal-rollout mode, risk timing depends on guidance trajectory.
+        # In nominal-rollout mode, risk timing now depends only on the
+        # goal-directed nominal rollout.
         if self.risk_time_model == "nominal_rollout":
             nominal_points = self._nominal_rollout_positions(x0, guidance_xy, v_ref_nom)
             risk_regions = self._build_risk_regions(occ_scenarios, v_ref_nom, nominal_points)
@@ -1024,16 +1047,16 @@ class SingleRiskMPC(MPCCommonUtils):
             "n_risk_regions_total": int(len(risk_regions)),
             "n_risk_regions_active": int(min(len(risk_regions), int(self.max_risk_regions_total))),
             "risk_circle_radii_stats": rr_stats,
-            "guidance_mode": str(self.guidance_mode if self.use_guidance_point else "goal"),
+            "guidance_mode": "goal_only",
             "guidance_point_xy": [float(guidance_xy[0]), float(guidance_xy[1])],
-            "guidance_source": guidance_meta.get("guidance_source", "goal"),
+            "guidance_source": "goal_only",
             "guidance_active": bool(guidance_active),
             "guidance_activation_reason": str(guidance_reason),
-            "selected_gap_angle": guidance_meta.get("selected_gap_angle", None),
-            "selected_gap_width": guidance_meta.get("selected_gap_width", None),
-            "n_guidance_obs_used": int(guidance_meta.get("n_guidance_obs_used", 0)),
-            "tau_guidance": float(self.tau_guidance),
-            "guidance_prediction_horizon_s": float(self.tau_guidance),
+            "selected_gap_angle": None,
+            "selected_gap_width": None,
+            "n_guidance_obs_used": 0,
+            "tau_guidance": 0.0,
+            "guidance_prediction_horizon_s": 0.0,
             "risk_time_model": str(self.risk_time_model),
             "nearest_visible_distance": (None if nearest_visible_distance is None else float(nearest_visible_distance)),
             "nearest_risk_distance": (None if nearest_risk_distance is None else float(nearest_risk_distance)),

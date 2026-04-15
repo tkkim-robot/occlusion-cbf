@@ -596,6 +596,26 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                     (1.00, "#ff0000"),
                 ],
             )
+        elif cmap_name in {"trajectory_teal_cyan", "teal_cyan", "cyan_teal"}:
+            self._trajectory_cmap_obj = LinearSegmentedColormap.from_list(
+                "trajectory_teal_cyan",
+                [
+                    (0.00, "#dcfbff"),
+                    (0.35, "#96edf7"),
+                    (0.70, "#24b7c9"),
+                    (1.00, "#006d77"),
+                ],
+            )
+        elif cmap_name in {"trajectory_yellow", "yellow_trajectory", "pure_yellow"}:
+            self._trajectory_cmap_obj = LinearSegmentedColormap.from_list(
+                "trajectory_yellow",
+                [
+                    (0.00, "#fffde7"),
+                    (0.35, "#fff59d"),
+                    (0.70, "#ffeb3b"),
+                    (1.00, "#ffd400"),
+                ],
+            )
         else:
             self._trajectory_cmap_obj = plt.colormaps.get_cmap(cmap_name)
         return self._trajectory_cmap_obj
@@ -794,10 +814,15 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
     def _update_tracking_view_occlusion_polygons(self, center_xy, half_window):
         if not self.tracking_view_enabled:
             return
-        pos_controller = getattr(self, "pos_controller", None)
-        scenarios = getattr(pos_controller, "occlusion_scenarios", None) if pos_controller is not None else None
+        # For fair visualization across baselines, always build plotting
+        # occlusion geometry from the shared visibility/occlusion pipeline
+        # first. Some MPC baselines intentionally keep only a truncated
+        # nearest-scenario subset for optimization, which should not change
+        # the displayed occlusion geometry.
+        scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
         if not scenarios:
-            scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
+            pos_controller = getattr(self, "pos_controller", None)
+            scenarios = getattr(pos_controller, "occlusion_scenarios", None) if pos_controller is not None else None
         if not scenarios:
             for patch in self.tracking_view_occ_patches:
                 patch.set_visible(False)
@@ -1648,39 +1673,43 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         return vis_arr
 
     def draw_plot(self, pause=0.01, force_save=False):
-        if self.show_animation:
-            if self.dyn_obs_patch is None:
-                # Initialize moving obstacles
-                self.dyn_obs_patch = [self.ax.add_patch(plt.Circle(
-                    (0, 0), 0, edgecolor='black', facecolor=self.plot_dyn_obs_visible_color, fill=True)) for _ in range(len(self.obs))]
-                self.dyn_obs_labels = [None] * len(self.obs)
-                self.init_obs_info = self.obs.copy()
-                
-            self._plot_counter += 1
-            if self.plot_every > 1 and (self._plot_counter % self.plot_every) != 0:
-                return
-            
-            self.render_dyn_obs()
-            self._update_trajectory_artist(self.ax, "robot_trajectory_collection")
-            self._update_infeasible_marker()
-            self._update_qp_stats_text()
-            self._update_backup_rollout_plot()
-            self._update_tracking_view()
+        if not (self.show_animation or self.save_animation):
+            return
 
+        if self.dyn_obs_patch is None:
+            # Initialize moving obstacles
+            self.dyn_obs_patch = [self.ax.add_patch(plt.Circle(
+                (0, 0), 0, edgecolor='black', facecolor=self.plot_dyn_obs_visible_color, fill=True)) for _ in range(len(self.obs))]
+            self.dyn_obs_labels = [None] * len(self.obs)
+            self.init_obs_info = self.obs.copy()
+
+        self._plot_counter += 1
+        if self.plot_every > 1 and (self._plot_counter % self.plot_every) != 0:
+            return
+
+        self.render_dyn_obs()
+        self._update_trajectory_artist(self.ax, "robot_trajectory_collection")
+        self._update_infeasible_marker()
+        self._update_qp_stats_text()
+        self._update_backup_rollout_plot()
+        self._update_tracking_view()
+
+        if self.show_animation:
             self.fig.canvas.draw_idle()
             self.fig.canvas.flush_events()
             plt.pause(pause)
-            if self.save_animation:
-                self.ani_idx += 1
-                if force_save or self.ani_idx % self.save_per_frame == 0:
-                    plt.savefig(
-                        self._frame_output_path(self.ani_idx // self.save_per_frame),
-                        dpi=self.save_frame_dpi,
-                        format=self.save_frame_ext,
-                    )
+
+        if self.save_animation:
+            self.ani_idx += 1
+            if force_save or self.ani_idx % self.save_per_frame == 0:
+                plt.savefig(
+                    self._frame_output_path(self.ani_idx // self.save_per_frame),
+                    dpi=self.save_frame_dpi,
+                    format=self.save_frame_ext,
+                )
 
     def _update_infeasible_marker(self):
-        if not self.show_animation:
+        if not (self.show_animation or self.save_animation):
             return
         if not self._infeasible_active:
             if self._infeasible_text is not None:
@@ -1716,7 +1745,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         """
         self._infeasible_active = True
         self._infeasible_seen = True
-        if not self.show_animation:
+        if not (self.show_animation or self.save_animation):
             return
         self.robot.render_plot()
         self._update_infeasible_marker()
@@ -1857,9 +1886,9 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             "occlusion_cbf_qp": "Occlusion CBF-QP",
             "cbf_qp": "CBF-QP",
             "oa_mpc": "OA-MPC",
-            "single_risk_mpc": "Single-Risk MPC",
-            "control_tree_mpc": "Single Tree MPC",
-            "oacp_mpc": "OACP-MPC",
+            "single_risk_mpc": "Single-Hypothesis MPC",
+            "control_tree_mpc": "Control-Tree MPC",
+            "oacp_mpc": "OACP",
         }
         controller_label = controller_label_map.get(controller_type, controller_type or "controller")
 
@@ -2059,9 +2088,12 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self._record_trajectory_sample()
 
         if self.plot_occ_polygons and hasattr(self.robot, "update_occlusion_polygons"):
-            scenarios = getattr(self.pos_controller, "occlusion_scenarios", None)
+            # Use a baseline-invariant plotting geometry. Controller-internal
+            # scenario pruning is allowed for optimization, but should not alter
+            # the occlusion regions shown in the benchmark videos.
+            scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
             if scenarios is None or len(scenarios) == 0:
-                scenarios = self._get_occlusion_scenarios_for_plot(self.obs)
+                scenarios = getattr(self.pos_controller, "occlusion_scenarios", None)
 
             kappa = getattr(self.pos_controller, "kappa", 10.0)
             T_rollout = getattr(self.pos_controller, "T_horizon", 3.0)

@@ -182,7 +182,13 @@ class OcclusionCBFQP(BackupCBFQP):
 
     def __init__(self, robot, robot_spec, num_obs=10, kappa=10.0, ax=None):
         self.num_obs = num_obs
-        self.kappa = kappa
+        kappa_cfg = robot_spec.get("occ_kappa", kappa)
+        try:
+            self.kappa = float(kappa_cfg)
+        except Exception:
+            self.kappa = float(kappa)
+        if (not np.isfinite(self.kappa)) or self.kappa <= 0.0:
+            self.kappa = float(kappa)
         self.occlusion_scenarios = []
         self.last_num_constraints = None
         self.last_qp_solve_time_ms = None
@@ -207,6 +213,12 @@ class OcclusionCBFQP(BackupCBFQP):
 
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
         self.debug = bool(robot_spec.get("debug_backup_qp", False))
+        robot_spec.setdefault("occ_visibility_version", "v1")
+        if "occ_rollout_version" not in robot_spec:
+            rollout_default = str(robot_spec.get("occ_version", "v2")).strip().lower()
+            if rollout_default not in {"v1", "v2"}:
+                rollout_default = "v2"
+            robot_spec["occ_rollout_version"] = rollout_default
 
         cfg = robot_spec.setdefault("backup_cbf", {})
         self.T_horizon = float(cfg.get("T_horizon", 2.0))

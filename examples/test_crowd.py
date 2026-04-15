@@ -46,69 +46,49 @@ def _str2bool(value):
 
 
 def _apply_single_risk_defaults(robot_spec):
-    """Apply finalized single_risk_mpc baseline defaults."""
+    """Apply goal-only single_risk_mpc baseline defaults."""
     robot_spec["occlusion_types"] = [1]
     sr_cfg = robot_spec.setdefault("single_risk_mpc", {})
-    sr_cfg.setdefault("dt_plan", 0.25)
-    sr_cfg.setdefault("Th", 6.0)
-    sr_cfg.setdefault("N", 24)
+    # Use a planning grid aligned with the runtime DI integration step.
+    # Keep the horizon short enough for dense crowd scenes.
+    sr_cfg.setdefault("dt_plan", 0.05)
+    sr_cfg.setdefault("Th", 1.0)
+    sr_cfg.setdefault("N", 20)
     sr_cfg.setdefault("risk_regions_per_tangent", 2)
+    sr_cfg.setdefault("max_occ_regions", 1)
     sr_cfg.setdefault("wguide", 3.5)
     sr_cfg.setdefault("wgoal", 3.5)
     sr_cfg.setdefault("wvel", 5.0)
     sr_cfg.setdefault("wacc", 1.8)
-    sr_cfg.setdefault("wtrack", 0.5)
-    sr_cfg.setdefault("n_split", 8)
     sr_cfg.setdefault("lambda_w", 1.0)
     sr_cfg.setdefault("margin_obs", 0.05)
     sr_cfg.setdefault("margin_risk", 0.05)
-    sr_cfg.setdefault("use_guidance_point", True)
-    sr_cfg.setdefault("guidance_mode", "gap")
-    sr_cfg.setdefault("guidance_lookahead", 2.5)
-    sr_cfg.setdefault("guidance_side_clearance", 0.5)
-    sr_cfg.setdefault("guidance_forward_fov_deg", 180.0)
-    sr_cfg.setdefault("guidance_obs_max_dist", 4.5)
-    sr_cfg.setdefault("tau_guidance", 0.75)
     sr_cfg.setdefault("risk_time_model", "distance_over_vref")
 
 
 def _apply_control_tree_defaults(robot_spec):
-    """Apply literature-like control_tree_mpc baseline defaults."""
+    """Apply control_tree_mpc baseline defaults aligned with the current controller."""
     robot_spec["occlusion_types"] = [1]
     ct_cfg = robot_spec.setdefault("control_tree_mpc", {})
-    ct_cfg.setdefault("dt_plan", 0.25)
-    ct_cfg.setdefault("Th", 3.0)
-    ct_cfg.setdefault("N", 12)
-    ct_cfg.setdefault("gap_lookahead", 4.0)
-    ct_cfg.setdefault("min_gap_width", 0.25)
-    ct_cfg.setdefault("cluster_merge_distance", 0.8)
-    ct_cfg.setdefault("forward_fov_deg_for_guidance", 180.0)
+    ct_cfg.setdefault("dt_plan", 0.05)
+    ct_cfg.setdefault("Th", 1.0)
+    ct_cfg.setdefault("N", 20)
     ct_cfg.setdefault("forward_only", True)
     ct_cfg.setdefault("v_plan_min", 0.05)
-    ct_cfg.setdefault("n_split", 2)
-    ct_cfg.setdefault("n_occ_hypotheses", 2)
+    ct_cfg.setdefault("n_split", 3)
+    ct_cfg.setdefault("n_occ_hypotheses", 1)
     ct_cfg.setdefault("risk_regions_per_tangent", 1)
     ct_cfg.setdefault("drisk", 0.7)
     ct_cfg.setdefault("risk_sigma", 1e-4)
-    ct_cfg.setdefault("rrisk_max", 1.0)
+    ct_cfg.setdefault("rrisk_max", 0.8)
     ct_cfg.setdefault("min_v_for_risk", 0.3)
     ct_cfg.setdefault("risk_time_model", "distance_over_vref")
     ct_cfg.setdefault("max_branch_risk_regions", 4)
-    ct_cfg.setdefault("belief_prob_scale", 0.22)
-    ct_cfg.setdefault("belief_prob_min", 0.02)
-    ct_cfg.setdefault("belief_prob_max", 0.35)
-    ct_cfg.setdefault("belief_dist_scale", 4.0)
-    ct_cfg.setdefault("belief_path_scale", 1.0)
-    ct_cfg.setdefault("belief_align_floor", 0.25)
-    ct_cfg.setdefault("belief_align_power", 1.5)
-    ct_cfg.setdefault("hypothesis_score_min", 0.10)
     ct_cfg.setdefault("wgoal", 4.0)
     ct_cfg.setdefault("wvel", 12.0)
     ct_cfg.setdefault("wacc", 1.2)
     ct_cfg.setdefault("wtrack_shared", 0.4)
     ct_cfg.setdefault("wtrack_tail", 0.12)
-    ct_cfg.setdefault("branch_width_weight", 0.75)
-    ct_cfg.setdefault("branch_clearance_weight", 1.3)
     ct_cfg.setdefault("lambda_w", 1.0)
     ct_cfg.setdefault("margin_obs", 0.05)
     ct_cfg.setdefault("margin_risk", 0.05)
@@ -119,22 +99,35 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("solver_tol", 1e-4)
     ct_cfg.setdefault("solver_acceptable_tol", 1e-2)
     ct_cfg.setdefault("solver_acceptable_iter", 8)
-    ct_cfg.setdefault("goal_handover_radius", 1.5)
-    ct_cfg.setdefault("nominal_k_heading", 1.4)
     ct_cfg.setdefault("branch_zero_prob_reg", 1e-3)
 
 
 def _apply_oacp_defaults(robot_spec):
     """Apply adapted occlusion-aware contingency planner defaults."""
     oacp_cfg = robot_spec.setdefault("oacp_mpc", {})
-    oacp_cfg.setdefault("dt_plan", 0.20)
-    oacp_cfg.setdefault("Th", 2.4)
-    oacp_cfg.setdefault("N", 12)
+    # Match the crowd benchmark runtime step and keep the horizon compact for
+    # dense emergence events. Preserve a short but non-trivial shared prefix.
+    oacp_cfg.setdefault("backend", "coupled_nlp")
+    oacp_cfg.setdefault("dt_plan", 0.05)
+    oacp_cfg.setdefault("Th", 1.0)
+    oacp_cfg.setdefault("N", 20)
     oacp_cfg.setdefault("n_shared", 3)
-    oacp_cfg.setdefault("risk_explore_scale", 0.55)
-    oacp_cfg.setdefault("risk_fallback_scale", 1.10)
+    # Keep a clear explore/fallback split without collapsing the shared prefix
+    # into an overly conservative stop-like behavior.
+    oacp_cfg.setdefault("risk_explore_scale", 0.40)
+    oacp_cfg.setdefault("risk_fallback_scale", 1.00)
     oacp_cfg.setdefault("explore_speed_scale", 1.00)
-    oacp_cfg.setdefault("fallback_speed_scale", 0.65)
+    oacp_cfg.setdefault("fallback_speed_scale", 0.75)
+    oacp_cfg.setdefault("shared_speed_blend", 0.35)
+    oacp_cfg.setdefault("di_profile_occ_scale", 1.00)
+    oacp_cfg.setdefault("di_profile_visible_scale", 0.45)
+    oacp_cfg.setdefault("di_profile_speed_floor_scale", 0.35)
+    oacp_cfg.setdefault("admm_shared_ctrl_pts", 2)
+    oacp_cfg.setdefault("admm_tail_ctrl_pts", 3)
+    oacp_cfg.setdefault("admm_rho", 2.0)
+    oacp_cfg.setdefault("admm_max_iter", 3)
+    oacp_cfg.setdefault("admm_pri_tol", 1e-2)
+    oacp_cfg.setdefault("admm_dual_tol", 1e-2)
     oacp_cfg.setdefault("allow_solver_fallback", False)
     oacp_cfg.setdefault("dynamic_occluders", True)
     oacp_cfg.setdefault("visible_reach_mode", "constant_velocity")
@@ -148,7 +141,7 @@ def _apply_oacp_defaults(robot_spec):
 def _apply_crowd_dynamic_obstacle_defaults(robot_spec):
     """
     Crowd-specific dynamic-obstacle behavior model.
-    Keeps base random motion, then adds:
+    Keeps base random motion by default, and exposes optional extras:
     1) near-robot visible pedestrian sidestep bias
     2) occluded-agent emergence bias toward robot-forward corridor
     """
@@ -159,8 +152,9 @@ def _apply_crowd_dynamic_obstacle_defaults(robot_spec):
     dyn_cfg.setdefault("large_turn_prob", 0.05)
     dyn_cfg.setdefault("large_turn_std", 0.05)
 
-    # Visible & near robot: avoid charging toward robot.
-    dyn_cfg.setdefault("ped_aware_enable", True)
+    # Optional ego-dependent sidestep. Default off so obstacle motion does not
+    # depend on the robot state unless explicitly enabled.
+    dyn_cfg.setdefault("ped_aware_enable", False)
     dyn_cfg.setdefault("ped_aware_visible_only", True)
 
     dyn_cfg.setdefault("ped_aware_radius", 1.5)
@@ -172,7 +166,7 @@ def _apply_crowd_dynamic_obstacle_defaults(robot_spec):
     dyn_cfg.setdefault("ped_aware_side_flip_prob", 0.02)
 
     # Occlusion-emergence: increase natural "hidden then appear" events.
-    dyn_cfg.setdefault("occlusion_emergence_enable", True)
+    dyn_cfg.setdefault("occlusion_emergence_enable", False)
     dyn_cfg.setdefault("occlusion_emergence_occluded_only", True)
     dyn_cfg.setdefault("occlusion_emergence_zone_radius", 5.5)
     dyn_cfg.setdefault("occlusion_emergence_forward_only", True)
@@ -867,12 +861,9 @@ def _build_forced_emergence_crowd_scenario(
     return known_obs, obs_meta, scenario_diag
 
 
-
-def run_crowd_scenario(
+def _prepare_crowd_runtime(
     controller_type=None,
     model_key="di",
-    show_animation=True,
-    save_animation=False,
     tf=100.0,
     seed=42,
     case_idx=None,
@@ -914,13 +905,7 @@ def run_crowd_scenario(
     known_obs_override=None,
     obs_meta_override=None,
     scenario_diag_override=None,
-    return_metrics=False,
-    max_steps=None,
-    max_sim_time=None,
-    tracking_view_enable=False,
-    tracking_view_window_size=5.0,
     scenario_name="Crowd1",
-    hide_env_boundary=False,
 ):
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
@@ -942,7 +927,6 @@ def run_crowd_scenario(
         if (not np.isfinite(dt)) or dt <= 0.0:
             raise ValueError(f"Invalid --oa-dt: {oa_dt}. It must be a positive finite value.")
     else:
-        # Keep default simulation dt fixed for fair preset on/off comparison.
         dt = 0.05
 
     if waypoints_override is None:
@@ -958,9 +942,6 @@ def run_crowd_scenario(
         if waypoints.ndim != 2 or waypoints.shape[0] < 2 or waypoints.shape[1] < 2:
             raise ValueError("waypoints_override must have shape (N>=2, >=2).")
 
-    # Crowd scenario base obstacles are intentionally disabled so that this
-    # scenario is composed only of random obstacles.
-    # known_obs format: [x, y, r, vx, vy, y_min, y_max, type]
     case_seed = _compute_case_seed(seed, case_idx)
     crowd_mode = str(crowd_mode).strip().lower()
     if crowd_mode not in {"random", "forced_emergence"}:
@@ -1004,16 +985,17 @@ def run_crowd_scenario(
         backup_cbf_overrides = {}
     else:
         backup_cbf_overrides = dict(backup_cbf_overrides)
+    if model == "DoubleIntegrator2D" and vref_front_mode_occ is None:
+        # Keep the DI crowd default aligned with the benchmarked occlusion-CBF
+        # configuration unless the caller explicitly overrides it.
+        vref_front_mode_occ = "los"
     if vref_front_mode_occ is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(vref_front_mode_occ).strip().lower()
     if robot_spec_overrides is None:
         robot_spec_overrides = {}
     else:
         robot_spec_overrides = dict(robot_spec_overrides)
-
     if model == "DoubleIntegrator2D":
-        # DI is sensitive to sharp multi-scenario occlusion velocity aggregation
-        # and overly deep terminal stop margins in dense forced-emergence scenes.
         di_backup_cfg = {
             "T_horizon": 0.5,
             "vref_scenario_softmax_kappa": 2.0,
@@ -1069,7 +1051,7 @@ def run_crowd_scenario(
             "show_backup_rollout": True,
             "backup_rollout_every": 1,
             "use_occ": True,
-            "dynamic_obs_types": [1 ],
+            "dynamic_obs_types": [1],
         }
     elif model == "Unicycle2D":
         uni_backup_cfg = {
@@ -1085,13 +1067,11 @@ def run_crowd_scenario(
         if wmax_mode not in {"default", "pi"}:
             raise ValueError(f"Invalid --wmax: {oa_wmax}. Use one of: default, pi.")
         uni_wmax = float(np.pi) if (is_oa_mpc and wmax_mode == "pi") else 0.8
-        # Keep robot radius fixed for fair preset/non-preset comparison.
-        uni_radius = 0.25
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": uni_vmax,
             "w_max": uni_wmax,
-            "radius": uni_radius,
+            "radius": 0.25,
             "debug_backup_qp": False,
             "sensing_range": 10.0,
             "fov_angle": 360.0,
@@ -1101,16 +1081,17 @@ def run_crowd_scenario(
             "use_occ": True,
             "dynamic_obs_types": [1],
         }
+    else:
+        raise ValueError(f"Unsupported resolved model `{model}`.")
 
     if robot_spec_overrides:
         robot_spec.update(robot_spec_overrides)
 
-    # Crowd scenario behavior model for moving obstacles.
     _apply_crowd_dynamic_obstacle_defaults(robot_spec)
     if crowd_mode == "forced_emergence":
         robot_spec["v_adv_max_occ"] = 1.0
         dyn_cfg = robot_spec.setdefault("crowd_dyn_obs", {})
-        dyn_cfg["occluded_speed_boost_enable"] = True
+        dyn_cfg["occluded_speed_boost_enable"] = False
         dyn_cfg["occluded_speed_boost_vmax"] = float(robot_spec["v_adv_max_occ"])
         dyn_cfg["occluded_speed_boost_fov_only"] = True
         dyn_cfg["occluded_speed_boost_on_hysteresis_steps"] = 2
@@ -1123,39 +1104,36 @@ def run_crowd_scenario(
                 f"Invalid --occ-visible-scale: {occ_visible_scale}. It must be a positive finite value."
             )
         robot_spec["occ_visible_scale"] = float(vis_scale)
+    robot_spec.setdefault("occ_visibility_version", "v1")
     if occ_version is not None:
         occ_version_str = str(occ_version).strip().lower()
         if occ_version_str not in {"v1", "v2"}:
             raise ValueError(f"Invalid --occ-version: {occ_version}. Use one of: v1, v2.")
-        robot_spec["occ_version"] = occ_version_str
+        robot_spec["occ_rollout_version"] = occ_version_str
+    else:
+        pos_name = str(controller_type.get("pos", "")).strip().lower()
+        robot_spec.setdefault(
+            "occ_rollout_version",
+            "v2" if pos_name == "occlusion_cbf_qp" else "v1",
+        )
     if occ_enable_visible_hocbf is not None:
         robot_spec["enable_visible_hocbf_in_occ"] = bool(occ_enable_visible_hocbf)
 
     if str(controller_type.get("pos", "")).strip().lower() == "oa_mpc":
         oa_cfg = robot_spec.setdefault("oa_mpc", {})
-        # Fix OA-MPC to paper-mode behavior in crowd benchmark.
         oa_cfg["paper_mode"] = True
         oa_cfg.setdefault("N", 10)
         oa_cfg.setdefault("auto_scale_N_with_dt", True)
         oa_cfg.setdefault("paper_horizon_time", 1.0)
-        # oa_cfg.setdefault("dsafe", 0.5)
-        # oa_cfg.setdefault("visible_reach_mode", "worst_case")
-        # oa_cfg.setdefault("use_nominal_tracking_cost", False)
-        # oa_cfg.setdefault("dynamic_occluders", False)
-        # Keep default safety distance unless overridden
         if oa_dsafe is None:
             oa_cfg["dsafe"] = float(oa_cfg.get("dsafe", 0.5))
         else:
             oa_cfg["dsafe"] = float(oa_dsafe)
-
-        # Crowd-adapted OA defaults
         oa_cfg["dynamic_occluders"] = True
         oa_cfg["visible_reach_mode"] = "constant_velocity"
         oa_cfg["use_nominal_tracking_cost"] = True
-
-        # OA paper baseline: static occluders only.
+        oa_cfg.setdefault("di_terminal_stop_mode", "brake_reachable")
         robot_spec["occlusion_types"] = [0, 1]
-        # robot_spec.setdefault("occlusion_types", [0])
         if oa_dynamic_occluders is not None:
             oa_cfg["dynamic_occluders"] = bool(oa_dynamic_occluders)
             robot_spec["occlusion_types"] = [0, 1] if oa_cfg["dynamic_occluders"] else [0]
@@ -1177,7 +1155,10 @@ def run_crowd_scenario(
         _apply_oacp_defaults(robot_spec)
 
     planner_label_map = dict(CROWD_PLANNER_LABELS)
-    planner_label_map["oa_mpc"] = f"OA-MPC (wmax={str(oa_wmax).strip().lower()})"
+    if model == "Unicycle2D":
+        planner_label_map["oa_mpc"] = f"OA-MPC (wmax={str(oa_wmax).strip().lower()})"
+    else:
+        planner_label_map["oa_mpc"] = "OA-MPC"
     planner_label = planner_label_map.get(pos_name, str(controller_type.get("pos", "")).strip())
     model_label_map = {
         "DoubleIntegrator2D": "Double Integrator2D",
@@ -1185,7 +1166,145 @@ def run_crowd_scenario(
         "Unicycle2D": "Unicycle2D",
     }
     model_label = model_label_map.get(model, model)
-    figure_title = f"{scenario_name} | {planner_label} | {model_label}"
+    idx_suffix = f" | idx {int(case_idx)}" if case_idx is not None else ""
+    figure_title = f"{scenario_name} | {planner_label} | {model_label}{idx_suffix}"
+
+    return {
+        "controller_type": dict(controller_type),
+        "model": model,
+        "dt": float(dt),
+        "tf": float(tf),
+        "case_seed": int(case_seed),
+        "waypoints": np.asarray(waypoints, dtype=np.float64),
+        "known_obs": np.asarray(known_obs, dtype=float),
+        "obs_meta": list(obs_meta),
+        "scenario_diag": dict(scenario_diag),
+        "env_width": float(env_width),
+        "env_height": float(env_height),
+        "robot_spec": robot_spec,
+        "planner_label": str(planner_label),
+        "model_label": str(model_label),
+        "figure_title": str(figure_title),
+        "scenario_name": str(scenario_name),
+        "crowd_mode": str(crowd_mode),
+        "pos_name": str(pos_name),
+    }
+
+
+def run_crowd_scenario(
+    controller_type=None,
+    model_key="di",
+    show_animation=True,
+    save_animation=False,
+    tf=100.0,
+    seed=42,
+    case_idx=None,
+    rand_obs=True,
+    n_rand=50,
+    du_min_speed_scale=None,
+    du_k_turn_brake=None,
+    du_k_a_p=None,
+    du_k_a_d=None,
+    du_reverse_enter_cos=None,
+    du_reverse_exit_cos=None,
+    du_reverse_min_scale=None,
+    vref_mode_occ=None,
+    vref_front_mode_occ=None,
+    occ_version=None,
+    occ_visible_scale=None,
+    occ_enable_visible_hocbf=False,
+    oa_dynamic_occluders=None,
+    oa_allow_solver_fallback=None,
+    oa_dsafe=None,
+    oa_visible_reach_mode=None,
+    oa_use_nominal_tracking_cost=None,
+    oa_wmax="default",
+    oa_dt=None,
+    crowd_mode="random",
+    forced_events=6,
+    forced_bg_rand=None,
+    forced_hidden_speed=1.0,
+    forced_occluder_radius_min=0.8,
+    forced_occluder_radius_max=1.0,
+    forced_validate_occlusion=True,
+    forced_require_corridor_conflict=True,
+    static_occluders=False,
+    backup_cbf_overrides=None,
+    robot_spec_overrides=None,
+    waypoints_override=None,
+    env_width_override=None,
+    env_height_override=None,
+    known_obs_override=None,
+    obs_meta_override=None,
+    scenario_diag_override=None,
+    return_metrics=False,
+    max_steps=None,
+    max_sim_time=None,
+    tracking_view_enable=False,
+    tracking_view_window_size=5.0,
+    scenario_name="Crowd1",
+    hide_env_boundary=False,
+):
+    runtime = _prepare_crowd_runtime(
+        controller_type=controller_type,
+        model_key=model_key,
+        tf=tf,
+        seed=seed,
+        case_idx=case_idx,
+        rand_obs=rand_obs,
+        n_rand=n_rand,
+        du_min_speed_scale=du_min_speed_scale,
+        du_k_turn_brake=du_k_turn_brake,
+        du_k_a_p=du_k_a_p,
+        du_k_a_d=du_k_a_d,
+        du_reverse_enter_cos=du_reverse_enter_cos,
+        du_reverse_exit_cos=du_reverse_exit_cos,
+        du_reverse_min_scale=du_reverse_min_scale,
+        vref_mode_occ=vref_mode_occ,
+        vref_front_mode_occ=vref_front_mode_occ,
+        occ_version=occ_version,
+        occ_visible_scale=occ_visible_scale,
+        occ_enable_visible_hocbf=occ_enable_visible_hocbf,
+        oa_dynamic_occluders=oa_dynamic_occluders,
+        oa_allow_solver_fallback=oa_allow_solver_fallback,
+        oa_dsafe=oa_dsafe,
+        oa_visible_reach_mode=oa_visible_reach_mode,
+        oa_use_nominal_tracking_cost=oa_use_nominal_tracking_cost,
+        oa_wmax=oa_wmax,
+        oa_dt=oa_dt,
+        crowd_mode=crowd_mode,
+        forced_events=forced_events,
+        forced_bg_rand=forced_bg_rand,
+        forced_hidden_speed=forced_hidden_speed,
+        forced_occluder_radius_min=forced_occluder_radius_min,
+        forced_occluder_radius_max=forced_occluder_radius_max,
+        forced_validate_occlusion=forced_validate_occlusion,
+        forced_require_corridor_conflict=forced_require_corridor_conflict,
+        static_occluders=static_occluders,
+        backup_cbf_overrides=backup_cbf_overrides,
+        robot_spec_overrides=robot_spec_overrides,
+        waypoints_override=waypoints_override,
+        env_width_override=env_width_override,
+        env_height_override=env_height_override,
+        known_obs_override=known_obs_override,
+        obs_meta_override=obs_meta_override,
+        scenario_diag_override=scenario_diag_override,
+        scenario_name=scenario_name,
+    )
+
+    controller_type = runtime["controller_type"]
+    model = runtime["model"]
+    dt = runtime["dt"]
+    case_seed = runtime["case_seed"]
+    waypoints = runtime["waypoints"]
+    known_obs = runtime["known_obs"]
+    obs_meta = runtime["obs_meta"]
+    scenario_diag = runtime["scenario_diag"]
+    env_width = runtime["env_width"]
+    env_height = runtime["env_height"]
+    robot_spec = runtime["robot_spec"]
+    figure_title = runtime["figure_title"]
+    crowd_mode = runtime["crowd_mode"]
 
     x_init = waypoints[0]
 
@@ -1668,6 +1787,11 @@ def main():
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_power_occ_uni.")
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None, help="Override backup_cbf.v_min_cmd_rev_occ_uni.")
     parser.add_argument("--occ-dt-backup", type=float, default=None, help="Override backup_cbf.dt_backup for occlusion backup rollout.")
+    parser.add_argument("--occ-t-horizon", type=float, default=None, help="Override backup_cbf.T_horizon for occlusion backup rollout.")
+    parser.add_argument("--occ-rho-T", type=float, default=None, help="Override backup_cbf.rho_T for terminal occlusion backup constraint.")
+    parser.add_argument("--occ-k-p", type=float, default=None, help="Override backup_cbf.k_p_occ_di for DI occlusion backup controller.")
+    parser.add_argument("--occ-k-d", type=float, default=None, help="Override backup_cbf.k_d_occ_di for DI occlusion backup controller.")
+    parser.add_argument("--occ-kappa", type=float, default=None, help="Override occlusion CBF scenario softmax kappa.")
     parser.add_argument(
         "--occ-rollout-mode",
         type=str,
@@ -1771,10 +1895,21 @@ def main():
     parser.add_argument("--oacp-Th", type=float, default=None, help="Override oacp_mpc.Th.")
     parser.add_argument("--oacp-N", type=int, default=None, help="Override oacp_mpc.N.")
     parser.add_argument("--oacp-n-shared", type=int, default=None, help="Override oacp_mpc.n_shared.")
+    parser.add_argument("--oacp-backend", type=str, choices=["coupled_nlp", "admm_lowdim"], default=None, help="Override oacp_mpc.backend.")
     parser.add_argument("--oacp-risk-explore-scale", type=float, default=None, help="Override oacp_mpc.risk_explore_scale.")
     parser.add_argument("--oacp-risk-fallback-scale", type=float, default=None, help="Override oacp_mpc.risk_fallback_scale.")
     parser.add_argument("--oacp-explore-speed-scale", type=float, default=None, help="Override oacp_mpc.explore_speed_scale.")
     parser.add_argument("--oacp-fallback-speed-scale", type=float, default=None, help="Override oacp_mpc.fallback_speed_scale.")
+    parser.add_argument("--oacp-shared-speed-blend", type=float, default=None, help="Override oacp_mpc.shared_speed_blend.")
+    parser.add_argument("--oacp-di-profile-occ-scale", type=float, default=None, help="Override oacp_mpc.di_profile_occ_scale.")
+    parser.add_argument("--oacp-di-profile-visible-scale", type=float, default=None, help="Override oacp_mpc.di_profile_visible_scale.")
+    parser.add_argument("--oacp-di-profile-speed-floor-scale", type=float, default=None, help="Override oacp_mpc.di_profile_speed_floor_scale.")
+    parser.add_argument("--oacp-admm-shared-ctrl-pts", type=int, default=None, help="Override oacp_mpc.admm_shared_ctrl_pts.")
+    parser.add_argument("--oacp-admm-tail-ctrl-pts", type=int, default=None, help="Override oacp_mpc.admm_tail_ctrl_pts.")
+    parser.add_argument("--oacp-admm-rho", type=float, default=None, help="Override oacp_mpc.admm_rho.")
+    parser.add_argument("--oacp-admm-max-iter", type=int, default=None, help="Override oacp_mpc.admm_max_iter.")
+    parser.add_argument("--oacp-admm-pri-tol", type=float, default=None, help="Override oacp_mpc.admm_pri_tol.")
+    parser.add_argument("--oacp-admm-dual-tol", type=float, default=None, help="Override oacp_mpc.admm_dual_tol.")
     parser.add_argument(
         "--oacp-use-nominal-tracking-cost",
         type=_str2bool,
@@ -1861,6 +1996,14 @@ def main():
         backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
     if args.occ_dt_backup is not None:
         backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
+    if args.occ_t_horizon is not None:
+        backup_cbf_overrides["T_horizon"] = float(args.occ_t_horizon)
+    if args.occ_rho_T is not None:
+        backup_cbf_overrides["rho_T"] = float(args.occ_rho_T)
+    if args.occ_k_p is not None:
+        backup_cbf_overrides["k_p_occ_di"] = float(args.occ_k_p)
+    if args.occ_k_d is not None:
+        backup_cbf_overrides["k_d_occ_di"] = float(args.occ_k_d)
     if args.occ_rollout_mode is not None:
         backup_cbf_overrides["occ_rollout_mode"] = str(args.occ_rollout_mode).strip().lower()
     if args.occ_terminal_slack_weight is not None:
@@ -1870,6 +2013,8 @@ def main():
     if args.vref is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     robot_spec_overrides = {}
+    if args.occ_kappa is not None:
+        robot_spec_overrides["occ_kappa"] = float(args.occ_kappa)
     oacp_cfg = {}
     if args.oacp_dt_plan is not None:
         oacp_cfg["dt_plan"] = float(args.oacp_dt_plan)
@@ -1879,6 +2024,8 @@ def main():
         oacp_cfg["N"] = int(args.oacp_N)
     if args.oacp_n_shared is not None:
         oacp_cfg["n_shared"] = int(args.oacp_n_shared)
+    if args.oacp_backend is not None:
+        oacp_cfg["backend"] = str(args.oacp_backend).strip().lower()
     if args.oacp_risk_explore_scale is not None:
         oacp_cfg["risk_explore_scale"] = float(args.oacp_risk_explore_scale)
     if args.oacp_risk_fallback_scale is not None:
@@ -1887,6 +2034,26 @@ def main():
         oacp_cfg["explore_speed_scale"] = float(args.oacp_explore_speed_scale)
     if args.oacp_fallback_speed_scale is not None:
         oacp_cfg["fallback_speed_scale"] = float(args.oacp_fallback_speed_scale)
+    if args.oacp_shared_speed_blend is not None:
+        oacp_cfg["shared_speed_blend"] = float(args.oacp_shared_speed_blend)
+    if args.oacp_di_profile_occ_scale is not None:
+        oacp_cfg["di_profile_occ_scale"] = float(args.oacp_di_profile_occ_scale)
+    if args.oacp_di_profile_visible_scale is not None:
+        oacp_cfg["di_profile_visible_scale"] = float(args.oacp_di_profile_visible_scale)
+    if args.oacp_di_profile_speed_floor_scale is not None:
+        oacp_cfg["di_profile_speed_floor_scale"] = float(args.oacp_di_profile_speed_floor_scale)
+    if args.oacp_admm_shared_ctrl_pts is not None:
+        oacp_cfg["admm_shared_ctrl_pts"] = int(args.oacp_admm_shared_ctrl_pts)
+    if args.oacp_admm_tail_ctrl_pts is not None:
+        oacp_cfg["admm_tail_ctrl_pts"] = int(args.oacp_admm_tail_ctrl_pts)
+    if args.oacp_admm_rho is not None:
+        oacp_cfg["admm_rho"] = float(args.oacp_admm_rho)
+    if args.oacp_admm_max_iter is not None:
+        oacp_cfg["admm_max_iter"] = int(args.oacp_admm_max_iter)
+    if args.oacp_admm_pri_tol is not None:
+        oacp_cfg["admm_pri_tol"] = float(args.oacp_admm_pri_tol)
+    if args.oacp_admm_dual_tol is not None:
+        oacp_cfg["admm_dual_tol"] = float(args.oacp_admm_dual_tol)
     if args.oacp_use_nominal_tracking_cost is not None:
         oacp_cfg["use_nominal_tracking_cost"] = bool(args.oacp_use_nominal_tracking_cost)
     if args.oacp_allow_solver_fallback is not None:

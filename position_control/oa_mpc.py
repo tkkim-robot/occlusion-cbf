@@ -57,13 +57,10 @@ class OAMPC:
         self.dsafe = float(cfg.get("dsafe", default_dsafe))
         default_hidden_agent_radius = 0.0 if self.paper_mode else 0.2
         self.hidden_agent_radius = float(cfg.get("hidden_agent_radius", default_hidden_agent_radius))
-        self.v_hidden_max_default = float(
-            cfg.get(
-                "v_hidden_max",
-                robot_spec.get("v_obs_max", robot_spec.get("v_adv_max_occ", 0.5)),
-            )
-        )
-        self.v_visible_max_default = float(cfg.get("v_visible_max", self.v_hidden_max_default))
+        hidden_speed_default = robot_spec.get("v_adv_max_occ", robot_spec.get("v_obs_max", 0.5))
+        self.v_hidden_max_default = float(cfg.get("v_hidden_max", hidden_speed_default))
+        visible_speed_default = robot_spec.get("v_obs_max", self.v_hidden_max_default)
+        self.v_visible_max_default = float(cfg.get("v_visible_max", visible_speed_default))
         self.visible_reach_mode = str(cfg.get("visible_reach_mode", "worst_case")).strip().lower()
         if self.visible_reach_mode not in {"worst_case", "constant_velocity"}:
             self.visible_reach_mode = "worst_case"
@@ -151,10 +148,23 @@ class OAMPC:
         self.static_pc_max_circles = int(cfg.get("static_pc_max_circles", default_static_max_circles))
 
         # Stage/terminal costs
+        self.v_ref_default = float(cfg.get("v_ref_default", 0.5))
         self.w_pos = float(cfg.get("w_pos", 15.0))
         self.w_u = float(cfg.get("w_u", 1.0))
         self.w_du = float(cfg.get("w_du", 0.2))
         self.w_terminal = float(cfg.get("w_terminal", 25.0))
+        self.di_use_progress_speed_cost = bool(cfg.get("di_use_progress_speed_cost", True))
+        self.di_use_speed_schedule = bool(cfg.get("di_use_speed_schedule", True))
+        self.di_use_speed_cap = bool(cfg.get("di_use_speed_cap", True))
+        self.di_w_speed = float(cfg.get("di_w_speed", 6.0))
+        self.di_w_lateral_velocity = float(cfg.get("di_w_lateral_velocity", 2.0))
+        self.di_circle_speed_scale = float(cfg.get("di_circle_speed_scale", 0.55))
+        self.di_proj_speed_scale = float(cfg.get("di_proj_speed_scale", 0.90))
+        self.di_speed_floor_scale = float(cfg.get("di_speed_floor_scale", 0.25))
+        self.di_pressure_clip = float(cfg.get("di_pressure_clip", 4.0))
+        self.di_pressure_margin_scale = float(
+            cfg.get("di_pressure_margin_scale", max(self.dsafe + self.robot_radius, 1e-3))
+        )
 
         self.solver_name = str(cfg.get("solver", "ipopt")).lower()
         # In paper-faithful one-shot alternation, overly large IPOPT iteration
@@ -192,6 +202,11 @@ class OAMPC:
         self.last_profile = {}
         self.last_qp_status_raw = ""
         self.last_qp_exception = ""
+        self.last_v_ref_nom_raw = 0.0
+        self.last_v_ref_schedule_min = 0.0
+        self.last_v_ref_schedule_mean = 0.0
+        self.last_circle_pressure_score = 0.0
+        self.last_proj_pressure_score = 0.0
 
         self.occlusion_scenarios = []
         self._last_projection_points = []
@@ -425,6 +440,7 @@ class OAMPC:
             points[i] = p + best * d
 
         return {
+            "origin": p.copy(),
             "angles": angles,
             "ranges": ranges,
             "hit_mask": hit_mask,
@@ -476,6 +492,7 @@ class OAMPC:
         ranges = np.asarray(scan.get("ranges", []), dtype=float).reshape(-1)
         points = np.asarray(scan.get("points", []), dtype=float)
         hit = np.asarray(scan.get("hit_mask", []), dtype=bool).reshape(-1)
+        origin = np.asarray(scan.get("origin", np.zeros(2)), dtype=float).reshape(2)
         full_circle = bool(scan.get("full_circle", False))
         if ranges.size < 2 or points.shape[0] != ranges.size or hit.size != ranges.size:
             return []
@@ -526,8 +543,37 @@ class OAMPC:
             seg_len = float(np.linalg.norm(p2 - p1))
             if seg_len < self.min_occ_boundary_len or seg_len > max_len:
                 continue
+            d1 = p1 - origin
+            d2 = p2 - origin
+            n1 = float(np.linalg.norm(d1))
+            n2 = float(np.linalg.norm(d2))
+            if n1 <= 1e-9 or n2 <= 1e-9:
+                continue
+            far1 = origin + (float(self.sensing_range) / n1) * d1
+            far2 = origin + (float(self.sensing_range) / n2) * d2
+            poly = np.vstack([p1, p2, far2, far1])
+            try:
+                A, b0 = self._occ_utils._polygon_to_halfspaces(poly)
+            except Exception:
+                A, b0 = None, None
+            if A is None or b0 is None:
+                continue
+            v_expand_vec = np.full((len(b0),), float(self.v_hidden_max_default), dtype=float)
+            if v_expand_vec.size > 0:
+                # The boundary segment itself is the immediate visible frontier.
+                # Keep only the "behind the frontier" facets expanding over time.
+                v_expand_vec[0] = 0.0
             scenarios.append(
                 {
+                    "poly": poly,
+                    "A": A,
+                    "b0": b0,
+                    "v_expand_vec": v_expand_vec,
+                    "robot_pos": origin.copy(),
+                    "obs_center": 0.5 * (p1 + p2),
+                    "obs_radius": 0.5 * seg_len,
+                    "front1": p1,
+                    "front2": p2,
                     "t1": p1,
                     "t2": p2,
                     "v_adv_max": float(self.v_hidden_max_default),
@@ -565,6 +611,95 @@ class OAMPC:
 
         x_bar[:, 0] = x0
         return x_bar, u_bar
+
+    def _nominal_speed_reference(self, x0, u_ref, floor_speed):
+        floor_speed = float(floor_speed)
+        if self.model == "DoubleIntegrator2D":
+            x0 = np.asarray(x0, dtype=float).reshape(-1)
+            u_ref = np.asarray(u_ref, dtype=float).reshape(-1)
+            v_cur = x0[2:4] if x0.size >= 4 else np.zeros((2,), dtype=float)
+            v_des = v_cur + self.dt * u_ref[:2]
+            v_max = float(self.robot_spec.get("v_max", 1.0))
+            v_mag = float(np.linalg.norm(v_des))
+            if np.isfinite(v_max) and v_mag > max(v_max, 1e-9):
+                v_des = v_des * (float(v_max) / v_mag)
+            return max(float(np.linalg.norm(v_des)), floor_speed)
+        if self.model == "DynamicUnicycle2D":
+            x0 = np.asarray(x0, dtype=float).reshape(-1)
+            u_ref = np.asarray(u_ref, dtype=float).reshape(-1)
+            v_max = float(self.robot_spec.get("v_max", 1.0))
+            v_min = float(self.robot_spec.get("v_min", -v_max))
+            v_cur = float(x0[3]) if x0.size >= 4 else 0.0
+            v_des = float(np.clip(v_cur + float(u_ref[0]), v_min, v_max))
+            return max(abs(v_des), floor_speed)
+        return max(abs(float(np.asarray(u_ref, dtype=float).reshape(-1)[0])), floor_speed)
+
+    @staticmethod
+    def _safe_goal_dir_np(pos_xy, goal_xy):
+        pos_xy = np.asarray(pos_xy, dtype=float).reshape(2,)
+        goal_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
+        d = goal_xy - pos_xy
+        dn = float(np.linalg.norm(d))
+        if dn <= 1e-9:
+            return np.array([1.0, 0.0], dtype=float)
+        return d / dn
+
+    def _di_progress_components_np(self, xk, goal_xy):
+        xk = np.asarray(xk, dtype=float).reshape(-1)
+        e = self._safe_goal_dir_np(xk[:2], goal_xy)
+        n = np.array([-e[1], e[0]], dtype=float)
+        v = xk[2:4]
+        return float(v @ e), float(v @ n)
+
+    @staticmethod
+    def _di_progress_components_ca(xk, goal_xy):
+        d = goal_xy - xk[0:2]
+        dn = ca.sqrt(ca.sumsqr(d) + 1e-12)
+        e = d / dn
+        n = ca.vertcat(-e[1], e[0])
+        v = xk[2:4]
+        return ca.dot(v, e), ca.dot(v, n)
+
+    def _di_speed_schedule(self, x0, u_ref, x_bar, proj_targets):
+        v_ref_raw = float(self._nominal_speed_reference(x0, u_ref, self.v_ref_default))
+        schedule = np.full((self.N,), v_ref_raw, dtype=float)
+        if self.model != "DoubleIntegrator2D":
+            return v_ref_raw, schedule, 0.0, 0.0
+
+        margin_scale = max(float(self.di_pressure_margin_scale), 1e-3)
+        v0 = float(np.linalg.norm(np.asarray(x0, dtype=float).reshape(-1)[2:4]))
+        a_max = float(self.robot_spec.get("a_max", 1.0))
+        decel_rate = max(np.sqrt(2.0) * max(a_max, 0.0), 1e-6)
+        circle_pressures = []
+        proj_pressures = []
+        for k in range(1, self.N + 1):
+            p = np.asarray(x_bar[0:2, k], dtype=float).reshape(2,)
+            circle_pressure = 0.0
+            proj_pressure = 0.0
+            for cst in proj_targets[k]:
+                kind = str(cst.get("kind", "proj")).strip().lower()
+                if kind == "circle":
+                    cxy = np.asarray(cst.get("center", np.zeros(2)), dtype=float).reshape(2,)
+                    margin = float(np.linalg.norm(p - cxy) - float(cst.get("min_dist", 0.0)))
+                    circle_pressure += float(np.exp(-max(0.0, margin) / margin_scale))
+                else:
+                    zxy = np.asarray(cst.get("point", np.zeros(2)), dtype=float).reshape(2,)
+                    margin = float(np.linalg.norm(p - zxy) - float(cst.get("clear", 0.0)))
+                    proj_pressure += float(np.exp(-max(0.0, margin) / margin_scale))
+            circle_pressure = float(np.clip(circle_pressure, 0.0, max(self.di_pressure_clip, 0.0)))
+            proj_pressure = float(np.clip(proj_pressure, 0.0, max(self.di_pressure_clip, 0.0)))
+            circle_pressures.append(circle_pressure)
+            proj_pressures.append(proj_pressure)
+            if self.di_use_speed_schedule:
+                denom = 1.0 + self.di_circle_speed_scale * circle_pressure + self.di_proj_speed_scale * proj_pressure
+                scale = float(np.clip(1.0 / max(denom, 1e-6), self.di_speed_floor_scale, 1.0))
+                v_sched_k = float(v_ref_raw * scale)
+                reachable_floor = max(0.0, v0 - decel_rate * self.dt * float(k))
+                schedule[k - 1] = float(max(v_sched_k, reachable_floor))
+
+        mean_circle = float(np.mean(circle_pressures)) if circle_pressures else 0.0
+        mean_proj = float(np.mean(proj_pressures)) if proj_pressures else 0.0
+        return v_ref_raw, schedule, mean_circle, mean_proj
 
     def _build_projection_targets(self, x_bar, visible_obs, occ_scenarios, static_pc_circles):
         # targets[k] contains per-step collision constraints:
@@ -820,6 +955,18 @@ class OAMPC:
         n, m, N = self._n, self._m, self.N
         lb_u, ub_u = self._input_bounds()
 
+        v_ref_raw, v_ref_schedule, circle_pressure, proj_pressure = self._di_speed_schedule(
+            x0=x0,
+            u_ref=u_ref,
+            x_bar=x_init,
+            proj_targets=proj_targets,
+        )
+        self.last_v_ref_nom_raw = float(v_ref_raw)
+        self.last_v_ref_schedule_min = float(np.min(v_ref_schedule)) if v_ref_schedule.size > 0 else float(v_ref_raw)
+        self.last_v_ref_schedule_mean = float(np.mean(v_ref_schedule)) if v_ref_schedule.size > 0 else float(v_ref_raw)
+        self.last_circle_pressure_score = float(circle_pressure)
+        self.last_proj_pressure_score = float(proj_pressure)
+
         opti = ca.Opti()
         X = opti.variable(n, N + 1)
         U = opti.variable(m, N)
@@ -828,6 +975,7 @@ class OAMPC:
         uref_dm = ca.DM(np.asarray(u_ref, dtype=float).reshape(m))
         xgoal_dm = ca.DM(np.asarray(x_goal, dtype=float).reshape(n))
         uprev_dm = ca.DM(np.asarray(self._u_prev_applied, dtype=float).reshape(m))
+        vref_sched_dm = ca.DM(np.asarray(v_ref_schedule, dtype=float).reshape(N))
 
         # Objective:
         # - paper_mode default: ||z-z_goal||^2 + ||u||^2 + ||Delta u||^2
@@ -844,6 +992,10 @@ class OAMPC:
                 J += self.w_du * ca.sumsqr(U[:, k] - uprev_dm)
             else:
                 J += self.w_du * ca.sumsqr(U[:, k] - U[:, k - 1])
+            if self.model == "DoubleIntegrator2D" and self.di_use_progress_speed_cost:
+                v_par, v_lat = self._di_progress_components_ca(X[:, k], xgoal_dm[0:2])
+                J += self.di_w_speed * ((v_par - vref_sched_dm[k]) ** 2)
+                J += self.di_w_lateral_velocity * (v_lat ** 2)
 
         J += self.w_terminal * ca.sumsqr(X[0:2, N] - xgoal_dm[0:2])
 
@@ -852,6 +1004,8 @@ class OAMPC:
         for k in range(N):
             opti.subject_to(X[:, k + 1] == self._discrete_dynamics_ca(X[:, k], U[:, k]))
             opti.subject_to(opti.bounded(lb_u, U[:, k], ub_u))
+            if self.model == "DoubleIntegrator2D" and self.di_use_speed_cap:
+                opti.subject_to(ca.sumsqr(X[2:4, k + 1]) <= (vref_sched_dm[k] + 1e-6) ** 2)
 
         # State bounds (model-specific).
         if self.model == "DoubleIntegrator2D":
@@ -1153,6 +1307,14 @@ class OAMPC:
             "use_terminal_complementarity": bool(self.use_terminal_complementarity),
             "di_terminal_stop_mode": str(self.di_terminal_stop_mode),
             "di_terminal_brake_steps": int(self.di_terminal_brake_steps),
+            "raw_v_ref_nom": float(self.last_v_ref_nom_raw),
+            "speed_schedule_min": float(self.last_v_ref_schedule_min),
+            "speed_schedule_mean": float(self.last_v_ref_schedule_mean),
+            "circle_pressure_score": float(self.last_circle_pressure_score),
+            "proj_pressure_score": float(self.last_proj_pressure_score),
+            "speed_cost_mode": (
+                "progress_aligned" if (self.model == "DoubleIntegrator2D" and self.di_use_progress_speed_cost) else "input_only"
+            ),
             "alternation_iters_run": int(alt_iter_count),
             "alternation_iters_cfg": int(self.alternation_iters),
         }

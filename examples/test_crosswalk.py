@@ -68,8 +68,9 @@ def _default_crosswalk_svg_path(controller_type, model_key, bus_type, case_idx):
 
 def _style_crosswalk_axis(ax, fig, title_text):
     fig.set_size_inches(12.8, 8.6, forward=True)
-    fig.set_facecolor("#efe8db")
-    ax.set_facecolor("#e7dcc8")
+    # Keep the scene neutral so the robot and traffic behavior stand out.
+    fig.set_facecolor("#f7f7f4")
+    ax.set_facecolor("#f2f2ee")
     fig.subplots_adjust(left=0.02, right=0.985, top=0.965, bottom=0.03)
     ax.set_xlabel("")
     ax.set_ylabel("")
@@ -114,7 +115,7 @@ def _draw_crosswalk_scene(
     road_y_min = bus_min_y - 0.08
     road_y_max = 18.1
     lane_divider_y = bus_max_y + 0.22
-    road_color = "#2f3b46"
+    road_color = "#47515a"
     shoulder_color = "#cbb79a"
     curb_color = "#f7f1e3"
     centerline_color = "#f4d35e"
@@ -379,7 +380,7 @@ def crosswalk_scenario_v3(
             "backup_cbf": {
                 "T_horizon": float(occ_T_horizon) if occ_T_horizon is not None else 1.0,
                 "dt_backup": 0.05,
-                "alpha": 5.0,
+                "alpha": 1.5,
                 "rho_T": "stopping_distance",
                 "vref_front_mode_occ": "los",
             },
@@ -546,7 +547,7 @@ def crosswalk_scenario_v3(
                 boxstyle="round,pad=0.02,rounding_size=0.22",
                 edgecolor="#102a43",
                 linewidth=1.6,
-                facecolor="#2b6cb0",
+                facecolor="#4b82bc",
                 fill=True,
                 zorder=7.0,
             )
@@ -579,7 +580,7 @@ def crosswalk_scenario_v3(
                 bus_h - 0.36,
                 edgecolor="#0b2033",
                 linewidth=0.8,
-                facecolor="#4c83c3",
+                facecolor="#6697cb",
                 alpha=0.95,
                 zorder=7.6,
             )
@@ -1174,6 +1175,11 @@ def main():
 
     pos_algo = resolve_baseline_alias(args.baseline, args.controller, CROSSWALK_BASELINE_MAP)
     controller_type = {"pos": pos_algo}
+    save_frame_ext = str(args.save_frame_ext).strip().lower()
+    # In crosswalk runs, users often expect `--save-svg true --save-ani true`
+    # to save every animation frame as SVG rather than only the last snapshot.
+    if args.save_animation and args.save_svg and save_frame_ext == "png":
+        save_frame_ext = "svg"
     crosswalk_scenario_v3(
         controller_type=controller_type,
         model_key=model_key,
@@ -1184,7 +1190,7 @@ def main():
         seed=args.seed,
         case_idx=args.case_idx,
         save_animation=args.save_animation,
-        save_frame_ext=args.save_frame_ext,
+        save_frame_ext=save_frame_ext,
         animation_subdir=args.animation_subdir,
         save_svg=args.save_svg,
         svg_path=args.svg_path,

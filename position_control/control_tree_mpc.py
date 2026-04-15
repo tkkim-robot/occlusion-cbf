@@ -58,8 +58,8 @@ class ControlTreeMPC(MPCCommonUtils):
 
         cfg = robot_spec.setdefault("control_tree_mpc", {})
 
-        self.dt_plan = float(cfg.get("dt_plan", 0.25))
-        self.Th = float(cfg.get("Th", 3.0))
+        self.dt_plan = float(cfg.get("dt_plan", 0.05))
+        self.Th = float(cfg.get("Th", 1.0))
         n_from_h = int(np.round(self.Th / max(self.dt_plan, 1e-6)))
         self.N = max(4, int(cfg.get("N", n_from_h)))
 
@@ -73,16 +73,6 @@ class ControlTreeMPC(MPCCommonUtils):
         self.max_visible_obs = max(1, self.max_visible_obs)
         self.margin_obs = float(cfg.get("margin_obs", 0.05))
         self.margin_risk = float(cfg.get("margin_risk", 0.05))
-
-        # Shared-guidance heuristic. This is only used to generate a common trunk
-        # reference and is not the branch semantics itself.
-        self.gap_lookahead = float(cfg.get("gap_lookahead", 2.5))
-        self.cluster_merge_distance = float(cfg.get("cluster_merge_distance", 0.8))
-        self.forward_fov_deg_for_guidance = float(cfg.get("forward_fov_deg_for_guidance", 180.0))
-        self.min_gap_width = cfg.get("min_gap_width", 0.25)
-        if self.min_gap_width is not None:
-            self.min_gap_width = float(self.min_gap_width)
-        self.goal_handover_radius = float(cfg.get("goal_handover_radius", 1.0))
 
         # Hypothesis-tree parameters.
         self.n_occ_hypotheses = int(cfg.get("n_occ_hypotheses", 2))
@@ -98,14 +88,13 @@ class ControlTreeMPC(MPCCommonUtils):
         self.risk_regions_per_tangent = max(1, self.risk_regions_per_tangent)
         self.drisk = float(cfg.get("drisk", 0.7))
         self.risk_sigma = float(cfg.get("risk_sigma", 1e-4))
-        self.rrisk_max = cfg.get("rrisk_max", 1.5)
+        self.rrisk_max = cfg.get("rrisk_max", 1.0)
         if self.rrisk_max is not None:
             self.rrisk_max = float(self.rrisk_max)
         self.min_v_for_risk = float(cfg.get("min_v_for_risk", 0.3))
         self.risk_time_model = str(cfg.get("risk_time_model", "distance_over_vref")).strip().lower()
         if self.risk_time_model not in {"distance_over_vref", "nominal_rollout"}:
             self.risk_time_model = "distance_over_vref"
-        self.nominal_k_heading = float(cfg.get("nominal_k_heading", 2.0))
         self.max_branch_risk_regions = int(
             cfg.get(
                 "max_branch_risk_regions",
@@ -113,28 +102,18 @@ class ControlTreeMPC(MPCCommonUtils):
             )
         )
 
-        # Belief heuristic for ranking / weighting hypotheses.
-        self.belief_prob_scale = float(cfg.get("belief_prob_scale", 0.45))
-        self.belief_prob_min = float(cfg.get("belief_prob_min", 0.05))
-        self.belief_prob_max = float(cfg.get("belief_prob_max", 0.55))
-        self.belief_dist_scale = float(cfg.get("belief_dist_scale", 4.0))
-        self.belief_path_scale = float(cfg.get("belief_path_scale", 1.0))
-        self.belief_align_floor = float(cfg.get("belief_align_floor", 0.25))
-        self.belief_align_power = float(cfg.get("belief_align_power", 1.5))
-        self.hypothesis_score_min = float(cfg.get("hypothesis_score_min", 0.02))
-
         # Cost shaping.
         self.wgoal = float(cfg.get("wgoal", 3.5))
         self.wvel = float(cfg.get("wvel", 5.0))
         self.wacc = float(cfg.get("wacc", 1.8))
         self.wtrack_shared = float(cfg.get("wtrack_shared", 2.0))
         self.wtrack_tail = float(cfg.get("wtrack_tail", 0.5))
-        self.branch_align_weight = float(cfg.get("branch_align_weight", 1.0))
-        self.branch_width_weight = float(cfg.get("branch_width_weight", 0.35))
-        self.branch_clearance_weight = float(cfg.get("branch_clearance_weight", 0.9))
         self.lambda_w = float(cfg.get("lambda_w", 1.0))
-        self.v_ref_default = float(cfg.get("v_ref_default", 0.5))
+        self.v_des = float(cfg.get("v_des", robot_spec.get("v_max", 0.5)))
         self.branch_zero_prob_reg = float(cfg.get("branch_zero_prob_reg", 1e-3))
+        v_min_bound, v_max_bound = self._speed_bounds()
+        self.v_des = float(np.clip(self.v_des, v_min_bound, v_max_bound))
+        self.v_state_bound = float(v_max_bound)
 
         self.max_iter = int(cfg.get("max_iter", 150))
         self.solver_tol = float(cfg.get("solver_tol", 1e-4))
@@ -197,174 +176,19 @@ class ControlTreeMPC(MPCCommonUtils):
         return lb, ub
 
     # ---------------------------------------------------------------------
-    # Shared guidance helper
-    # ---------------------------------------------------------------------
-    def _cluster_visible_obs(self, visible_obs, x0, goal_heading):
-        if visible_obs is None or len(visible_obs) == 0:
-            return []
-        obs = np.asarray(visible_obs, dtype=float)
-        if obs.ndim == 1:
-            obs = obs.reshape(1, -1)
-
-        centers = obs[:, :2]
-        radii = obs[:, 2] + self.robot_radius + self.margin_obs
-        used = np.zeros(centers.shape[0], dtype=bool)
-        clusters = []
-        for i in range(centers.shape[0]):
-            if used[i]:
-                continue
-            stack = [i]
-            used[i] = True
-            comp = []
-            while stack:
-                u = stack.pop()
-                comp.append(u)
-                for v in range(centers.shape[0]):
-                    if used[v]:
-                        continue
-                    d = float(np.linalg.norm(centers[u] - centers[v]))
-                    if d <= float(radii[u] + radii[v] + self.cluster_merge_distance):
-                        used[v] = True
-                        stack.append(v)
-            pts = centers[comp]
-            rs = radii[comp]
-            centroid = np.mean(pts, axis=0)
-            r_bound = 0.0
-            for j in range(len(comp)):
-                r_bound = max(r_bound, float(np.linalg.norm(pts[j] - centroid) + rs[j]))
-
-            p = np.asarray(x0, dtype=float).reshape(-1)[:2]
-            vec = centroid - p
-            d = float(np.linalg.norm(vec))
-            alpha = self._angle_wrap(np.arctan2(vec[1], vec[0]) - goal_heading)
-            if d <= 1e-6 or d <= r_bound:
-                half = np.pi
-            else:
-                half = float(np.arcsin(np.clip(r_bound / d, 0.0, 1.0)))
-            clusters.append(
-                {
-                    "centroid": centroid,
-                    "radius": float(r_bound),
-                    "angle_span": (float(alpha - half), float(alpha + half)),
-                }
-            )
-        return clusters
-
-    def _gap_candidates(self, x0, goal_xy, clusters):
-        p = np.asarray(x0, dtype=float).reshape(-1)[:2]
-        g = np.asarray(goal_xy, dtype=float).reshape(2,)
-        goal_heading = float(np.arctan2(g[1] - p[1], g[0] - p[0]))
-        half_fov = np.deg2rad(max(10.0, self.forward_fov_deg_for_guidance)) * 0.5
-
-        blocked = []
-        for c in clusters:
-            lo, hi = c["angle_span"]
-            if hi < -half_fov or lo > half_fov:
-                continue
-            blocked.append((max(-half_fov, lo), min(half_fov, hi)))
-        blocked = self._merge_intervals(blocked)
-
-        gaps = []
-        cursor = -half_fov
-        for lo, hi in blocked:
-            if lo > cursor:
-                gaps.append((cursor, lo))
-            cursor = max(cursor, hi)
-        if cursor < half_fov:
-            gaps.append((cursor, half_fov))
-
-        min_gap = max(0.0, float(self.min_gap_width)) if self.min_gap_width is not None else 0.0
-        candidates = []
-        for lo, hi in gaps:
-            width = hi - lo
-            if width < min_gap:
-                continue
-            ctr = 0.5 * (lo + hi)
-            world_ang = goal_heading + ctr
-            local_point = p + self.gap_lookahead * np.array([np.cos(world_ang), np.sin(world_ang)], dtype=float)
-            candidates.append({
-                "gap_angle": float(ctr),
-                "gap_width": float(width),
-                "local_point": local_point,
-            })
-        return goal_heading, candidates
-
-    def _select_shared_guidance(self, x0, goal_xy, visible_obs):
-        p = np.asarray(x0, dtype=float).reshape(-1)[:2]
-        goal_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
-        if float(np.linalg.norm(goal_xy - p)) <= float(self.goal_handover_radius):
-            return goal_xy, {"guidance_source": "goal_near"}
-        goal_heading = float(np.arctan2(goal_xy[1] - p[1], goal_xy[0] - p[0]))
-        clusters = self._cluster_visible_obs(visible_obs, x0, goal_heading)
-        _, cands = self._gap_candidates(x0, goal_xy, clusters)
-        if len(cands) == 0:
-            return goal_xy, {"guidance_source": "goal_fallback", "n_clusters": int(len(clusters))}
-        i0 = int(np.argmin([abs(c["gap_angle"]) for c in cands]))
-        return np.asarray(cands[i0]["local_point"], dtype=float).reshape(2,), {
-            "guidance_source": "gap",
-            "n_clusters": int(len(clusters)),
-            "gap_angle": float(cands[i0]["gap_angle"]),
-            "gap_width": float(cands[i0]["gap_width"]),
-        }
-
-    def _select_branch_target(self, x0, goal_xy, visible_obs, risk_regions):
-        p = np.asarray(x0, dtype=float).reshape(-1)[:2]
-        goal_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
-        if float(np.linalg.norm(goal_xy - p)) <= float(self.goal_handover_radius):
-            return goal_xy, {"target_source": "goal_near"}
-
-        goal_heading = float(np.arctan2(goal_xy[1] - p[1], goal_xy[0] - p[0]))
-        clusters = self._cluster_visible_obs(visible_obs, x0, goal_heading)
-        _, cands = self._gap_candidates(x0, goal_xy, clusters)
-        if len(cands) == 0:
-            return goal_xy, {"target_source": "goal_fallback", "n_clusters": int(len(clusters))}
-
-        regs = list(risk_regions or [])
-        best_i = 0
-        best_score = -np.inf
-        for i, cand in enumerate(cands):
-            align = max(0.0, float(np.cos(float(cand["gap_angle"]))))
-            width = float(cand["gap_width"])
-            clear_norm = 1.0
-            if len(regs) > 0:
-                lp = np.asarray(cand["local_point"], dtype=float).reshape(2,)
-                clear = min(
-                    float(np.linalg.norm(lp - np.asarray(c, dtype=float).reshape(2,)) - float(rr))
-                    for c, rr in regs
-                )
-                clear_norm = float(np.clip(clear / max(self.gap_lookahead, 1e-3), 0.0, 1.5))
-            score = (
-                self.branch_align_weight * align
-                + self.branch_width_weight * width
-                + self.branch_clearance_weight * clear_norm
-            )
-            if score > best_score:
-                best_score = float(score)
-                best_i = int(i)
-
-        chosen = cands[best_i]
-        return np.asarray(chosen["local_point"], dtype=float).reshape(2,), {
-            "target_source": "gap_branch",
-            "n_clusters": int(len(clusters)),
-            "gap_angle": float(chosen["gap_angle"]),
-            "gap_width": float(chosen["gap_width"]),
-            "score": float(best_score),
-        }
-
-    # ---------------------------------------------------------------------
     # Hypothesis construction
     # ---------------------------------------------------------------------
-    def _nominal_rollout_positions(self, x0, guidance_xy, v_ref_nom):
+    def _nominal_rollout_positions(self, x0, goal_xy, v_plan):
         x = np.asarray(x0, dtype=float).reshape(self._n_state,)
         points = np.zeros((self.N + 1, 2), dtype=float)
         points[0] = x[:2]
         for k in range(self.N):
-            u_cmd = self._guidance_input_np(x, guidance_xy, v_ref_nom, k_heading=self.nominal_k_heading)
+            u_cmd = self._guidance_input_np(x, goal_xy, v_plan)
             x = self._discrete_np(x, u_cmd)
             points[k + 1] = x[:2]
         return points
 
-    def _risk_regions_from_scenario(self, scenario, v_ref_nom, nominal_points):
+    def _risk_regions_from_scenario(self, scenario, v_plan, nominal_points):
         hidden_speed = float(scenario.get("v_adv_max", self.hidden_speed))
         if hidden_speed <= 1e-9:
             return []
@@ -389,7 +213,7 @@ class ControlTreeMPC(MPCCommonUtils):
         if len(rays) == 0:
             return []
 
-        v_nom = max(float(v_ref_nom), float(self.min_v_for_risk), 1e-3)
+        v_nom = max(float(v_plan), float(self.min_v_for_risk), 1e-3)
         regions = []
         for t, d in rays:
             for i in range(1, self.risk_regions_per_tangent + 1):
@@ -407,62 +231,47 @@ class ControlTreeMPC(MPCCommonUtils):
                     regions.append((center, float(rr)))
         return regions
 
-    def _scenario_score(self, x0, goal_xy, scenario, risk_regions, nominal_points):
+    def _scenario_score(self, x0, goal_xy, scenario, nominal_points):
         p = np.asarray(x0, dtype=float).reshape(-1)[:2]
         g = np.asarray(goal_xy, dtype=float).reshape(2,)
         c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
         r_obs = float(scenario.get("obs_radius", 0.0))
 
-        d = max(0.0, float(np.linalg.norm(c - p) - r_obs))
-        dist_factor = np.exp(-d / max(self.belief_dist_scale, 1e-6))
-
-        goal_vec = g - p
-        goal_n = float(np.linalg.norm(goal_vec))
-        if goal_n > 1e-9:
-            goal_vec = goal_vec / goal_n
-        scen_vec = c - p
-        scen_n = float(np.linalg.norm(scen_vec))
-        if scen_n > 1e-9:
-            scen_vec = scen_vec / scen_n
-        align = 0.0 if (goal_n <= 1e-9 or scen_n <= 1e-9) else float(np.clip(goal_vec @ scen_vec, -1.0, 1.0))
-        align = float(self.belief_align_floor + (1.0 - self.belief_align_floor) * max(0.0, align))
-        align = float(align ** self.belief_align_power)
-
-        if risk_regions and nominal_points is not None:
-            dmins = []
-            for center, rr in risk_regions:
-                dmins.append(float(np.min(np.linalg.norm(nominal_points - center[None, :], axis=1)) - rr))
-            path_clear = min(dmins) if len(dmins) > 0 else np.inf
+        dist_to_robot = max(0.0, float(np.linalg.norm(c - p) - r_obs))
+        if nominal_points is not None and nominal_points.size > 0:
+            path_clear = max(0.0, float(np.min(np.linalg.norm(nominal_points - c[None, :], axis=1)) - r_obs))
         else:
-            path_clear = np.inf
-        if np.isfinite(path_clear):
-            path_factor = np.exp(-max(0.0, path_clear) / max(self.belief_path_scale, 1e-6))
-        else:
-            path_factor = 0.5
+            path_clear = max(0.0, float(np.linalg.norm(c - g) - r_obs))
+        return 1.0 / max(0.25, dist_to_robot + path_clear)
 
-        width = 0.0
-        if scenario.get("front1", None) is not None and scenario.get("front2", None) is not None:
-            width = float(np.linalg.norm(np.asarray(scenario["front2"]) - np.asarray(scenario["front1"])))
-        width_factor = float(np.clip(width / max(2.0 * self.robot_radius, 1e-3), 0.5, 2.0))
-
-        score = float(dist_factor * align * (0.25 + 0.75 * path_factor) * width_factor)
-        p_i = float(np.clip(self.belief_prob_scale * score, self.belief_prob_min, self.belief_prob_max))
-        return score, p_i
-
-    def _select_hypothesis_scenarios(self, x0, goal_xy, occ_scenarios, v_ref_nom, nominal_points):
-        scored = []
-        for sc in occ_scenarios:
-            risk_regions = self._risk_regions_from_scenario(sc, v_ref_nom, nominal_points)
-            score, p_i = self._scenario_score(x0, goal_xy, sc, risk_regions, nominal_points)
-            scored.append({
+    def _select_hypothesis_scenarios(self, x0, goal_xy, occ_scenarios, v_plan, nominal_points):
+        scored = [
+            {
                 "scenario": sc,
-                "risk_regions": risk_regions,
-                "score": float(score),
-                "p": float(p_i),
-            })
-        scored = [s for s in scored if s["score"] >= float(self.hypothesis_score_min)]
+                "score": float(self._scenario_score(x0, goal_xy, sc, nominal_points)),
+            }
+            for sc in occ_scenarios
+        ]
+        if len(scored) == 0:
+            return []
+        score_ref = float(np.mean([item["score"] for item in scored]))
         scored.sort(key=lambda x: x["score"], reverse=True)
-        return scored[: int(self.n_occ_hypotheses)]
+        selected = scored[: int(self.n_occ_hypotheses)]
+        if len(selected) == 0:
+            return []
+
+        out = []
+        for item in selected:
+            sc = item["scenario"]
+            out.append(
+                {
+                    "scenario": sc,
+                    "risk_regions": self._risk_regions_from_scenario(sc, v_plan, nominal_points),
+                    "score": float(item["score"]),
+                    "p": float(item["score"] / (item["score"] + score_ref + 1e-9)),
+                }
+            )
+        return out
 
     @staticmethod
     def _branch_masks(k):
@@ -600,6 +409,10 @@ class ControlTreeMPC(MPCCommonUtils):
                 J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
                 J += self.wvel * ((self._stage_speed_ca(Xs, Us, k) - p_vref) ** 2)
                 J += self.wtrack_shared * ca.sumsqr(Xs[0:2, k] - p_guidance)
+                if self.model == "DoubleIntegrator2D":
+                    g.append(ca.vertcat(ca.sumsqr(Xs[2:4, k + 1]) - self.v_state_bound * self.v_state_bound))
+                    lbg.append(-np.inf)
+                    ubg.append(0.0)
 
             J += 0.5 * self.wtrack_shared * ca.sumsqr(Xs[0:2, L] - p_guidance)
 
@@ -614,6 +427,17 @@ class ControlTreeMPC(MPCCommonUtils):
                     g.append(ca.vertcat(expr))
                     lbg.append(-np.inf)
                     ubg.append(0.0)
+
+            # Robust hidden-risk constraints on the shared trunk: the common
+            # prefix must remain safe for every active branch hypothesis.
+            for k in range(1, L + 1):
+                for b in range(B):
+                    for (cx, cy, rr, active) in risk_params[b]:
+                        safe2 = (self.robot_radius + rr + self.margin_risk) ** 2
+                        expr = active * (safe2 - ((Xs[0, k] - cx) ** 2 + (Xs[1, k] - cy) ** 2))
+                        g.append(ca.vertcat(expr))
+                        lbg.append(-np.inf)
+                        ubg.append(0.0)
 
             # Branch tails.
             for b in range(B):
@@ -636,6 +460,10 @@ class ControlTreeMPC(MPCCommonUtils):
                     J += weight * self.wacc * (dv * dv + self.lambda_w * dw * dw)
                     J += weight * self.wvel * ((self._stage_speed_ca(Xt[b], Ut[b], k) - p_vref) ** 2)
                     J += weight * self.wtrack_tail * ca.sumsqr(Xt[b][0:2, k] - p_branch_targets[b])
+                    if self.model == "DoubleIntegrator2D":
+                        g.append(ca.vertcat(ca.sumsqr(Xt[b][2:4, k + 1]) - self.v_state_bound * self.v_state_bound))
+                        lbg.append(-np.inf)
+                        ubg.append(0.0)
 
                 J += weight * self.wgoal * ca.sumsqr(Xt[b][0:2, Nt] - p_goal)
 
@@ -651,7 +479,7 @@ class ControlTreeMPC(MPCCommonUtils):
                         lbg.append(-np.inf)
                         ubg.append(0.0)
 
-                # Branch-specific hidden risk regions apply to both shared trunk and tail.
+                # Branch-specific hidden risk regions remain enforced on branch tails.
                 for (cx, cy, rr, active) in risk_params[b]:
                     safe2 = (self.robot_radius + rr + self.margin_risk) ** 2
                     for k in range(1, Nt + 1):
@@ -822,6 +650,19 @@ class ControlTreeMPC(MPCCommonUtils):
             Ut.append(z[self._z_layout["Ut"][b][0] : self._z_layout["Ut"][b][1]].reshape((2, Nt), order="F"))
         return Xs, Us, Xt, Ut
 
+    def _joint_constraint_counts(self, n_visible_obs, n_risk_active_total, n_branches):
+        counts = {
+            "shared_visible": int(self.n_split) * int(n_visible_obs),
+            "shared_hidden_risk": int(self.n_split) * int(n_risk_active_total),
+            "tail_visible": int(self.tail_horizon) * int(n_branches) * int(n_visible_obs),
+            "tail_hidden_risk": int(self.tail_horizon) * int(n_risk_active_total),
+        }
+        counts["speed_state_bound"] = 0
+        if self.model == "DoubleIntegrator2D":
+            counts["speed_state_bound"] = int(self.n_split + self.tail_horizon * int(n_branches))
+        counts["total"] = int(sum(counts.values()))
+        return counts
+
     def _initial_joint_guess(self, x0, guidance_xy, branch_targets, goal_xy, v_ref_nom):
         if self._z_prev is not None and len(self._z_prev) == len(self._persistent_lbx):
             return np.asarray(self._z_prev, dtype=float).reshape(-1)
@@ -838,7 +679,7 @@ class ControlTreeMPC(MPCCommonUtils):
         x = np.asarray(x0, dtype=float).reshape(nx,)
         Xs[:, 0] = x
         for k in range(L):
-            u_cmd = self._guidance_input_np(x, guidance_xy, v_ref_nom, k_heading=self.nominal_k_heading)
+            u_cmd = self._guidance_input_np(x, guidance_xy, v_ref_nom)
             Us[:, k] = u_cmd
             x = self._discrete_np(x, u_cmd)
             Xs[:, k + 1] = x
@@ -848,7 +689,7 @@ class ControlTreeMPC(MPCCommonUtils):
             Xt[b][:, 0] = x
             target_xy = goal_xy if b >= len(branch_targets) else np.asarray(branch_targets[b], dtype=float).reshape(2,)
             for k in range(Nt):
-                u_cmd = self._guidance_input_np(x, target_xy, v_ref_nom, k_heading=self.nominal_k_heading)
+                u_cmd = self._guidance_input_np(x, target_xy, v_ref_nom)
                 Ut[b][:, k] = u_cmd
                 x = self._discrete_np(x, u_cmd)
                 Xt[b][:, k + 1] = x
@@ -905,15 +746,21 @@ class ControlTreeMPC(MPCCommonUtils):
                     raw_status = str(stats.get("return_status", raw_status))
             except Exception:
                 pass
-            n_constraints = int((self.n_split + self.tail_horizon * self.max_branches) * n_vis_active)
-            n_constraints += int((self.n_split + self.tail_horizon) * n_risk_active_total)
+            n_constraints = self._joint_constraint_counts(
+                n_visible_obs=n_vis_active,
+                n_risk_active_total=n_risk_active_total,
+                n_branches=self.max_branches,
+            )["total"]
             return True, Xs, Us, Xt, Ut, raw_status, "", solve_ms, n_constraints
         except Exception as exc:
             solve_ms = (time.perf_counter() - t0) * 1000.0
             self._lam_x_prev = None
             self._lam_g_prev = None
-            n_constraints = int((self.n_split + self.tail_horizon * self.max_branches) * n_vis_active)
-            n_constraints += int((self.n_split + self.tail_horizon) * n_risk_active_total)
+            n_constraints = self._joint_constraint_counts(
+                n_visible_obs=n_vis_active,
+                n_risk_active_total=n_risk_active_total,
+                n_branches=self.max_branches,
+            )["total"]
             return False, None, None, None, None, "infeasible", str(exc), solve_ms, n_constraints
 
     def _solve_joint_opti(self, x0, goal_xy, guidance_xy, branch_targets, visible_obs, branches, v_ref_nom):
@@ -945,6 +792,8 @@ class ControlTreeMPC(MPCCommonUtils):
         if branch_probs.sum() <= 1e-9:
             branch_probs = np.zeros((B,), dtype=float)
             branch_probs[0] = 1.0
+        branch_regs = [list(branches[b].get("risk_regions", [])) for b in range(B)]
+        n_risk_active_total = int(sum(len(regs) for regs in branch_regs))
 
         J = 0
         opti.subject_to(Xs[:, 0] == x0_dm)
@@ -960,6 +809,8 @@ class ControlTreeMPC(MPCCommonUtils):
             J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
             J += self.wvel * ((self._stage_speed_ca(Xs, Us, k) - float(v_ref_nom)) ** 2)
             J += self.wtrack_shared * ca.sumsqr(Xs[0:2, k] - guidance_dm)
+            if self.model == "DoubleIntegrator2D":
+                opti.subject_to(ca.sumsqr(Xs[2:4, k + 1]) <= self.v_state_bound * self.v_state_bound)
 
         for k in range(1, L + 1):
             for obs in visible_obs:
@@ -968,6 +819,13 @@ class ControlTreeMPC(MPCCommonUtils):
                 dx = Xs[0, k] - float(c[0])
                 dy = Xs[1, k] - float(c[1])
                 opti.subject_to(dx * dx + dy * dy >= clear * clear)
+            # The shared trunk must be safe for every active branch hypothesis.
+            for regs in branch_regs:
+                for center, rr in regs:
+                    clear = self.robot_radius + float(rr) + self.margin_risk
+                    dx = Xs[0, k] - float(center[0])
+                    dy = Xs[1, k] - float(center[1])
+                    opti.subject_to(dx * dx + dy * dy >= clear * clear)
 
         for b in range(B):
             weight = float(branch_probs[b]) + float(self.branch_zero_prob_reg)
@@ -984,9 +842,11 @@ class ControlTreeMPC(MPCCommonUtils):
                 J += weight * self.wacc * (dv * dv + self.lambda_w * dw * dw)
                 J += weight * self.wvel * ((self._stage_speed_ca(Xt[b], Ut[b], k) - float(v_ref_nom)) ** 2)
                 J += weight * self.wtrack_tail * ca.sumsqr(Xt[b][0:2, k] - branch_targets_dm[b])
+                if self.model == "DoubleIntegrator2D":
+                    opti.subject_to(ca.sumsqr(Xt[b][2:4, k + 1]) <= self.v_state_bound * self.v_state_bound)
             J += weight * self.wgoal * ca.sumsqr(Xt[b][0:2, Nt] - goal_dm)
 
-            regs = list(branches[b].get("risk_regions", []))
+            regs = branch_regs[b]
             for k in range(1, Nt + 1):
                 for obs in visible_obs:
                     c = self._predict_obs_center(obs, L + k)
@@ -1053,11 +913,20 @@ class ControlTreeMPC(MPCCommonUtils):
                 for ub in Ut
             ]
             raw_status = "optimal"
-            n_constraints = 0
+            n_constraints = self._joint_constraint_counts(
+                n_visible_obs=len(visible_obs),
+                n_risk_active_total=n_risk_active_total,
+                n_branches=B,
+            )["total"]
             return True, Xs_sol, Us_sol, Xt_sol, Ut_sol, raw_status, "", solve_ms, n_constraints
         except Exception as exc:
             solve_ms = (time.perf_counter() - t0) * 1000.0
-            return False, None, None, None, None, "infeasible", str(exc), solve_ms, 0
+            n_constraints = self._joint_constraint_counts(
+                n_visible_obs=len(visible_obs),
+                n_risk_active_total=n_risk_active_total,
+                n_branches=B,
+            )["total"]
+            return False, None, None, None, None, "infeasible", str(exc), solve_ms, n_constraints
 
     def _solve_joint(self, x0, goal_xy, guidance_xy, branch_targets, visible_obs, branches, v_ref_nom):
         if self.solve_backend == "joint_persistent":
@@ -1122,6 +991,9 @@ class ControlTreeMPC(MPCCommonUtils):
         n_total = 0
         min_vis = np.inf
         min_risk = np.inf
+        shared_regs = []
+        for br in branches:
+            shared_regs.extend(list(br.get("risk_regions", [])))
 
         Xs = np.asarray(Xs, dtype=float)
         for k in range(1, int(self.n_split) + 1):
@@ -1133,6 +1005,11 @@ class ControlTreeMPC(MPCCommonUtils):
                 m = float(np.linalg.norm(pos - c) - clear)
                 step_min = min(step_min, m)
                 min_vis = min(min_vis, m)
+            for center, rr in shared_regs:
+                clear = self.robot_radius + float(rr) + self.margin_risk
+                m = float(np.linalg.norm(pos - center) - clear)
+                step_min = min(step_min, m)
+                min_risk = min(min_risk, m)
             if np.isinf(step_min) or step_min >= -tol:
                 n_ok += 1
             n_total += 1
@@ -1175,8 +1052,8 @@ class ControlTreeMPC(MPCCommonUtils):
         u_ref = np.asarray(control_ref.get("u_ref", np.zeros((2, 1))), dtype=float).reshape(-1, 1)
         u_ref = self._clip_input(u_ref)
         self.last_u_ref = u_ref
-        v_ref_nom = self._nominal_speed_reference(x0, u_ref, self.v_ref_default)
         goal_xy = self._goal_xy(x0, control_ref.get("goal", None))
+        v_plan = float(self.v_des)
 
         visible_obs, occ_scenarios = self._occ_utils._filter_visible_and_build_occ(
             np.asarray(robot_state, dtype=float).reshape(-1, 1),
@@ -1185,16 +1062,13 @@ class ControlTreeMPC(MPCCommonUtils):
         visible_obs = self._nearest_visible_obs(visible_obs, x0)
         self.occlusion_scenarios = list(occ_scenarios)
 
-        guidance_xy, guidance_meta = self._select_shared_guidance(x0, goal_xy, visible_obs)
-        nominal_points = self._nominal_rollout_positions(x0, guidance_xy, v_ref_nom)
-        selected_scenarios = self._select_hypothesis_scenarios(x0, goal_xy, occ_scenarios, v_ref_nom, nominal_points)
+        guidance_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
+        guidance_meta = {"guidance_source": "goal"}
+        nominal_points = self._nominal_rollout_positions(x0, goal_xy, v_plan)
+        selected_scenarios = self._select_hypothesis_scenarios(x0, goal_xy, occ_scenarios, v_plan, nominal_points)
         branches = self._build_branch_hypotheses(selected_scenarios)
-        branch_targets = []
-        branch_target_meta = []
-        for br in branches:
-            target_xy, meta = self._select_branch_target(x0, goal_xy, visible_obs, br.get("risk_regions", []))
-            branch_targets.append(np.asarray(target_xy, dtype=float).reshape(2,))
-            branch_target_meta.append(dict(meta))
+        branch_targets = [np.asarray(goal_xy, dtype=float).reshape(2,) for _ in branches]
+        branch_target_meta = [{"target_source": "goal"} for _ in branches]
 
         ok, Xs, Us, Xt, Ut, raw_status, ex, solve_ms, ncons = self._solve_joint(
             x0=x0,
@@ -1203,7 +1077,7 @@ class ControlTreeMPC(MPCCommonUtils):
             branch_targets=branch_targets,
             visible_obs=visible_obs,
             branches=branches,
-            v_ref_nom=v_ref_nom,
+            v_ref_nom=v_plan,
         )
 
         self.last_qp_solve_time_ms = float(solve_ms)
@@ -1244,6 +1118,8 @@ class ControlTreeMPC(MPCCommonUtils):
                 "shared_prefix_length": int(self.n_split),
                 "belief_scores": [float(s["score"]) for s in selected_scenarios],
                 "belief_state": [float(s["p"]) for s in selected_scenarios],
+                "effective_v_ref": float(v_plan),
+                "speed_cost_mode": "speed_norm",
                 "raw_solver_status": self.last_qp_status_raw,
                 "num_constraints": int(self.last_num_constraints),
             }
@@ -1255,10 +1131,10 @@ class ControlTreeMPC(MPCCommonUtils):
         self.status = "optimal"
         self.last_intervention = "control_tree_mpc"
 
-        shared_cost = self._shared_cost_numpy(Xs, Us, guidance_xy, v_ref_nom)
+        shared_cost = self._shared_cost_numpy(Xs, Us, guidance_xy, v_plan)
         prev_u_tail = np.asarray(Us[:, int(self.n_split) - 1], dtype=float).reshape(2,)
         branch_tail_costs = [
-            self._tail_cost_numpy(Xt[b], Ut[b], branch_targets[b], goal_xy, v_ref_nom, prev_u_tail)
+            self._tail_cost_numpy(Xt[b], Ut[b], branch_targets[b], goal_xy, v_plan, prev_u_tail)
             for b in range(len(branches))
         ]
         explore_cost = float(shared_cost + sum(float(branch_probs[b]) * float(branch_tail_costs[b]) for b in range(len(branches))))
@@ -1291,7 +1167,8 @@ class ControlTreeMPC(MPCCommonUtils):
             "guidance_xy": [float(guidance_xy[0]), float(guidance_xy[1])],
             "goal_xy": [float(goal_xy[0]), float(goal_xy[1])],
             "shared_prefix_length": int(self.n_split),
-            "effective_v_ref": float(v_ref_nom),
+            "effective_v_ref": float(v_plan),
+            "speed_cost_mode": "speed_norm",
             "u_ref_0": float(u_ref[0, 0]),
             "u_ref_1": float(u_ref[1, 0]),
             "u_cmd_0": float(u_cmd[0, 0]),
@@ -1308,8 +1185,7 @@ class ControlTreeMPC(MPCCommonUtils):
             "explore_feasible": True,
             "fallback_feasible": True,
             "occlusion_risk_score": float(sum(s["score"] for s in selected_scenarios)),
-            "explore_speed_cap": float(v_ref_nom),
-            "fallback_speed_cap": float(v_ref_nom),
+            "speed_state_bound": float(self.v_state_bound),
             "branch_switch_count": 0,
         }
         return u_cmd
