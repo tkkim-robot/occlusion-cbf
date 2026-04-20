@@ -17,27 +17,38 @@ except Exception:
 
 class ControlTreeMPC(MPCCommonUtils):
     """
-    Literature-like, framework-adapted Control-Tree MPC baseline.
+    Centralized, ADMM-free Control-Tree MPC adaptation inspired by ICRA 2021,
+    "Control-Tree Optimization: an approach to MPC under discrete Partial Observability".
 
-    This controller replaces the earlier gap-branch baseline with an explicit
-    hypothesis tree that is closer in spirit to Phiquepal & Toussaint (ICRA 2021):
-      - a shared control trunk,
-      - multiple branch tails,
-      - belief-weighted branch costs,
-      - robust trunk safety against all active hypotheses.
+    Implemented here from the ICRA 2021 control-tree method:
+      - an explicit control-tree with one shared trunk and multiple branch tails,
+      - non-anticipativity over the control horizon by optimizing one common
+        prefix that is shared by every branch,
+      - belief-weighted branch costs so more likely hypotheses affect the
+        objective more strongly,
+      - branch-specific hidden-risk constraints after the split,
+      - robust shared-trunk safety against the active constraints of all branch
+        hypotheses, consistent with the paper's common-trunk robustness idea,
+      - receding-horizon execution where only the first action from the shared
+        trunk is applied each MPC cycle,
+      - branch differentiation through hypothesis-specific risk constraints while
+        the global goal remains shared.
 
-    Benchmark adaptation choices:
-      - Discrete hypotheses are built from the top-K occlusion scenarios rather than
-        from a dedicated perception classifier over symbolic states.
-      - Each selected occlusion scenario contributes one binary latent variable:
-        hidden agent present / absent. Branches enumerate all binary combinations.
-      - Branch-specific hidden-agent risk is encoded with simple tangent-ray risk
-        regions, not the original KOMO / distributed ADMM stack.
-      - The optimization is solved as one joint nonlinear program with an explicit
-        shared trunk. This preserves the control-tree structure without requiring
-        the original C++ stack.
-
-    This is still an adaptation, not a claim of exact paper reproduction.
+    Not implemented paper-faithfully here:
+      - the original distributed augmented Lagrangian / ADMM solver, consensus
+        updates, dual updates, or parallel branch subproblem optimization,
+      - the paper's original discrete symbolic-state construction and belief
+        estimation pipeline; here hypotheses come from ranked occlusion
+        scenarios and binary hidden-agent present/absent combinations,
+      - the paper's exact dynamics, experiment setups, and cost/constraint
+        models; this repo uses crowd-navigation robot models and repo-specific
+        tuning,
+      - an exact state-conditioned world model on each branch; hidden-agent
+        effects are approximated with tangent-ray risk regions derived from
+        occlusions,
+      - an exact reproduction claim: this file is a framework-adapted,
+        centralized surrogate that preserves the paper's main control-tree
+        semantics but not the full original implementation stack.
     """
 
     def __init__(self, robot, robot_spec, num_obs=30):
