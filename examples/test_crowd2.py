@@ -61,9 +61,21 @@ ROUTE_HIDDEN_ATTEMPTS = 36
 ROUTE_EXTRA_HIDDEN_ATTEMPTS = 24
 ROUTE_BG_BATCH_LIMIT = 12
 DEFAULT_FORCED_EVENTS = 6
-DEFAULT_FORCED_HIDDEN_SPEED = 0.6
+LEGACY_FORCED_HIDDEN_SPEED = 0.6
+DEFAULT_FORCED_HIDDEN_SPEED = 1.0
 DEFAULT_FORCED_OCCLUDER_RADIUS_MIN = 0.8
 DEFAULT_FORCED_OCCLUDER_RADIUS_MAX = 1.0
+LEGACY_ROUTE_DYN_SPEED_MAX = 0.45
+SMALL_DYN_SPEED_MIN = 0.3
+SMALL_DYN_SPEED_MAX = 1.0
+
+
+def _sample_small_dyn_speed(rng, speed_max=SMALL_DYN_SPEED_MAX, speed_min=SMALL_DYN_SPEED_MIN):
+    lo = float(max(0.0, speed_min))
+    hi = float(max(lo, speed_max))
+    if hi <= lo + 1e-12:
+        return hi
+    return float(rng.uniform(lo, hi))
 
 
 def _route_xy():
@@ -249,6 +261,7 @@ def _sample_hidden_for_event(
     lateral,
     existing_rows,
     forced_hidden_speed,
+    rand_obs_setting,
     forced_validate_occlusion,
     forced_require_corridor_conflict,
     attempts=ROUTE_HIDDEN_ATTEMPTS,
@@ -278,7 +291,13 @@ def _sample_hidden_for_event(
         vel_dir = crowd1._safe_normalize(target_xy - hidden_xy)
         if vel_dir is None:
             continue
-        hidden_speed = float(forced_hidden_speed) * float(rng.uniform(0.9, 1.05))
+        hidden_speed = crowd1._sample_hidden_speed_for_setting(
+            rng,
+            forced_hidden_speed=forced_hidden_speed,
+            rand_obs_setting=rand_obs_setting,
+            legacy_low=0.9,
+            legacy_high=1.05,
+        )
         hidden_vel = hidden_speed * vel_dir
         initially_occluded = crowd1._disc_occludes_target(
             observer_xy,
@@ -343,16 +362,32 @@ def _event_segment_quotas(n_events):
     return quotas
 
 
-def _build_route_random_scenario(*, case_seed, n_rand, rand_obs, static_occluders):
+def _resolve_forced_hidden_speed(forced_hidden_speed, rand_obs_setting):
+    if forced_hidden_speed is not None:
+        return float(forced_hidden_speed)
+    setting = crowd1._normalize_rand_obs_setting(rand_obs_setting)
+    if setting == crowd1.LEGACY_RAND_OBS_SETTING:
+        return float(LEGACY_FORCED_HIDDEN_SPEED)
+    return float(DEFAULT_FORCED_HIDDEN_SPEED)
+
+
+def _build_route_random_scenario(*, case_seed, n_rand, rand_obs, static_occluders, rand_obs_setting):
+    rand_obs_setting = crowd1._normalize_rand_obs_setting(rand_obs_setting)
     rng = np.random.default_rng(int(case_seed))
     existing_rows = []
     rows = []
     meta = []
     batch_seed = int(case_seed)
+    v_obs_max, v_obs_min = crowd1._rand_obs_speed_window(
+        static_occluders=static_occluders,
+        rand_obs_setting=rand_obs_setting,
+        legacy_speed_max=LEGACY_ROUTE_DYN_SPEED_MAX,
+    )
     while len(rows) < int(n_rand):
         extra_rows, extra_meta = crowd1.LocalTrackingControllerDyn_OCC.make_random_obstacles7(
             n_rand=max(8, 4 * max(1, int(n_rand) - len(rows))),
-            v_obs_max=(0.0 if bool(static_occluders) else 0.45),
+            v_obs_max=v_obs_max,
+            v_obs_min=v_obs_min,
             x_range=(1.0, ENV_WIDTH - 1.0),
             y_spawn_range=(1.0, ENV_HEIGHT - 1.0),
             r_range=(0.28, 0.42),
@@ -372,7 +407,7 @@ def _build_route_random_scenario(*, case_seed, n_rand, rand_obs, static_occluder
                 row8 = np.hstack((row, [0.0]))
             else:
                 m = dict(m)
-                m["v_max"] = float(min(m.get("v_max", 0.45), 0.45))
+                m["v_max"] = float(min(m.get("v_max", v_obs_max), v_obs_max))
                 row, m = _apply_outer_flow_bounds(row, m)
                 row8 = np.hstack((row, [1.0]))
             rows.append(row8)
@@ -385,6 +420,7 @@ def _build_route_random_scenario(*, case_seed, n_rand, rand_obs, static_occluder
 
     scenario_diag = {
         "crowd_mode": "random",
+        "rand_obs_setting": str(rand_obs_setting),
         "n_forced_events": 0,
         "n_forced_hidden_total": 0,
         "n_forced_extra_hidden": 0,
@@ -413,7 +449,9 @@ def _build_route_forced_emergence_scenario(
     forced_occluder_radius_max,
     forced_validate_occlusion,
     forced_require_corridor_conflict,
+    rand_obs_setting,
 ):
+    rand_obs_setting = crowd1._normalize_rand_obs_setting(rand_obs_setting)
     rng = np.random.default_rng(int(case_seed))
     forced_rows = []
     forced_meta = []
@@ -461,6 +499,7 @@ def _build_route_forced_emergence_scenario(
                                     lateral=seg["lateral"],
                                     existing_rows=forced_rows,
                                     forced_hidden_speed=forced_hidden_speed,
+                                    rand_obs_setting=rand_obs_setting,
                                     forced_validate_occlusion=forced_validate_occlusion,
                                     forced_require_corridor_conflict=forced_require_corridor_conflict,
                                     attempts=ROUTE_HIDDEN_ATTEMPTS,
@@ -476,6 +515,7 @@ def _build_route_forced_emergence_scenario(
                                         lateral=seg["lateral"],
                                         existing_rows=forced_rows,
                                         forced_hidden_speed=forced_hidden_speed,
+                                        rand_obs_setting=rand_obs_setting,
                                         forced_validate_occlusion=forced_validate_occlusion,
                                         forced_require_corridor_conflict=False,
                                         attempts=max(8, ROUTE_HIDDEN_ATTEMPTS // 2),
@@ -636,6 +676,7 @@ def _build_route_forced_emergence_scenario(
                     lateral=seg["lateral"],
                     existing_rows=[row for i, row in enumerate(forced_rows) if i != int(meta["occluder_index"])],
                     forced_hidden_speed=forced_hidden_speed,
+                    rand_obs_setting=rand_obs_setting,
                     forced_validate_occlusion=forced_validate_occlusion,
                     forced_require_corridor_conflict=False,
                     attempts=ROUTE_EXTRA_HIDDEN_ATTEMPTS,
@@ -658,6 +699,11 @@ def _build_route_forced_emergence_scenario(
     bg_rows_8 = np.empty((0, 8), dtype=float)
     bg_meta = []
     if bg_target > 0:
+        bg_v_obs_max, bg_v_obs_min = crowd1._rand_obs_speed_window(
+            static_occluders=static_occluders,
+            rand_obs_setting=rand_obs_setting,
+            legacy_speed_max=LEGACY_ROUTE_DYN_SPEED_MAX,
+        )
         keep_rows = []
         keep_meta = []
         batch_id = 0
@@ -665,7 +711,8 @@ def _build_route_forced_emergence_scenario(
             sample_target = max((bg_target - len(keep_rows)) * 3, bg_target)
             extra_rows, extra_meta = crowd1.LocalTrackingControllerDyn_OCC.make_random_obstacles7(
                 n_rand=int(sample_target),
-                v_obs_max=(0.0 if bool(static_occluders) else 0.45),
+                v_obs_max=bg_v_obs_max,
+                v_obs_min=bg_v_obs_min,
                 x_range=(1.0, ENV_WIDTH - 1.0),
                 y_spawn_range=(1.0, ENV_HEIGHT - 1.0),
                 r_range=(0.28, 0.40),
@@ -719,6 +766,7 @@ def _build_route_forced_emergence_scenario(
 
     scenario_diag = {
         "crowd_mode": "forced_emergence",
+        "rand_obs_setting": str(rand_obs_setting),
         "n_forced_events": int(len(forced_event_meta)),
         "n_forced_hidden_total": int(sum(len(meta.get("hidden_indices", [meta["hidden_index"]])) for meta in forced_event_meta)),
         "n_forced_extra_hidden": int(sum(int(meta.get("extra_hidden_count", 0) or 0) for meta in forced_event_meta)),
@@ -766,11 +814,12 @@ def run_crowd_scenario(
     crowd_mode="forced_emergence",
     forced_events=DEFAULT_FORCED_EVENTS,
     forced_bg_rand=None,
-    forced_hidden_speed=DEFAULT_FORCED_HIDDEN_SPEED,
+    forced_hidden_speed=None,
     forced_occluder_radius_min=DEFAULT_FORCED_OCCLUDER_RADIUS_MIN,
     forced_occluder_radius_max=DEFAULT_FORCED_OCCLUDER_RADIUS_MAX,
     forced_validate_occlusion=True,
     forced_require_corridor_conflict=True,
+    rand_obs_setting=crowd1.DEFAULT_RAND_OBS_SETTING,
     static_occluders=False,
     backup_cbf_overrides=None,
     robot_spec_overrides=None,
@@ -782,6 +831,8 @@ def run_crowd_scenario(
     mode = str(crowd_mode).strip().lower()
     if mode not in {"random", "forced_emergence"}:
         raise ValueError(f"Unsupported crowd_mode `{crowd_mode}`. Use `random` or `forced_emergence`.")
+    rand_obs_setting = crowd1._normalize_rand_obs_setting(rand_obs_setting)
+    forced_hidden_speed = _resolve_forced_hidden_speed(forced_hidden_speed, rand_obs_setting)
 
     if mode == "forced_emergence":
         known_obs, obs_meta, scenario_diag = _build_route_forced_emergence_scenario(
@@ -796,6 +847,7 @@ def run_crowd_scenario(
             forced_occluder_radius_max=forced_occluder_radius_max,
             forced_validate_occlusion=forced_validate_occlusion,
             forced_require_corridor_conflict=forced_require_corridor_conflict,
+            rand_obs_setting=rand_obs_setting,
         )
     else:
         known_obs, obs_meta, scenario_diag = _build_route_random_scenario(
@@ -803,6 +855,7 @@ def run_crowd_scenario(
             n_rand=n_rand,
             rand_obs=rand_obs,
             static_occluders=static_occluders,
+            rand_obs_setting=rand_obs_setting,
         )
 
     return crowd1.run_crowd_scenario(
@@ -893,9 +946,28 @@ def main():
     parser.add_argument("--no-rand-obs", action="store_true", help="Disable random moving obstacles.")
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
     parser.add_argument("--crowd-mode", type=str, default="forced_emergence", choices=["random", "forced_emergence"], help="Scenario generator mode.")
+    parser.add_argument(
+        "--rand-obs-setting",
+        type=str,
+        default=crowd1.DEFAULT_RAND_OBS_SETTING,
+        choices=[crowd1.LEGACY_RAND_OBS_SETTING, crowd1.CURRENT_RAND_OBS_SETTING],
+        help=(
+            "Random-obstacle generator preset. "
+            "`v1` reproduces the last committed fixed-speed route generator; "
+            "`v2` uses the current distributed-speed generator."
+        ),
+    )
     parser.add_argument("--forced-events", type=int, default=DEFAULT_FORCED_EVENTS, help="Number of occluder/hidden-agent events along the route.")
     parser.add_argument("--forced-bg-rand", type=int, default=None, help="Explicit background clutter count. Default leaves the remainder after hidden-event allocation.")
-    parser.add_argument("--forced-hidden-speed", type=float, default=DEFAULT_FORCED_HIDDEN_SPEED, help="Nominal hidden-agent speed magnitude.")
+    parser.add_argument(
+        "--forced-hidden-speed",
+        type=float,
+        default=None,
+        help=(
+            "Nominal hidden-agent speed magnitude. "
+            f"Default follows --rand-obs-setting: {LEGACY_FORCED_HIDDEN_SPEED} for v1, {DEFAULT_FORCED_HIDDEN_SPEED} for v2."
+        ),
+    )
     parser.add_argument("--forced-occluder-radius-min", type=float, default=DEFAULT_FORCED_OCCLUDER_RADIUS_MIN, help="Minimum occluder radius.")
     parser.add_argument("--forced-occluder-radius-max", type=float, default=DEFAULT_FORCED_OCCLUDER_RADIUS_MAX, help="Maximum occluder radius.")
     parser.add_argument("--forced-validate-occlusion", type=crowd1._str2bool, nargs="?", const=True, default=True, help="Require hidden agent to be initially occluded during generation.")
@@ -1077,6 +1149,7 @@ def main():
         oa_wmax=args.wmax,
         oa_dt=args.oa_dt,
         crowd_mode=args.crowd_mode,
+        rand_obs_setting=args.rand_obs_setting,
         forced_events=args.forced_events,
         forced_bg_rand=args.forced_bg_rand,
         forced_hidden_speed=args.forced_hidden_speed,

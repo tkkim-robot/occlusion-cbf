@@ -29,23 +29,29 @@ except Exception:
 
 class OACPMPC(MPCCommonUtils):
     """
-    Pure contingency-MPC baseline inspired by
+    Centralized contingency-MPC adaptation inspired by OACP,
     "Occlusion-Aware Contingency Safety-Critical Planning for Autonomous Driving".
 
-    This implementation intentionally departs from the earlier rollout-and-select
-    adaptation and instead solves one coupled nonlinear program with:
-      - an explicit shared prefix,
-      - explicit explore/fallback tails,
-      - non-anticipativity enforced through shared-prefix variables,
-      - route-aware progress / heading tracking costs,
-      - direct occlusion-risk constraints with soft slack,
-      - no stop-rescue fallback by default.
+    Implemented here from the OACP method:
+      - a two-branch contingency structure with explicit explore and fallback
+        trajectories,
+      - a shared initial prefix so both branches apply the same immediate
+        action,
+      - joint optimization of shared/explore/fallback trajectories every MPC
+        cycle,
+      - branch-specific occlusion-aware speed caps and route-tracking costs,
+      - visible-obstacle avoidance and occlusion-risk constraints with soft
+        slack,
+      - receding-horizon execution where the applied control always comes from
+        the shared prefix.
 
-    It is still not a paper-faithful ADMM / Bezier reproduction. However, unlike
-    the prior adaptation, the optimization structure now matches the intended
-    contingency-planning formulation much more closely: both branches are solved
-    jointly every cycle and the applied control always comes from the common
-    shared prefix.
+    Not implemented paper-faithfully here:
+      - the paper's SRQ occlusion-risk quantification and its exact dynamic
+        velocity-boundary equations,
+      - the paper's biconvex control-point NLP with explicit consensus,
+      - the consensus-ADMM solve procedure, including primal/dual updates and
+        residual-based termination, we instead solve the full coupled NLP directly with CasADi IPOPT,
+      - the dynamics are different
     """
 
     def __init__(self, robot, robot_spec, num_obs=30):

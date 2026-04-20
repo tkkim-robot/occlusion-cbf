@@ -1041,8 +1041,18 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             theta0 = float(np.arctan2(vy, vx)) if vmag > 1e-9 else float(self._rng.uniform(-np.pi, np.pi))
             self.obs_meta.append({'mode': 0, 'v_max': vmag, 'theta': theta0})
         
-    @staticmethod  
-    def make_random_obstacles7(n_rand, v_obs_max, x_range, y_spawn_range, r_range, y_bounds, seed=42, rand_obs=True):
+    @staticmethod
+    def make_random_obstacles7(
+        n_rand,
+        v_obs_max,
+        x_range,
+        y_spawn_range,
+        r_range,
+        y_bounds,
+        seed=42,
+        rand_obs=True,
+        v_obs_min=0.0,
+    ):
         if not rand_obs:
             return np.empty((0, 7), dtype=float) , []
         rng = np.random.default_rng(seed)
@@ -1050,6 +1060,8 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         y_min_spawn, y_max_spawn = y_spawn_range
         r_min, r_max = r_range
         y_min_g, y_max_g = y_bounds
+        v_obs_min = float(max(0.0, v_obs_min))
+        v_obs_max = float(max(0.0, v_obs_max))
 
         rows = []
         metas = []
@@ -1062,9 +1074,12 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 theta0 += np.pi
                 if theta0 > np.pi:
                     theta0 -= 2*np.pi
-            vx0, vy0 = v_obs_max*np.cos(theta0), v_obs_max*np.sin(theta0)
+            speed0 = v_obs_max
+            if v_obs_max > 1e-9 and v_obs_min < v_obs_max:
+                speed0 = float(rng.uniform(v_obs_min, v_obs_max))
+            vx0, vy0 = speed0*np.cos(theta0), speed0*np.sin(theta0)
             rows.append([x0, y0, r, vx0, vy0, y_min_g, y_max_g])
-            metas.append({'mode': 1, 'v_max': v_obs_max, 'theta': theta0})
+            metas.append({'mode': 1, 'v_max': speed0, 'theta': theta0})
         return np.array(rows, dtype=float), metas
     
     def step_dyn_obs(self):

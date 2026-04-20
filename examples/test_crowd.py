@@ -33,6 +33,59 @@ install_position_controller_shims()
 LocalTrackingControllerDyn_OCC = load_local_occ_controller("crowd")
 from safe_control.utils import env, plotting
 
+SMALL_DYN_SPEED_MIN = 0.3
+SMALL_DYN_SPEED_MAX = 1.0
+LEGACY_SMALL_DYN_SPEED_MAX = 0.5
+LEGACY_RAND_OBS_SETTING = "v1"
+CURRENT_RAND_OBS_SETTING = "v2"
+DEFAULT_RAND_OBS_SETTING = CURRENT_RAND_OBS_SETTING
+
+
+def _sample_small_dyn_speed(rng, speed_max=SMALL_DYN_SPEED_MAX, speed_min=SMALL_DYN_SPEED_MIN):
+    lo = float(max(0.0, speed_min))
+    hi = float(max(lo, speed_max))
+    if hi <= lo + 1e-12:
+        return hi
+    return float(rng.uniform(lo, hi))
+
+
+def _normalize_rand_obs_setting(rand_obs_setting):
+    setting = str(rand_obs_setting).strip().lower()
+    if setting not in {LEGACY_RAND_OBS_SETTING, CURRENT_RAND_OBS_SETTING}:
+        raise ValueError(
+            f"Unsupported rand_obs_setting `{rand_obs_setting}`. "
+            f"Use `{LEGACY_RAND_OBS_SETTING}` or `{CURRENT_RAND_OBS_SETTING}`."
+        )
+    return setting
+
+
+def _rand_obs_speed_window(*, static_occluders, rand_obs_setting, legacy_speed_max):
+    setting = _normalize_rand_obs_setting(rand_obs_setting)
+    if bool(static_occluders):
+        return 0.0, 0.0
+    if setting == LEGACY_RAND_OBS_SETTING:
+        vmax = float(max(0.0, legacy_speed_max))
+        return vmax, vmax
+    return float(SMALL_DYN_SPEED_MAX), float(SMALL_DYN_SPEED_MIN)
+
+
+def _sample_hidden_speed_for_setting(
+    rng,
+    *,
+    forced_hidden_speed,
+    rand_obs_setting,
+    legacy_low,
+    legacy_high,
+):
+    setting = _normalize_rand_obs_setting(rand_obs_setting)
+    speed_nominal = float(max(0.0, forced_hidden_speed))
+    if setting == LEGACY_RAND_OBS_SETTING:
+        return speed_nominal * float(rng.uniform(legacy_low, legacy_high))
+    return _sample_small_dyn_speed(
+        rng,
+        speed_max=min(SMALL_DYN_SPEED_MAX, speed_nominal),
+    )
+
 
 def _str2bool(value):
     if isinstance(value, bool):
@@ -370,13 +423,20 @@ def _simulate_forced_event_nominal(
     }
 
 
-def _build_random_crowd_scenario(*, case_seed, n_rand, rand_obs, static_occluders):
+def _build_random_crowd_scenario(*, case_seed, n_rand, rand_obs, static_occluders, rand_obs_setting):
+    rand_obs_setting = _normalize_rand_obs_setting(rand_obs_setting)
     known_obs = np.empty((0, 8), dtype=float)
     obs_meta = []
+    v_obs_max, v_obs_min = _rand_obs_speed_window(
+        static_occluders=static_occluders,
+        rand_obs_setting=rand_obs_setting,
+        legacy_speed_max=LEGACY_SMALL_DYN_SPEED_MAX,
+    )
 
     rand_rows, rand_meta = LocalTrackingControllerDyn_OCC.make_random_obstacles7(
         n_rand=int(n_rand),
-        v_obs_max=(0.0 if bool(static_occluders) else 0.5),
+        v_obs_max=v_obs_max,
+        v_obs_min=v_obs_min,
         x_range=(8.0, 30.0),
         y_spawn_range=(0.0, 15.0),
         r_range=(0.3, 0.4),
@@ -397,6 +457,7 @@ def _build_random_crowd_scenario(*, case_seed, n_rand, rand_obs, static_occluder
 
     scenario_diag = {
         "crowd_mode": "random",
+        "rand_obs_setting": str(rand_obs_setting),
         "n_forced_events": 0,
         "n_forced_hidden_total": 0,
         "n_forced_extra_hidden": 0,
@@ -426,7 +487,9 @@ def _build_forced_emergence_crowd_scenario(
     forced_occluder_radius_max,
     forced_validate_occlusion,
     forced_require_corridor_conflict,
+    rand_obs_setting,
 ):
+    rand_obs_setting = _normalize_rand_obs_setting(rand_obs_setting)
     rng = np.random.default_rng(int(case_seed))
     start_xy = np.asarray(waypoints[0][:2], dtype=float).reshape(2,)
     goal_xy = np.asarray(waypoints[-1][:2], dtype=float).reshape(2,)
@@ -481,7 +544,13 @@ def _build_forced_emergence_crowd_scenario(
             if vel_dir is None:
                 continue
 
-            hidden_speed = float(forced_hidden_speed) * float(rng.uniform(0.88, 1.0))
+            hidden_speed = _sample_hidden_speed_for_setting(
+                rng,
+                forced_hidden_speed=forced_hidden_speed,
+                rand_obs_setting=rand_obs_setting,
+                legacy_low=0.88,
+                legacy_high=1.0,
+            )
             hidden_vel = hidden_speed * vel_dir
 
             initially_occluded = _disc_occludes_target(
@@ -743,7 +812,13 @@ def _build_forced_emergence_crowd_scenario(
                         vel_dir = _safe_normalize(target_xy - hidden_xy)
                         if vel_dir is None:
                             continue
-                        hidden_speed = float(forced_hidden_speed) * float(rng.uniform(0.9, 1.0))
+                        hidden_speed = _sample_hidden_speed_for_setting(
+                            rng,
+                            forced_hidden_speed=forced_hidden_speed,
+                            rand_obs_setting=rand_obs_setting,
+                            legacy_low=0.9,
+                            legacy_high=1.0,
+                        )
                         hidden_vel = hidden_speed * vel_dir
                         extra_hidden = {
                             "row": np.array(
@@ -771,6 +846,11 @@ def _build_forced_emergence_crowd_scenario(
     bg_rows_8 = np.empty((0, 8), dtype=float)
     bg_meta = []
     if bg_target > 0:
+        bg_v_obs_max, bg_v_obs_min = _rand_obs_speed_window(
+            static_occluders=static_occluders,
+            rand_obs_setting=rand_obs_setting,
+            legacy_speed_max=LEGACY_SMALL_DYN_SPEED_MAX,
+        )
         keep_rows = []
         keep_meta = []
         batch_id = 0
@@ -778,7 +858,8 @@ def _build_forced_emergence_crowd_scenario(
             sample_target = max((bg_target - len(keep_rows)) * 4, bg_target)
             extra_rows, extra_meta = LocalTrackingControllerDyn_OCC.make_random_obstacles7(
                 n_rand=int(sample_target),
-                v_obs_max=(0.0 if bool(static_occluders) else 0.5),
+                v_obs_max=bg_v_obs_max,
+                v_obs_min=bg_v_obs_min,
                 x_range=(20.0, 30.0),
                 y_spawn_range=(1.0, 14.0),
                 r_range=(0.3, 0.4),
@@ -838,6 +919,7 @@ def _build_forced_emergence_crowd_scenario(
 
     scenario_diag = {
         "crowd_mode": "forced_emergence",
+        "rand_obs_setting": str(rand_obs_setting),
         "n_forced_events": int(len(forced_event_meta)),
         "n_forced_hidden_total": int(sum(len(meta.get("hidden_indices", [meta["hidden_index"]])) for meta in forced_event_meta)),
         "n_forced_extra_hidden": int(sum(int(meta.get("extra_hidden_count", 0) or 0) for meta in forced_event_meta)),
@@ -896,6 +978,7 @@ def _prepare_crowd_runtime(
     forced_occluder_radius_max=1.0,
     forced_validate_occlusion=True,
     forced_require_corridor_conflict=True,
+    rand_obs_setting=DEFAULT_RAND_OBS_SETTING,
     static_occluders=False,
     backup_cbf_overrides=None,
     robot_spec_overrides=None,
@@ -946,6 +1029,7 @@ def _prepare_crowd_runtime(
     crowd_mode = str(crowd_mode).strip().lower()
     if crowd_mode not in {"random", "forced_emergence"}:
         raise ValueError(f"Unsupported crowd_mode `{crowd_mode}`. Use `random` or `forced_emergence`.")
+    rand_obs_setting = _normalize_rand_obs_setting(rand_obs_setting)
 
     if known_obs_override is not None:
         known_obs = np.asarray(known_obs_override, dtype=float)
@@ -954,6 +1038,7 @@ def _prepare_crowd_runtime(
         obs_meta = [] if obs_meta_override is None else list(obs_meta_override)
         scenario_diag = {} if scenario_diag_override is None else dict(scenario_diag_override)
         scenario_diag.setdefault("crowd_mode", crowd_mode)
+        scenario_diag.setdefault("rand_obs_setting", rand_obs_setting)
     else:
         if crowd_mode == "forced_emergence":
             known_obs, obs_meta, scenario_diag = _build_forced_emergence_crowd_scenario(
@@ -969,6 +1054,7 @@ def _prepare_crowd_runtime(
                 forced_occluder_radius_max=forced_occluder_radius_max,
                 forced_validate_occlusion=forced_validate_occlusion,
                 forced_require_corridor_conflict=forced_require_corridor_conflict,
+                rand_obs_setting=rand_obs_setting,
             )
         else:
             known_obs, obs_meta, scenario_diag = _build_random_crowd_scenario(
@@ -976,6 +1062,7 @@ def _prepare_crowd_runtime(
                 n_rand=n_rand,
                 rand_obs=rand_obs,
                 static_occluders=static_occluders,
+                rand_obs_setting=rand_obs_setting,
             )
 
     env_width = float(24.0 if env_width_override is None else env_width_override)
@@ -998,7 +1085,7 @@ def _prepare_crowd_runtime(
     if model == "DoubleIntegrator2D":
         di_backup_cfg = {
             "T_horizon": 0.5,
-            "vref_scenario_softmax_kappa": 2.0,
+            "vref_scenario_softmax_kappa": 10.0,
             "rho_T": "auto",
         }
         di_backup_cfg.update(backup_cbf_overrides)
@@ -1228,6 +1315,7 @@ def run_crowd_scenario(
     forced_occluder_radius_max=1.0,
     forced_validate_occlusion=True,
     forced_require_corridor_conflict=True,
+    rand_obs_setting=DEFAULT_RAND_OBS_SETTING,
     static_occluders=False,
     backup_cbf_overrides=None,
     robot_spec_overrides=None,
@@ -1280,6 +1368,7 @@ def run_crowd_scenario(
         forced_occluder_radius_max=forced_occluder_radius_max,
         forced_validate_occlusion=forced_validate_occlusion,
         forced_require_corridor_conflict=forced_require_corridor_conflict,
+        rand_obs_setting=rand_obs_setting,
         static_occluders=static_occluders,
         backup_cbf_overrides=backup_cbf_overrides,
         robot_spec_overrides=robot_spec_overrides,
@@ -1385,6 +1474,7 @@ def run_crowd_scenario(
     terminal_slack_active_steps = 0
     total_steps = 0
     nominal_speed = 0.8
+    final_controller_profile = None
 
     forced_event_meta = []
     reveal_steps = []
@@ -1450,6 +1540,7 @@ def run_crowd_scenario(
         profile = getattr(pos_controller, "last_profile", None) if pos_controller is not None else None
         step_ms = None
         if isinstance(profile, dict):
+            final_controller_profile = dict(profile)
             step_ms = profile.get("total_ms", profile.get("solve_ms", None))
             ff = profile.get("feasible_horizon_fraction", None)
             mr = profile.get("min_risk_margin", None)
@@ -1658,6 +1749,7 @@ def run_crowd_scenario(
         "intervention_active_steps": int(intervention_active_steps),
         "intervention_active_ratio": float(intervention_active_ratio),
         "selected_branch_counts": selected_branch_counts,
+        "final_controller_profile": final_controller_profile,
         "deadlock_detected": bool(deadlock_detected),
         "crowd_mode": str(scenario_diag.get("crowd_mode", crowd_mode)),
         "n_forced_events": int(scenario_diag.get("n_forced_events", 0) or 0),
@@ -1725,6 +1817,17 @@ def main():
         default="random",
         choices=["random", "forced_emergence"],
         help="Crowd scenario generator mode.",
+    )
+    parser.add_argument(
+        "--rand-obs-setting",
+        type=str,
+        default=DEFAULT_RAND_OBS_SETTING,
+        choices=[LEGACY_RAND_OBS_SETTING, CURRENT_RAND_OBS_SETTING],
+        help=(
+            "Random-obstacle generator preset. "
+            "`v1` reproduces the last committed fixed-speed crowd generator; "
+            "`v2` uses the current distributed-speed generator."
+        ),
     )
     parser.add_argument(
         "--forced-events",
@@ -2094,6 +2197,7 @@ def main():
         oa_wmax=args.wmax,
         oa_dt=args.oa_dt,
         crowd_mode=args.crowd_mode,
+        rand_obs_setting=args.rand_obs_setting,
         forced_events=args.forced_events,
         forced_bg_rand=args.forced_bg_rand,
         forced_hidden_speed=args.forced_hidden_speed,

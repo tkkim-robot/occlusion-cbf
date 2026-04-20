@@ -63,6 +63,25 @@ if _JAX_AVAILABLE:
         weighted = jnp.sum(weights[:, None] * targets, axis=0)
         return jnp.where(z_sum > 0.0, weighted, jnp.zeros((2,), dtype=targets.dtype))
 
+    def _jax_occ_scenario_threat_scores(h_valid, valid_bool, barrier_kappa):
+        barrier_kappa = jnp.maximum(jnp.asarray(barrier_kappa, dtype=h_valid.dtype), 1e-6)
+        max_h = jnp.max(h_valid, axis=1)
+        finite_row = jnp.isfinite(max_h)
+        max_h_safe = jnp.where(finite_row, max_h, 0.0)
+        z = jnp.where(
+            valid_bool,
+            jnp.exp(barrier_kappa * (h_valid - max_h_safe[:, None])),
+            0.0,
+        )
+        Z = jnp.sum(z, axis=1)
+        Z_safe = jnp.maximum(Z, 1e-12)
+        K_count = jnp.sum(valid_bool.astype(h_valid.dtype), axis=1)
+        K_safe = jnp.maximum(K_count, 1.0)
+        h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)) / barrier_kappa
+        scenario_present = jnp.any(valid_bool, axis=1)
+        threat = -h_tilde
+        return jnp.where(jnp.logical_and(scenario_present, finite_row), threat, -jnp.inf)
+
     def _jax_occ_vref_from_pos_strict(
         p,
         A_pad,
@@ -75,13 +94,14 @@ if _JAX_AVAILABLE:
         front_mode_los,
         tau,
         radius,
+        barrier_kappa,
         scenario_kappa,
     ):
         """
-        Strict-active occlusion v_ref (legacy DI behavior):
+        Strict-active occlusion v_ref:
         - Per scenario: average active facets (h_k >= 0)
         - If no active facet: use argmax(h_k)
-        - Then urgency-weight per-scenario v_target using max(h_k)
+        - Then threat-weight per-scenario v_target using -h_s^C
         """
         h = (
             jnp.einsum("skd,d->sk", A_pad, p)
@@ -112,7 +132,7 @@ if _JAX_AVAILABLE:
         scenario_present = jnp.any(valid_bool, axis=1)
         use_target = jnp.logical_and(scenario_present, norm > 1e-9)
         targets = jnp.where(use_target[:, None], direction * v_adv_vec[:, None], 0.0)
-        scores = jnp.max(h_valid, axis=1)
+        scores = _jax_occ_scenario_threat_scores(h_valid, valid_bool, barrier_kappa)
         return _jax_occ_weighted_scenario_average(
             targets,
             scores,
@@ -132,6 +152,7 @@ if _JAX_AVAILABLE:
         front_mode_los,
         tau,
         radius,
+        barrier_kappa,
         scenario_kappa,
     ):
         """Vectorized occlusion velocity reference from position only."""
@@ -168,7 +189,7 @@ if _JAX_AVAILABLE:
         scenario_present = jnp.any(valid_bool, axis=1)
         use_target = jnp.logical_and(scenario_present, norm > 1e-9)
         targets = jnp.where(use_target[:, None], direction * v_adv_vec[:, None], 0.0)
-        scores = jnp.max(h_valid, axis=1)
+        scores = _jax_occ_scenario_threat_scores(h_valid, valid_bool, barrier_kappa)
         return _jax_occ_weighted_scenario_average(
             targets,
             scores,
@@ -197,13 +218,14 @@ if _JAX_AVAILABLE:
         a_lim,
         v_max,
         radius,
+        barrier_kappa,
         scenario_kappa,
     ):
         v = x[2:4]
         v_ref = _jax_occ_vref_from_pos_strict(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau, radius, scenario_kappa
+            tau, radius, barrier_kappa, scenario_kappa
         )
         e = v - v_ref
         u_unsat = -Kp * e - k_d * v
@@ -232,6 +254,7 @@ if _JAX_AVAILABLE:
         a_lim,
         v_max,
         radius,
+        barrier_kappa,
         scenario_kappa,
         eps_fd,
     ):
@@ -239,7 +262,7 @@ if _JAX_AVAILABLE:
         Jp = _jax_occ_vref_pos_jac_strict(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau, radius, scenario_kappa
+            tau, radius, barrier_kappa, scenario_kappa
         )
 
         Bv = -(Kp + k_d) * jnp.eye(2, dtype=x.dtype)
@@ -267,6 +290,7 @@ if _JAX_AVAILABLE:
         a_lim,
         v_max,
         radius,
+        barrier_kappa,
         scenario_kappa,
         eps_fd,
     ):
@@ -283,22 +307,22 @@ if _JAX_AVAILABLE:
             k1 = _jax_di_f_cl(
                 x, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                t, Kp, k_d, a_lim, v_max, radius, scenario_kappa
+                t, Kp, k_d, a_lim, v_max, radius, barrier_kappa, scenario_kappa
             )
             k2 = _jax_di_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa
+                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, barrier_kappa, scenario_kappa
             )
             k3 = _jax_di_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa
+                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, barrier_kappa, scenario_kappa
             )
             k4 = _jax_di_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                t + dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa
+                t + dt, Kp, k_d, a_lim, v_max, radius, barrier_kappa, scenario_kappa
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -306,7 +330,7 @@ if _JAX_AVAILABLE:
             A_mid = _jax_di_F_cl_jac(
                 x_mid, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, scenario_kappa, eps_fd
+                t + 0.5 * dt, Kp, k_d, a_lim, v_max, radius, barrier_kappa, scenario_kappa, eps_fd
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -323,7 +347,7 @@ if _JAX_AVAILABLE:
         f_last = _jax_di_f_cl(
             x_final, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            t_last, Kp, k_d, a_lim, v_max, radius, scenario_kappa
+            t_last, Kp, k_d, a_lim, v_max, radius, barrier_kappa, scenario_kappa
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -352,6 +376,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         v_ref = jax.lax.cond(
@@ -359,12 +384,12 @@ if _JAX_AVAILABLE:
             lambda _: _jax_occ_vref_from_pos_strict(
                 pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                tau, radius, scenario_kappa
+                tau, radius, barrier_kappa, scenario_kappa
             ),
             lambda _: _jax_occ_vref_from_pos(
                 pos, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
                 obs_center_pad, obs_center_valid, front_mode_los,
-                tau, radius, scenario_kappa
+                tau, radius, barrier_kappa, scenario_kappa
             ),
             operand=None,
         )
@@ -473,6 +498,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict_vref,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         theta = x[2]
@@ -480,12 +506,12 @@ if _JAX_AVAILABLE:
         v_ref, _ = _jax_scale_occ_vref(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau, uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            tau, uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
         v_ref_prev, _ = _jax_scale_occ_vref(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau_prev, uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            tau_prev, uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
         return _jax_uni_virtual_cmd_from_vref(
             theta,
@@ -539,6 +565,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict_vref,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         v_cur = x[3]
@@ -553,17 +580,17 @@ if _JAX_AVAILABLE:
         v_ref, v_ref_norm = _jax_scale_occ_vref(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau, du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            tau, du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
         v_ref_prev, _ = _jax_scale_occ_vref(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau_prev, du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            tau_prev, du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
         v_ref_prev2, _ = _jax_scale_occ_vref(
             x[:2], A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
             obs_center_pad, obs_center_valid, front_mode_los,
-            tau_prev2, du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            tau_prev2, du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
 
         theta = x[2]
@@ -651,6 +678,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict_vref,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         u = _jax_uni_backup_input_occ(
@@ -683,6 +711,7 @@ if _JAX_AVAILABLE:
             radius,
             use_strict_vref,
             use_norm_mode,
+            barrier_kappa,
             scenario_kappa,
         )
         theta = x[2]
@@ -724,6 +753,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict_vref,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         u = _jax_du_backup_input_occ(
@@ -757,6 +787,7 @@ if _JAX_AVAILABLE:
             radius,
             use_strict_vref,
             use_norm_mode,
+            barrier_kappa,
             scenario_kappa,
         )
         theta = x[2]
@@ -804,6 +835,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict_vref,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         I = jnp.eye(3, dtype=x0.dtype)
@@ -818,7 +850,7 @@ if _JAX_AVAILABLE:
                 t, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
                 k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
                 reverse_gate_angle, reverse_gate_power,
-                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             k2 = _jax_uni_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
@@ -826,7 +858,7 @@ if _JAX_AVAILABLE:
                 t + 0.5 * dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
                 k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
                 reverse_gate_angle, reverse_gate_power,
-                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             k3 = _jax_uni_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
@@ -834,7 +866,7 @@ if _JAX_AVAILABLE:
                 t + 0.5 * dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
                 k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
                 reverse_gate_angle, reverse_gate_power,
-                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             k4 = _jax_uni_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
@@ -842,7 +874,7 @@ if _JAX_AVAILABLE:
                 t + dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
                 k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
                 reverse_gate_angle, reverse_gate_power,
-                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -853,7 +885,7 @@ if _JAX_AVAILABLE:
                 t + 0.5 * dt, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
                 k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
                 reverse_gate_angle, reverse_gate_power,
-                uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -873,7 +905,7 @@ if _JAX_AVAILABLE:
             t_last, dt, v_min, v_max, w_max, k_theta_p, k_theta_d, k_v_p, k_v_d,
             k_turn_boost, turn_boost_angle, v_min_cmd, v_min_cmd_rev, reverse_bias,
             reverse_gate_angle, reverse_gate_power,
-            uni_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            uni_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -915,6 +947,7 @@ if _JAX_AVAILABLE:
         radius,
         use_strict_vref,
         use_norm_mode,
+        barrier_kappa,
         scenario_kappa,
     ):
         I = jnp.eye(4, dtype=x0.dtype)
@@ -929,7 +962,7 @@ if _JAX_AVAILABLE:
                 t, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             k2 = _jax_du_f_cl(
                 x + 0.5 * dt * k1, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
@@ -937,7 +970,7 @@ if _JAX_AVAILABLE:
                 t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             k3 = _jax_du_f_cl(
                 x + 0.5 * dt * k2, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
@@ -945,7 +978,7 @@ if _JAX_AVAILABLE:
                 t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             k4 = _jax_du_f_cl(
                 x + dt * k3, A_pad, b0_pad, v_expand_pad, v_adv_vec, valid_mask,
@@ -953,7 +986,7 @@ if _JAX_AVAILABLE:
                 t + dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             x_next = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
@@ -964,7 +997,7 @@ if _JAX_AVAILABLE:
                 t + 0.5 * dt, dt, v_min, v_max, w_max, a_max,
                 k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
                 k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-                du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+                du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
             )
             M1 = I - 0.5 * dt * A_mid
             M2 = I + 0.5 * dt * A_mid
@@ -984,7 +1017,7 @@ if _JAX_AVAILABLE:
             t_last, dt, v_min, v_max, w_max, a_max,
             k_theta_p, k_theta_d, k_turn_boost, turn_boost_angle,
             k_a_p, k_a_d, k_brake, k_vemu_p, k_vemu_d, v_min_cmd_emu, du_nonnegative_speed,
-            du_vref_speed, radius, use_strict_vref, use_norm_mode, scenario_kappa
+            du_vref_speed, radius, use_strict_vref, use_norm_mode, barrier_kappa, scenario_kappa
         )
 
         traj = jnp.concatenate([x0[None, :], x_seq], axis=0)
@@ -1514,6 +1547,42 @@ class OcclusionController(BackupController):
 
         return fn(pos, scenario, tau)
 
+    def _occ_barrier_smoothing_kappa(self):
+        kappa = getattr(self, "kappa", None)
+        if kappa is None:
+            fn = getattr(self, "_occ_barrier_fn", None)
+            owner = getattr(fn, "__self__", None)
+            if owner is not None:
+                kappa = getattr(owner, "kappa", None)
+        if kappa is None:
+            kappa = self.robot_spec.get("occ_kappa", 10.0)
+        try:
+            kappa = float(kappa)
+        except Exception:
+            kappa = 10.0
+        if (not np.isfinite(kappa)) or kappa <= 0.0:
+            kappa = 10.0
+        return kappa
+
+    def _occ_scenario_barrier_margin_from_hvec(self, h_vec):
+        h_vec = np.asarray(h_vec, dtype=float).reshape(-1)
+        if h_vec.size == 0 or (not np.all(np.isfinite(h_vec))):
+            return None
+        kappa = float(self._occ_barrier_smoothing_kappa())
+        max_h = float(np.max(h_vec))
+        z = np.exp(kappa * (h_vec - max_h))
+        Z = float(np.sum(z))
+        if (not np.isfinite(Z)) or Z <= 0.0:
+            return None
+        K = float(max(1, h_vec.size))
+        return max_h + (np.log(Z) - np.log(K)) / kappa
+
+    def _occ_scenario_threat_score_from_hvec(self, h_vec):
+        h_tilde = self._occ_scenario_barrier_margin_from_hvec(h_vec)
+        if h_tilde is None:
+            return None
+        return -float(h_tilde)
+
     def _occ_safe_velocity_reference_rollout(self, X, scenarios, t):
 
         if (scenarios is None) or (len(scenarios) == 0):
@@ -1558,8 +1627,11 @@ class OcclusionController(BackupController):
                 if n <= 1e-9:
                     continue
                 direction = avg_normal / n
+                threat_score = self._occ_scenario_threat_score_from_hvec(h_vec)
+                if threat_score is None:
+                    continue
                 v_targets.append(direction * vadv)
-                scenario_scores.append(float(np.max(h_vec)))
+                scenario_scores.append(threat_score)
 
             if len(v_targets) == 0:
                 return np.zeros(2, dtype=float)
@@ -1610,8 +1682,11 @@ class OcclusionController(BackupController):
                 norm = float(np.linalg.norm(avg_normal))
                 if norm > 1e-9:
                     direction = avg_normal / norm
+                    threat_score = self._occ_scenario_threat_score_from_hvec(h_vec)
+                    if threat_score is None:
+                        continue
                     v_targets.append(direction * vadv)
-                    scenario_scores.append(max_h)
+                    scenario_scores.append(threat_score)
 
             if len(v_targets) == 0:
                 return np.zeros(2, dtype=float)
@@ -1902,6 +1977,7 @@ class OcclusionController(BackupController):
             obs_center_pad = np.zeros((self._jax_max_scenarios, 2), dtype=np.float32)
             obs_center_valid = np.zeros((self._jax_max_scenarios,), dtype=np.float32)
             front_mode_los = np.bool_(self._occ_vref_front_mode() == "los")
+            barrier_kappa = np.float32(self._occ_barrier_smoothing_kappa())
 
             # Compile ahead of control loop; no JIT should happen inside step loop.
             if self.model == "DoubleIntegrator2D":
@@ -1925,6 +2001,7 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("a_max", 1.0)),
                     np.float32(self.robot_spec.get("v_max", 1.0)),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    barrier_kappa,
                     scenario_kappa,
                     np.float32(self._jax_eps_fd),
                 )
@@ -1964,6 +2041,7 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
                     np.bool_(self._use_occ_vref_normalization()),
+                    barrier_kappa,
                     scenario_kappa,
                 )
             else:
@@ -2002,6 +2080,7 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
                     np.bool_(self._use_occ_vref_normalization()),
+                    barrier_kappa,
                     scenario_kappa,
                 )
             _ = np.asarray(traj[0])
@@ -2083,6 +2162,7 @@ class OcclusionController(BackupController):
                 occlusion_scenarios, x_ref=x0
             )
             front_mode_los = np.bool_(self._occ_vref_front_mode() == "los")
+            barrier_kappa = np.float32(self._occ_barrier_smoothing_kappa())
             if self.model == "DoubleIntegrator2D":
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(4,)
                 scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
@@ -2104,6 +2184,7 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("a_max", 1.0)),
                     np.float32(self.robot_spec.get("v_max", 1.0)),
                     np.float32(self.robot_spec.get("radius", 0.25)),
+                    barrier_kappa,
                     scenario_kappa,
                     np.float32(self._jax_eps_fd),
                 )
@@ -2143,6 +2224,7 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
                     np.bool_(self._use_occ_vref_normalization()),
+                    barrier_kappa,
                     scenario_kappa,
                 )
             else:
@@ -2181,6 +2263,7 @@ class OcclusionController(BackupController):
                     np.float32(self.robot_spec.get("radius", 0.25)),
                     np.bool_(self._use_strict_occ_vref()),
                     np.bool_(self._use_occ_vref_normalization()),
+                    barrier_kappa,
                     scenario_kappa,
                 )
             return (
