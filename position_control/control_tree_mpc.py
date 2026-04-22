@@ -1,5 +1,5 @@
+import itertools
 import time
-from itertools import product
 
 import numpy as np
 
@@ -17,38 +17,37 @@ except Exception:
 
 class ControlTreeMPC(MPCCommonUtils):
     """
-    Centralized, ADMM-free Control-Tree MPC adaptation inspired by ICRA 2021,
-    "Control-Tree Optimization: an approach to MPC under discrete Partial Observability".
+    Centralized, ADMM-free Control-Tree MPC baseline inspired by ICRA 2021,
+    "Control-Tree Optimization: an approach to MPC under discrete Partial
+    Observability", adapted here to crowd-style occlusion scenes.
 
-    Implemented here from the ICRA 2021 control-tree method:
-      - an explicit control-tree with one shared trunk and multiple branch tails,
-      - non-anticipativity over the control horizon by optimizing one common
-        prefix that is shared by every branch,
-      - belief-weighted branch costs so more likely hypotheses affect the
-        objective more strongly,
-      - branch-specific hidden-risk constraints after the split,
-      - robust shared-trunk safety against the active constraints of all branch
-        hypotheses, consistent with the paper's common-trunk robustness idea,
-      - receding-horizon execution where only the first action from the shared
-        trunk is applied each MPC cycle,
-      - branch differentiation through hypothesis-specific risk constraints while
-        the global goal remains shared.
+    Implemented here from the ICRA 2021 control-tree spirit:
+      - one explicit control tree with a shared trunk and branch-specific tails,
+      - non-anticipativity through a common optimized prefix shared by all
+        branches,
+      - belief-weighted branch costs,
+      - deterministic active-occlusion selection before tree construction so
+        the planner reasons over a small set of geometrically relevant
+        occlusions rather than a single top-ranked occlusion only,
+      - local discrete branch states of the form
+        {no_hidden, hidden_t1, hidden_t2} for each active occlusion, yielding
+        joint hidden-world branches,
+      - branch-specific direct hidden-obstacle constraints after the split,
+      - robust shared-trunk safety against the active hidden-world constraints
+        from all branches,
+      - receding-horizon execution where only the first shared-trunk action is
+        applied each MPC cycle.
 
     Not implemented paper-faithfully here:
-      - the original distributed augmented Lagrangian / ADMM solver, consensus
-        updates, dual updates, or parallel branch subproblem optimization,
+      - the original augmented-Lagrangian / ADMM decomposition, consensus
+        updates, dual updates, or distributed branch subproblem solves,
       - the paper's original discrete symbolic-state construction and belief
-        estimation pipeline; here hypotheses come from ranked occlusion
-        scenarios and binary hidden-agent present/absent combinations,
-      - the paper's exact dynamics, experiment setups, and cost/constraint
-        models; this repo uses crowd-navigation robot models and repo-specific
-        tuning,
-      - an exact state-conditioned world model on each branch; hidden-agent
-        effects are approximated with tangent-ray risk regions derived from
-        occlusions,
-      - an exact reproduction claim: this file is a framework-adapted,
-        centralized surrogate that preserves the paper's main control-tree
-        semantics but not the full original implementation stack.
+        estimation pipeline; here branch worlds are synthesized from the repo's
+        occlusion geometry by generating direct hidden-obstacle candidates on
+        tangent rays of active occlusions,
+      - the paper's original application-specific experiment stack; this file is
+        a crowd2-style centralized adaptation with benchmark-specific horizon,
+        branch caps, and conservative hidden-agent assumptions.
     """
 
     def __init__(self, robot, robot_spec, num_obs=30):
@@ -83,34 +82,28 @@ class ControlTreeMPC(MPCCommonUtils):
         self.max_visible_obs = int(cfg.get("max_visible_obs", self.num_obs))
         self.max_visible_obs = max(1, self.max_visible_obs)
         self.margin_obs = float(cfg.get("margin_obs", 0.05))
-        self.margin_risk = float(cfg.get("margin_risk", 0.05))
 
         # Hypothesis-tree parameters.
-        self.n_occ_hypotheses = int(cfg.get("n_occ_hypotheses", 2))
-        self.n_occ_hypotheses = max(0, min(3, self.n_occ_hypotheses))
-        self.max_branches = max(1, 2 ** self.n_occ_hypotheses)
+        self.hypothesis_model = str(cfg.get("hypothesis_model", "direct_hidden_obstacle")).strip().lower()
+        if self.hypothesis_model != "direct_hidden_obstacle":
+            self.hypothesis_model = "direct_hidden_obstacle"
+        self.max_active_occlusions = int(cfg.get("max_active_occlusions", cfg.get("n_occ_hypotheses", 2)))
+        self.max_active_occlusions = max(0, min(2, self.max_active_occlusions))
+        self.n_occ_hypotheses = int(self.max_active_occlusions)
+        self.active_selection_delta = float(cfg.get("active_selection_delta", 1.0))
+        self.max_branches = int(3**self.max_active_occlusions) if self.max_active_occlusions > 0 else 1
         self.hidden_speed = float(
             cfg.get(
                 "hidden_speed",
                 robot_spec.get("v_adv_max_occ", robot_spec.get("v_obs_max", 0.5)),
             )
         )
-        self.risk_regions_per_tangent = int(cfg.get("risk_regions_per_tangent", 2))
-        self.risk_regions_per_tangent = max(1, self.risk_regions_per_tangent)
-        self.drisk = float(cfg.get("drisk", 0.7))
-        self.risk_sigma = float(cfg.get("risk_sigma", 1e-4))
-        self.rrisk_max = cfg.get("rrisk_max", 1.0)
-        if self.rrisk_max is not None:
-            self.rrisk_max = float(self.rrisk_max)
-        self.min_v_for_risk = float(cfg.get("min_v_for_risk", 0.3))
-        self.risk_time_model = str(cfg.get("risk_time_model", "distance_over_vref")).strip().lower()
-        if self.risk_time_model not in {"distance_over_vref", "nominal_rollout"}:
-            self.risk_time_model = "distance_over_vref"
-        self.max_branch_risk_regions = int(
-            cfg.get(
-                "max_branch_risk_regions",
-                max(1, self.n_occ_hypotheses * 2 * self.risk_regions_per_tangent),
-            )
+        self.hidden_agent_radius = float(cfg.get("hidden_agent_radius", 0.4))
+        self.hidden_spawn_clearance = float(cfg.get("hidden_spawn_clearance", 0.12))
+        self.hidden_speed_scale = float(cfg.get("hidden_speed_scale", 1.0))
+        self.max_branch_hidden_obs = max(
+            1,
+            int(cfg.get("max_branch_hidden_obs", max(1, self.max_active_occlusions))),
         )
 
         # Cost shaping.
@@ -199,48 +192,8 @@ class ControlTreeMPC(MPCCommonUtils):
             points[k + 1] = x[:2]
         return points
 
-    def _risk_regions_from_scenario(self, scenario, v_plan, nominal_points):
-        hidden_speed = float(scenario.get("v_adv_max", self.hidden_speed))
-        if hidden_speed <= 1e-9:
-            return []
-
-        p = np.asarray(scenario.get("robot_pos", np.zeros(2)), dtype=float).reshape(2,)
-        c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
-        r_obs = float(scenario.get("obs_radius", 0.0))
-
-        t1 = scenario.get("t1", None)
-        t2 = scenario.get("t2", None)
-        if t1 is None or t2 is None:
-            t1, t2 = self._occ_utils._circle_tangents(p, c, r_obs)
-        if t1 is None or t2 is None:
-            return []
-
-        rays = []
-        for t in (np.asarray(t1, dtype=float).reshape(2,), np.asarray(t2, dtype=float).reshape(2,)):
-            d = t - p
-            n = float(np.linalg.norm(d))
-            if n > 1e-9:
-                rays.append((t, d / n))
-        if len(rays) == 0:
-            return []
-
-        v_nom = max(float(v_plan), float(self.min_v_for_risk), 1e-3)
-        regions = []
-        for t, d in rays:
-            for i in range(1, self.risk_regions_per_tangent + 1):
-                center = t + d * (self.drisk * float(i - 1))
-                if self.risk_time_model == "nominal_rollout" and nominal_points is not None:
-                    dists = np.linalg.norm(nominal_points - center[None, :], axis=1)
-                    idx = int(np.argmin(dists))
-                    travel_t = idx * self.dt_plan + float(dists[idx]) / v_nom
-                else:
-                    travel_t = float(np.linalg.norm(center - p)) / v_nom
-                rr = travel_t * hidden_speed + r_obs + self.risk_sigma
-                if self.rrisk_max is not None:
-                    rr = min(rr, self.rrisk_max)
-                if np.isfinite(rr) and rr > 0.0:
-                    regions.append((center, float(rr)))
-        return regions
+    def _hidden_obstacle_from_tangent(self, scenario, tangent_key):
+        return self._direct_hidden_obstacle_from_tangent(scenario, tangent_key)
 
     def _scenario_score(self, x0, goal_xy, scenario, nominal_points):
         p = np.asarray(x0, dtype=float).reshape(-1)[:2]
@@ -277,45 +230,96 @@ class ControlTreeMPC(MPCCommonUtils):
             out.append(
                 {
                     "scenario": sc,
-                    "risk_regions": self._risk_regions_from_scenario(sc, v_plan, nominal_points),
                     "score": float(item["score"]),
                     "p": float(item["score"] / (item["score"] + score_ref + 1e-9)),
                 }
             )
         return out
 
-    @staticmethod
-    def _branch_masks(k):
-        if k <= 0:
-            return [()]
-        return [tuple(int(v) for v in bits) for bits in product([0, 1], repeat=int(k))]
+    def _local_hidden_states(self, entry):
+        if entry is None:
+            return [{"label": "none", "prob": 1.0, "hidden_obs": [], "active_ids": [], "local_state": "none"}]
 
-    def _build_branch_hypotheses(self, selected_scenarios):
-        k = len(selected_scenarios)
-        masks = self._branch_masks(k)
+        p_occ = float(np.clip(entry.get("p_occ", 0.0), 0.0, 1.0))
+        scenario_index = int(entry.get("scenario_index", -1))
+        occupied_states = []
+        if entry.get("hidden_t1", None) is not None:
+            occupied_states.append(
+                {
+                    "label": f"occ{scenario_index}_t1",
+                    "prob": 0.0,
+                    "hidden_obs": [np.asarray(entry["hidden_t1"], dtype=float)],
+                    "active_ids": [scenario_index],
+                    "local_state": "hidden_t1",
+                }
+            )
+        if entry.get("hidden_t2", None) is not None:
+            occupied_states.append(
+                {
+                    "label": f"occ{scenario_index}_t2",
+                    "prob": 0.0,
+                    "hidden_obs": [np.asarray(entry["hidden_t2"], dtype=float)],
+                    "active_ids": [scenario_index],
+                    "local_state": "hidden_t2",
+                }
+            )
+
+        states = [
+            {
+                "label": f"occ{scenario_index}_none",
+                "prob": 1.0 if len(occupied_states) == 0 else max(0.0, 1.0 - p_occ),
+                "hidden_obs": [],
+                "active_ids": [],
+                "local_state": "no_hidden",
+            }
+        ]
+        if len(occupied_states) > 0:
+            occupied_prob = p_occ / float(len(occupied_states))
+            for st in occupied_states:
+                st["prob"] = float(max(0.0, occupied_prob))
+                states.append(st)
+        return states
+
+    def _build_hidden_world_branches(self, active_entries):
+        if len(active_entries) == 0 or int(self.max_branches) <= 1:
+            return [{"label": "no_hidden", "prob": 1.0, "hidden_obs": [], "active_ids": []}]
+
+        entries = list(active_entries[: int(self.max_active_occlusions)])
+        if len(entries) == 0:
+            return [{"label": "no_hidden", "prob": 1.0, "hidden_obs": [], "active_ids": []}]
+
+        local_state_sets = [self._local_hidden_states(entry) for entry in entries]
         branches = []
-        for mask in masks:
+        for combo in itertools.product(*local_state_sets):
             prob = 1.0
-            risk_regions = []
+            hidden_obs = []
             active_ids = []
-            for i, bit in enumerate(mask):
-                p_i = float(selected_scenarios[i]["p"])
-                prob *= p_i if bit else (1.0 - p_i)
-                if bit:
-                    active_ids.append(int(i))
-                    risk_regions.extend(selected_scenarios[i]["risk_regions"])
-            branches.append({
-                "mask": tuple(mask),
-                "prob": float(prob),
-                "risk_regions": list(risk_regions),
-                "active_ids": list(active_ids),
-            })
+            branch_labels = []
+            branch_state = []
+            for local in combo:
+                prob *= float(local.get("prob", 0.0))
+                hidden_obs.extend(local.get("hidden_obs", []))
+                active_ids.extend(local.get("active_ids", []))
+                branch_labels.append(str(local.get("label", "state")))
+                branch_state.append(str(local.get("local_state", "none")))
+            branches.append(
+                {
+                    "label": "__".join(branch_labels) if len(branch_labels) > 0 else "no_hidden",
+                    "prob": float(prob),
+                    "hidden_obs": list(hidden_obs[: int(self.max_branch_hidden_obs)]),
+                    "active_ids": [int(idx) for idx in active_ids],
+                    "joint_state": list(branch_state),
+                    "active_count": int(len(active_ids)),
+                }
+            )
+
         total = float(sum(b["prob"] for b in branches))
-        if total > 1e-9:
-            for b in branches:
-                b["prob"] = float(b["prob"] / total)
-        if len(branches) == 0:
-            branches = [{"mask": tuple(), "prob": 1.0, "risk_regions": [], "active_ids": []}]
+        if total <= 1e-9:
+            branches = [{"label": "no_hidden", "prob": 1.0, "hidden_obs": [], "active_ids": []}]
+        else:
+            for branch in branches:
+                branch["prob"] = float(branch["prob"] / total)
+            branches.sort(key=lambda b: (-float(b.get("prob", 0.0)), str(b.get("label", ""))))
         return branches
 
     # ---------------------------------------------------------------------
@@ -351,7 +355,7 @@ class ControlTreeMPC(MPCCommonUtils):
             Nt = int(sz["Nt"])
             B = int(sz["B"])
             M = int(self.max_visible_obs)
-            R = int(self.max_branch_risk_regions)
+            H = int(self.max_branch_hidden_obs)
             lb_u, ub_u = self._input_bounds()
 
             Xs = ca.SX.sym("Xs", nx, L + 1)
@@ -365,8 +369,8 @@ class ControlTreeMPC(MPCCommonUtils):
                 z_parts.append(ca.reshape(Ut[b], -1, 1))
             Z = ca.vertcat(*z_parts)
 
-            # P = [x0(nx), goal(2), guidance(2), branch_targets(B*2), vref(1), up_prev(2), branch_probs(B), vis(M*6), risk(B*R*4)]
-            p_dim = nx + 2 + 2 + 2 * B + 1 + 2 + B + 6 * M + 4 * B * R
+            # P = [x0(nx), goal(2), guidance(2), branch_targets(B*2), vref(1), up_prev(2), branch_probs(B), vis(M*6), hidden(B*H*6)]
+            p_dim = nx + 2 + 2 + 2 * B + 1 + 2 + B + 6 * M + 6 * B * H
             P = ca.SX.sym("P", p_dim)
             idx = 0
             p_x0 = P[idx : idx + nx]
@@ -389,13 +393,13 @@ class ControlTreeMPC(MPCCommonUtils):
                 vis_params.append((P[idx + 0], P[idx + 1], P[idx + 2], P[idx + 3], P[idx + 4], P[idx + 5]))
                 idx += 6
 
-            risk_params = []
+            hidden_params = []
             for _b in range(B):
                 branch_slots = []
-                for _r in range(R):
-                    branch_slots.append((P[idx + 0], P[idx + 1], P[idx + 2], P[idx + 3]))
-                    idx += 4
-                risk_params.append(branch_slots)
+                for _h in range(H):
+                    branch_slots.append((P[idx + 0], P[idx + 1], P[idx + 2], P[idx + 3], P[idx + 4], P[idx + 5]))
+                    idx += 6
+                hidden_params.append(branch_slots)
 
             g = []
             lbg = []
@@ -439,12 +443,15 @@ class ControlTreeMPC(MPCCommonUtils):
                     lbg.append(-np.inf)
                     ubg.append(0.0)
 
-            # Robust hidden-risk constraints on the shared trunk: the common
-            # prefix must remain safe for every active branch hypothesis.
+            # Robust hidden-obstacle constraints on the shared trunk: the
+            # common prefix must remain safe for every active branch hypothesis.
             for k in range(1, L + 1):
+                tk = float(k) * float(self.dt_plan)
                 for b in range(B):
-                    for (cx, cy, rr, active) in risk_params[b]:
-                        safe2 = (self.robot_radius + rr + self.margin_risk) ** 2
+                    for (ox, oy, rr, vx, vy, active) in hidden_params[b]:
+                        cx = ox + vx * tk
+                        cy = oy + vy * tk
+                        safe2 = (self.robot_radius + rr + self.margin_obs) ** 2
                         expr = active * (safe2 - ((Xs[0, k] - cx) ** 2 + (Xs[1, k] - cy) ** 2))
                         g.append(ca.vertcat(expr))
                         lbg.append(-np.inf)
@@ -490,10 +497,13 @@ class ControlTreeMPC(MPCCommonUtils):
                         lbg.append(-np.inf)
                         ubg.append(0.0)
 
-                # Branch-specific hidden risk regions remain enforced on branch tails.
-                for (cx, cy, rr, active) in risk_params[b]:
-                    safe2 = (self.robot_radius + rr + self.margin_risk) ** 2
+                # Branch-specific hidden obstacles remain enforced on branch tails.
+                for (ox, oy, rr, vx, vy, active) in hidden_params[b]:
+                    safe2 = (self.robot_radius + rr + self.margin_obs) ** 2
                     for k in range(1, Nt + 1):
+                        tk = float(L + k) * float(self.dt_plan)
+                        cx = ox + vx * tk
+                        cy = oy + vy * tk
                         expr = active * (safe2 - ((Xt[b][0, k] - cx) ** 2 + (Xt[b][1, k] - cy) ** 2))
                         g.append(ca.vertcat(expr))
                         lbg.append(-np.inf)
@@ -564,27 +574,28 @@ class ControlTreeMPC(MPCCommonUtils):
             self._persistent_setup_ms = (time.perf_counter() - t0) * 1000.0
             return False, str(exc)
 
-    def _pack_branch_risk_regions(self, branches):
+    def _pack_branch_hidden_obs(self, branches):
         out = []
         B = int(self.max_branches)
-        R = int(self.max_branch_risk_regions)
+        H = int(self.max_branch_hidden_obs)
         for b in range(B):
             if b < len(branches):
-                regs = list(branches[b].get("risk_regions", []))
+                hidden_obs = list(branches[b].get("hidden_obs", []))
             else:
-                regs = []
-            regs = regs[:R]
-            while len(regs) < R:
-                regs.append((np.zeros(2, dtype=float), 0.0, 0.0))
+                hidden_obs = []
+            hidden_obs = hidden_obs[:H]
+            while len(hidden_obs) < H:
+                hidden_obs.append(np.zeros((6,), dtype=float))
             branch_slots = []
-            for reg in regs:
-                if len(reg) == 3:
-                    center, rr, active = reg
-                else:
-                    center, rr = reg
-                    active = 1.0 if float(rr) > 0.0 else 0.0
-                center = np.asarray(center, dtype=float).reshape(2,)
-                branch_slots.append((center, float(rr), float(active)))
+            for obs in hidden_obs:
+                arr = np.asarray(obs, dtype=float).reshape(-1)
+                slot = np.zeros((6,), dtype=float)
+                n_copy = min(6, arr.size)
+                if n_copy > 0:
+                    slot[:n_copy] = arr[:n_copy]
+                if arr.size < 6:
+                    slot[5] = 1.0 if float(slot[2]) > 0.0 else 0.0
+                branch_slots.append((float(slot[0]), float(slot[1]), float(slot[2]), float(slot[3]), float(slot[4]), float(slot[5])))
             out.append(branch_slots)
         return out
 
@@ -594,7 +605,7 @@ class ControlTreeMPC(MPCCommonUtils):
         nx = int(self._n_state)
         B = int(self.max_branches)
         M = int(self.max_visible_obs)
-        R = int(self.max_branch_risk_regions)
+        H = int(self.max_branch_hidden_obs)
 
         P[idx : idx + nx] = np.asarray(x0, dtype=float).reshape(nx,)
         idx += nx
@@ -631,20 +642,22 @@ class ControlTreeMPC(MPCCommonUtils):
                 P[idx + 5] = 1.0
             idx += 6
 
-        branch_risk_slots = self._pack_branch_risk_regions(branches)
-        n_risk_active_total = 0
+        branch_hidden_slots = self._pack_branch_hidden_obs(branches)
+        n_hidden_active_total = 0
         for b in range(B):
-            for r in range(R):
-                center, rr, active = branch_risk_slots[b][r]
-                P[idx + 0] = float(center[0])
-                P[idx + 1] = float(center[1])
+            for h in range(H):
+                ox, oy, rr, vx, vy, active = branch_hidden_slots[b][h]
+                P[idx + 0] = float(ox)
+                P[idx + 1] = float(oy)
                 P[idx + 2] = float(rr)
-                P[idx + 3] = float(active)
+                P[idx + 3] = float(vx)
+                P[idx + 4] = float(vy)
+                P[idx + 5] = float(active)
                 if active > 0.5:
-                    n_risk_active_total += 1
-                idx += 4
+                    n_hidden_active_total += 1
+                idx += 6
 
-        return P, branch_probs, n_vis_active, n_risk_active_total
+        return P, branch_probs, n_vis_active, n_hidden_active_total
 
     def _unpack_joint_solution(self, z):
         z = np.asarray(z, dtype=float).reshape(-1)
@@ -661,12 +674,12 @@ class ControlTreeMPC(MPCCommonUtils):
             Ut.append(z[self._z_layout["Ut"][b][0] : self._z_layout["Ut"][b][1]].reshape((2, Nt), order="F"))
         return Xs, Us, Xt, Ut
 
-    def _joint_constraint_counts(self, n_visible_obs, n_risk_active_total, n_branches):
+    def _joint_constraint_counts(self, n_visible_obs, n_hidden_active_total, n_branches):
         counts = {
             "shared_visible": int(self.n_split) * int(n_visible_obs),
-            "shared_hidden_risk": int(self.n_split) * int(n_risk_active_total),
+            "shared_hidden_obs": int(self.n_split) * int(n_hidden_active_total),
             "tail_visible": int(self.tail_horizon) * int(n_branches) * int(n_visible_obs),
-            "tail_hidden_risk": int(self.tail_horizon) * int(n_risk_active_total),
+            "tail_hidden_obs": int(self.tail_horizon) * int(n_hidden_active_total),
         }
         counts["speed_state_bound"] = 0
         if self.model == "DoubleIntegrator2D":
@@ -716,7 +729,7 @@ class ControlTreeMPC(MPCCommonUtils):
         if not ok_setup:
             return False, None, None, None, None, "persistent_setup_failed", setup_err, 0.0, 0
 
-        p, branch_probs, n_vis_active, n_risk_active_total = self._pack_joint_params(
+        p, branch_probs, n_vis_active, n_hidden_active_total = self._pack_joint_params(
             x0=x0,
             goal_xy=goal_xy,
             guidance_xy=guidance_xy,
@@ -759,7 +772,7 @@ class ControlTreeMPC(MPCCommonUtils):
                 pass
             n_constraints = self._joint_constraint_counts(
                 n_visible_obs=n_vis_active,
-                n_risk_active_total=n_risk_active_total,
+                n_hidden_active_total=n_hidden_active_total,
                 n_branches=self.max_branches,
             )["total"]
             return True, Xs, Us, Xt, Ut, raw_status, "", solve_ms, n_constraints
@@ -769,7 +782,7 @@ class ControlTreeMPC(MPCCommonUtils):
             self._lam_g_prev = None
             n_constraints = self._joint_constraint_counts(
                 n_visible_obs=n_vis_active,
-                n_risk_active_total=n_risk_active_total,
+                n_hidden_active_total=n_hidden_active_total,
                 n_branches=self.max_branches,
             )["total"]
             return False, None, None, None, None, "infeasible", str(exc), solve_ms, n_constraints
@@ -803,8 +816,8 @@ class ControlTreeMPC(MPCCommonUtils):
         if branch_probs.sum() <= 1e-9:
             branch_probs = np.zeros((B,), dtype=float)
             branch_probs[0] = 1.0
-        branch_regs = [list(branches[b].get("risk_regions", [])) for b in range(B)]
-        n_risk_active_total = int(sum(len(regs) for regs in branch_regs))
+        branch_hidden_obs = [list(branches[b].get("hidden_obs", [])) for b in range(B)]
+        n_hidden_active_total = int(sum(len(obs_list) for obs_list in branch_hidden_obs))
 
         J = 0
         opti.subject_to(Xs[:, 0] == x0_dm)
@@ -831,11 +844,12 @@ class ControlTreeMPC(MPCCommonUtils):
                 dy = Xs[1, k] - float(c[1])
                 opti.subject_to(dx * dx + dy * dy >= clear * clear)
             # The shared trunk must be safe for every active branch hypothesis.
-            for regs in branch_regs:
-                for center, rr in regs:
-                    clear = self.robot_radius + float(rr) + self.margin_risk
-                    dx = Xs[0, k] - float(center[0])
-                    dy = Xs[1, k] - float(center[1])
+            for hidden_obs_list in branch_hidden_obs:
+                for obs in hidden_obs_list:
+                    c = self._predict_obs_center(obs, k)
+                    clear = self.robot_radius + float(obs[2]) + self.margin_obs
+                    dx = Xs[0, k] - float(c[0])
+                    dy = Xs[1, k] - float(c[1])
                     opti.subject_to(dx * dx + dy * dy >= clear * clear)
 
         for b in range(B):
@@ -857,7 +871,7 @@ class ControlTreeMPC(MPCCommonUtils):
                     opti.subject_to(ca.sumsqr(Xt[b][2:4, k + 1]) <= self.v_state_bound * self.v_state_bound)
             J += weight * self.wgoal * ca.sumsqr(Xt[b][0:2, Nt] - goal_dm)
 
-            regs = branch_regs[b]
+            hidden_obs_list = branch_hidden_obs[b]
             for k in range(1, Nt + 1):
                 for obs in visible_obs:
                     c = self._predict_obs_center(obs, L + k)
@@ -865,10 +879,11 @@ class ControlTreeMPC(MPCCommonUtils):
                     dx = Xt[b][0, k] - float(c[0])
                     dy = Xt[b][1, k] - float(c[1])
                     opti.subject_to(dx * dx + dy * dy >= clear * clear)
-                for center, rr in regs:
-                    clear = self.robot_radius + float(rr) + self.margin_risk
-                    dx = Xt[b][0, k] - float(center[0])
-                    dy = Xt[b][1, k] - float(center[1])
+                for obs in hidden_obs_list:
+                    c = self._predict_obs_center(obs, L + k)
+                    clear = self.robot_radius + float(obs[2]) + self.margin_obs
+                    dx = Xt[b][0, k] - float(c[0])
+                    dy = Xt[b][1, k] - float(c[1])
                     opti.subject_to(dx * dx + dy * dy >= clear * clear)
 
         opti.minimize(J)
@@ -926,7 +941,7 @@ class ControlTreeMPC(MPCCommonUtils):
             raw_status = "optimal"
             n_constraints = self._joint_constraint_counts(
                 n_visible_obs=len(visible_obs),
-                n_risk_active_total=n_risk_active_total,
+                n_hidden_active_total=n_hidden_active_total,
                 n_branches=B,
             )["total"]
             return True, Xs_sol, Us_sol, Xt_sol, Ut_sol, raw_status, "", solve_ms, n_constraints
@@ -934,7 +949,7 @@ class ControlTreeMPC(MPCCommonUtils):
             solve_ms = (time.perf_counter() - t0) * 1000.0
             n_constraints = self._joint_constraint_counts(
                 n_visible_obs=len(visible_obs),
-                n_risk_active_total=n_risk_active_total,
+                n_hidden_active_total=n_hidden_active_total,
                 n_branches=B,
             )["total"]
             return False, None, None, None, None, "infeasible", str(exc), solve_ms, n_constraints
@@ -1001,10 +1016,10 @@ class ControlTreeMPC(MPCCommonUtils):
         n_ok = 0
         n_total = 0
         min_vis = np.inf
-        min_risk = np.inf
-        shared_regs = []
+        min_hidden = np.inf
+        shared_hidden_obs = []
         for br in branches:
-            shared_regs.extend(list(br.get("risk_regions", [])))
+            shared_hidden_obs.extend(list(br.get("hidden_obs", [])))
 
         Xs = np.asarray(Xs, dtype=float)
         for k in range(1, int(self.n_split) + 1):
@@ -1016,18 +1031,19 @@ class ControlTreeMPC(MPCCommonUtils):
                 m = float(np.linalg.norm(pos - c) - clear)
                 step_min = min(step_min, m)
                 min_vis = min(min_vis, m)
-            for center, rr in shared_regs:
-                clear = self.robot_radius + float(rr) + self.margin_risk
-                m = float(np.linalg.norm(pos - center) - clear)
+            for obs in shared_hidden_obs:
+                c = self._predict_obs_center(obs, k)
+                clear = self.robot_radius + float(obs[2]) + self.margin_obs
+                m = float(np.linalg.norm(pos - c) - clear)
                 step_min = min(step_min, m)
-                min_risk = min(min_risk, m)
+                min_hidden = min(min_hidden, m)
             if np.isinf(step_min) or step_min >= -tol:
                 n_ok += 1
             n_total += 1
 
         for bi, Xt in enumerate(Xt_list[: len(branches)]):
             Xt = np.asarray(Xt, dtype=float)
-            regs = branches[bi].get("risk_regions", [])
+            hidden_obs_list = branches[bi].get("hidden_obs", [])
             for k in range(1, int(self.tail_horizon) + 1):
                 pos = Xt[:2, k]
                 step_min = np.inf
@@ -1037,11 +1053,12 @@ class ControlTreeMPC(MPCCommonUtils):
                     m = float(np.linalg.norm(pos - c) - clear)
                     step_min = min(step_min, m)
                     min_vis = min(min_vis, m)
-                for center, rr in regs:
-                    clear = self.robot_radius + float(rr) + self.margin_risk
-                    m = float(np.linalg.norm(pos - center) - clear)
+                for obs in hidden_obs_list:
+                    c = self._predict_obs_center(obs, int(self.n_split) + k)
+                    clear = self.robot_radius + float(obs[2]) + self.margin_obs
+                    m = float(np.linalg.norm(pos - c) - clear)
                     step_min = min(step_min, m)
-                    min_risk = min(min_risk, m)
+                    min_hidden = min(min_hidden, m)
                 if np.isinf(step_min) or step_min >= -tol:
                     n_ok += 1
                 n_total += 1
@@ -1049,9 +1066,9 @@ class ControlTreeMPC(MPCCommonUtils):
         frac = float(n_ok) / float(max(1, n_total))
         if np.isinf(min_vis):
             min_vis = None
-        if np.isinf(min_risk):
-            min_risk = None
-        return frac, min_vis, min_risk
+        if np.isinf(min_hidden):
+            min_hidden = None
+        return frac, min_vis, min_hidden
 
     # ---------------------------------------------------------------------
     # Main solve
@@ -1076,8 +1093,14 @@ class ControlTreeMPC(MPCCommonUtils):
         guidance_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
         guidance_meta = {"guidance_source": "goal"}
         nominal_points = self._nominal_rollout_positions(x0, goal_xy, v_plan)
-        selected_scenarios = self._select_hypothesis_scenarios(x0, goal_xy, occ_scenarios, v_plan, nominal_points)
-        branches = self._build_branch_hypotheses(selected_scenarios)
+        active_entries, occ_candidates = self._select_active_occlusion_entries(
+            x0=x0,
+            goal_xy=goal_xy,
+            occ_scenarios=occ_scenarios,
+            nominal_points=nominal_points,
+            max_active_occlusions=self.max_active_occlusions,
+        )
+        branches = self._build_hidden_world_branches(active_entries)
         branch_targets = [np.asarray(goal_xy, dtype=float).reshape(2,) for _ in branches]
         branch_target_meta = [{"target_source": "goal"} for _ in branches]
 
@@ -1097,7 +1120,17 @@ class ControlTreeMPC(MPCCommonUtils):
         self.last_qp_exception = str(ex) if ex else ""
 
         branch_probs = [float(b.get("prob", 0.0)) for b in branches]
-        branch_masks = [list(map(int, b.get("mask", tuple()))) for b in branches]
+        branch_labels = [str(b.get("label", f"branch_{i}")) for i, b in enumerate(branches)]
+        branch_joint_states = [list(b.get("joint_state", [])) for b in branches]
+        branch_hidden_counts = [int(len(b.get("hidden_obs", []))) for b in branches]
+        active_occlusion_indices = [int(e["scenario_index"]) for e in active_entries]
+        active_occlusion_scores = [float(e["score"]) for e in active_entries]
+        active_occlusion_probabilities = [float(e["p_occ"]) for e in active_entries]
+        active_occlusion_min_clearances = [float(e["min_clearance"]) for e in active_entries]
+        active_occlusion_critical_steps = [
+            None if not np.isfinite(float(e["critical_step"])) else float(e["critical_step"])
+            for e in active_entries
+        ]
         map_branch = int(np.argmax(branch_probs)) if len(branch_probs) > 0 else 0
 
         if not ok:
@@ -1115,20 +1148,30 @@ class ControlTreeMPC(MPCCommonUtils):
                 "solve_ms_total_branch_sum": float(self.last_qp_solve_time_ms),
                 "n_visible_obs": int(len(visible_obs)),
                 "n_occ_regions_total": int(len(occ_scenarios)),
-                "n_occ_hypotheses_selected": int(len(selected_scenarios)),
+                "n_occ_regions_active": int(len(active_entries)),
+                "n_occ_hypotheses_selected": int(len(active_entries)),
                 "n_branches_generated": int(len(branches)),
                 "n_branches_feasible": 0,
                 "branch_probabilities": list(branch_probs),
-                "branch_masks": list(branch_masks),
+                "branch_labels": list(branch_labels),
+                "branch_joint_states": branch_joint_states,
+                "branch_hidden_counts": branch_hidden_counts,
                 "branch_guidance_points": [[float(bt[0]), float(bt[1])] for bt in branch_targets],
                 "branch_guidance_meta": branch_target_meta,
                 "selected_branch": int(map_branch),
+                "selected_branch_label": (None if len(branch_labels) == 0 else str(branch_labels[map_branch])),
                 "guidance_source": str(guidance_meta.get("guidance_source", "")),
                 "guidance_xy": [float(guidance_xy[0]), float(guidance_xy[1])],
                 "goal_xy": [float(goal_xy[0]), float(goal_xy[1])],
                 "shared_prefix_length": int(self.n_split),
-                "belief_scores": [float(s["score"]) for s in selected_scenarios],
-                "belief_state": [float(s["p"]) for s in selected_scenarios],
+                "belief_scores": active_occlusion_scores,
+                "belief_state": active_occlusion_probabilities,
+                "active_occlusion_indices": active_occlusion_indices,
+                "active_occlusion_scores": active_occlusion_scores,
+                "active_occlusion_probabilities": active_occlusion_probabilities,
+                "active_occlusion_min_clearances": active_occlusion_min_clearances,
+                "active_occlusion_critical_steps": active_occlusion_critical_steps,
+                "n_occ_candidates_considered": int(len(occ_candidates)),
                 "effective_v_ref": float(v_plan),
                 "speed_cost_mode": "speed_norm",
                 "raw_solver_status": self.last_qp_status_raw,
@@ -1149,7 +1192,7 @@ class ControlTreeMPC(MPCCommonUtils):
             for b in range(len(branches))
         ]
         explore_cost = float(shared_cost + sum(float(branch_probs[b]) * float(branch_tail_costs[b]) for b in range(len(branches))))
-        frac, min_vis_margin, min_risk_margin = self._feasibility_stats(Xs, Xt, visible_obs, branches)
+        frac, min_vis_margin, min_hidden_margin = self._feasibility_stats(Xs, Xt, visible_obs, branches)
 
         self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
         self.last_profile = {
@@ -1162,18 +1205,28 @@ class ControlTreeMPC(MPCCommonUtils):
             "solve_ms_total_branch_sum": float(self.last_qp_solve_time_ms),
             "n_visible_obs": int(len(visible_obs)),
             "n_occ_regions_total": int(len(occ_scenarios)),
-            "n_occ_hypotheses_selected": int(len(selected_scenarios)),
+            "n_occ_regions_active": int(len(active_entries)),
+            "n_occ_hypotheses_selected": int(len(active_entries)),
             "n_branches_generated": int(len(branches)),
             "n_branches_feasible": int(len(branches)),
             "branch_probabilities": list(branch_probs),
-            "branch_masks": list(branch_masks),
+            "branch_labels": list(branch_labels),
+            "branch_joint_states": branch_joint_states,
+            "branch_hidden_counts": branch_hidden_counts,
             "branch_costs": [float(c) for c in branch_tail_costs],
             "branch_guidance_points": [[float(bt[0]), float(bt[1])] for bt in branch_targets],
             "branch_guidance_meta": branch_target_meta,
             "selected_branch": int(map_branch),
+            "selected_branch_label": (None if len(branch_labels) == 0 else str(branch_labels[map_branch])),
             "selected_cost": float(branch_tail_costs[map_branch]) if len(branch_tail_costs) > 0 else None,
-            "belief_scores": [float(s["score"]) for s in selected_scenarios],
-            "belief_state": [float(s["p"]) for s in selected_scenarios],
+            "belief_scores": active_occlusion_scores,
+            "belief_state": active_occlusion_probabilities,
+            "active_occlusion_indices": active_occlusion_indices,
+            "active_occlusion_scores": active_occlusion_scores,
+            "active_occlusion_probabilities": active_occlusion_probabilities,
+            "active_occlusion_min_clearances": active_occlusion_min_clearances,
+            "active_occlusion_critical_steps": active_occlusion_critical_steps,
+            "n_occ_candidates_considered": int(len(occ_candidates)),
             "guidance_source": str(guidance_meta.get("guidance_source", "")),
             "guidance_xy": [float(guidance_xy[0]), float(guidance_xy[1])],
             "goal_xy": [float(goal_xy[0]), float(goal_xy[1])],
@@ -1188,14 +1241,15 @@ class ControlTreeMPC(MPCCommonUtils):
             "num_constraints": int(self.last_num_constraints),
             "feasible_horizon_fraction": float(frac),
             "min_visible_margin": (None if min_vis_margin is None else float(min_vis_margin)),
-            "min_risk_margin": (None if min_risk_margin is None else float(min_risk_margin)),
+            "min_hidden_margin": (None if min_hidden_margin is None else float(min_hidden_margin)),
+            "min_risk_margin": (None if min_hidden_margin is None else float(min_hidden_margin)),
             # Branch-level diagnostics expected by this project.
             "selected_branch_map": int(map_branch),
             "explore_cost": float(explore_cost),
             "fallback_cost": float(branch_tail_costs[map_branch]) if len(branch_tail_costs) > 0 else None,
             "explore_feasible": True,
             "fallback_feasible": True,
-            "occlusion_risk_score": float(sum(s["score"] for s in selected_scenarios)),
+            "occlusion_risk_score": float(sum(active_occlusion_scores)),
             "speed_state_bound": float(self.v_state_bound),
             "branch_switch_count": 0,
         }

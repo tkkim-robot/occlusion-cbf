@@ -260,6 +260,241 @@ class MPCCommonUtils:
         dt = self.dt_plan * float(k)
         return c0 + dt * np.array([vx, vy], dtype=float)
 
+    def _direct_hidden_obstacle_from_tangent(self, scenario, tangent_key):
+        p = np.asarray(scenario.get("robot_pos", np.zeros(2)), dtype=float).reshape(2,)
+        c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
+        r_obs = float(scenario.get("obs_radius", 0.0))
+
+        t = scenario.get(tangent_key, None)
+        if t is None:
+            t1, t2 = self._occ_utils._circle_tangents(p, c, r_obs)
+            t = t1 if tangent_key == "t1" else t2
+        if t is None:
+            return None
+
+        t = np.asarray(t, dtype=float).reshape(2,)
+        d = t - p
+        n = float(np.linalg.norm(d))
+        if n <= 1e-9:
+            return None
+        d = d / n
+
+        r_hid = float(max(1e-6, getattr(self, "hidden_agent_radius", 0.4)))
+        spawn = t + d * (r_hid + float(getattr(self, "hidden_spawn_clearance", 0.12)))
+
+        hidden_speed = float(getattr(self, "hidden_speed", 0.5))
+        v_mag = float(max(0.0, scenario.get("v_adv_max", hidden_speed))) * float(
+            getattr(self, "hidden_speed_scale", 1.0)
+        )
+        v_dir = np.asarray(scenario.get("arc_adv", p - spawn), dtype=float).reshape(-1)
+        if v_dir.size >= 2:
+            v_dir = v_dir[:2]
+        else:
+            v_dir = p - spawn
+        nv = float(np.linalg.norm(v_dir))
+        if nv <= 1e-9:
+            v_dir = d
+        else:
+            v_dir = v_dir / nv
+        vel = v_mag * v_dir
+        return np.array([spawn[0], spawn[1], r_hid, vel[0], vel[1], 1.0], dtype=float)
+
+    def _hidden_obs_clearance_stats(self, hidden_obs, nominal_points, activation_margin=None):
+        if hidden_obs is None or nominal_points is None or len(nominal_points) <= 1:
+            return {
+                "min_clearance": float("inf"),
+                "min_step": int(self.N + 1),
+                "critical_step": float("inf"),
+                "terminal_clearance": float("inf"),
+            }
+
+        if activation_margin is None:
+            activation_margin = float(getattr(self, "active_selection_delta", 1.0))
+
+        obs = np.asarray(hidden_obs, dtype=float).reshape(-1)
+        clear = float(self.robot_radius) + float(obs[2]) + float(getattr(self, "margin_obs", 0.05))
+        min_clear = float("inf")
+        min_step = int(self.N + 1)
+        critical_step = float("inf")
+        terminal_clear = float("inf")
+        max_k = min(int(self.N), int(len(nominal_points) - 1))
+        for k in range(1, max_k + 1):
+            center = self._predict_obs_center(obs, k)
+            margin = float(np.linalg.norm(nominal_points[k] - center) - clear)
+            if (margin < min_clear - 1e-12) or (abs(margin - min_clear) <= 1e-12 and k < min_step):
+                min_clear = margin
+                min_step = int(k)
+            if (not np.isfinite(critical_step)) and margin <= float(activation_margin):
+                critical_step = float(k)
+            if k == max_k:
+                terminal_clear = margin
+        return {
+            "min_clearance": float(min_clear),
+            "min_step": int(min_step),
+            "critical_step": float(critical_step),
+            "terminal_clearance": float(terminal_clear),
+        }
+
+    def _joint_hidden_state_clearance_stats(self, hidden_obs_list, nominal_points, activation_margin=None):
+        if hidden_obs_list is None or len(hidden_obs_list) == 0:
+            return {
+                "min_clearance": float("inf"),
+                "min_step": int(self.N + 1),
+                "critical_step": float("inf"),
+                "terminal_clearance": float("inf"),
+                "aggregate_clearance_sum": float("inf"),
+            }
+
+        if activation_margin is None:
+            activation_margin = float(getattr(self, "active_selection_delta", 1.0))
+
+        max_k = min(int(self.N), int(len(nominal_points) - 1))
+        min_clear = float("inf")
+        min_step = int(self.N + 1)
+        critical_step = float("inf")
+        terminal_clear = float("inf")
+
+        per_obs_stats = [
+            self._hidden_obs_clearance_stats(obs, nominal_points, activation_margin=activation_margin)
+            for obs in hidden_obs_list
+        ]
+        aggregate_clearance_sum = float(sum(float(st["min_clearance"]) for st in per_obs_stats))
+
+        for k in range(1, max_k + 1):
+            step_margins = []
+            for obs in hidden_obs_list:
+                obs = np.asarray(obs, dtype=float).reshape(-1)
+                center = self._predict_obs_center(obs, k)
+                clear = float(self.robot_radius) + float(obs[2]) + float(getattr(self, "margin_obs", 0.05))
+                step_margins.append(float(np.linalg.norm(nominal_points[k] - center) - clear))
+            if len(step_margins) == 0:
+                continue
+            step_min = float(min(step_margins))
+            if (step_min < min_clear - 1e-12) or (abs(step_min - min_clear) <= 1e-12 and k < min_step):
+                min_clear = step_min
+                min_step = int(k)
+            if (not np.isfinite(critical_step)) and step_min <= float(activation_margin):
+                critical_step = float(k)
+            if k == max_k:
+                terminal_clear = step_min
+
+        return {
+            "min_clearance": float(min_clear),
+            "min_step": int(min_step),
+            "critical_step": float(critical_step),
+            "terminal_clearance": float(terminal_clear),
+            "aggregate_clearance_sum": float(aggregate_clearance_sum),
+        }
+
+    def _build_active_occlusion_entry(self, x0, goal_xy, scenario, nominal_points, scenario_index):
+        p = np.asarray(x0, dtype=float).reshape(-1)[:2]
+        g = np.asarray(goal_xy, dtype=float).reshape(2,)
+        c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
+        r_obs = float(scenario.get("obs_radius", 0.0))
+
+        goal_dir = g - p
+        goal_norm = float(np.linalg.norm(goal_dir))
+        if goal_norm <= 1e-9:
+            goal_dir = np.array([1.0, 0.0], dtype=float)
+        else:
+            goal_dir = goal_dir / goal_norm
+
+        forward_proj = float(np.dot(c - p, goal_dir))
+        if forward_proj < -0.5 * float(r_obs):
+            return None
+
+        hidden_t1 = self._direct_hidden_obstacle_from_tangent(scenario, "t1")
+        hidden_t2 = self._direct_hidden_obstacle_from_tangent(scenario, "t2")
+        if hidden_t1 is None and hidden_t2 is None:
+            return None
+
+        activation_margin = float(getattr(self, "active_selection_delta", 1.0))
+        stats_t1 = self._hidden_obs_clearance_stats(hidden_t1, nominal_points, activation_margin=activation_margin)
+        stats_t2 = self._hidden_obs_clearance_stats(hidden_t2, nominal_points, activation_margin=activation_margin)
+        min_clearance = float(min(float(stats_t1["min_clearance"]), float(stats_t2["min_clearance"])))
+        critical_step = min(float(stats_t1["critical_step"]), float(stats_t2["critical_step"]))
+        terminal_clearance = float(min(float(stats_t1["terminal_clearance"]), float(stats_t2["terminal_clearance"])))
+        scenario_distance = float(max(0.0, np.linalg.norm(c - p) - r_obs))
+
+        # Heuristic occupancy score used only to define branch belief weights.
+        # Active-set selection itself stays deterministic and geometric.
+        score = 1.0 / max(0.25, scenario_distance + max(0.0, min_clearance))
+        return {
+            "scenario_index": int(scenario_index),
+            "scenario": scenario,
+            "hidden_t1": hidden_t1,
+            "hidden_t2": hidden_t2,
+            "stats_t1": stats_t1,
+            "stats_t2": stats_t2,
+            "min_clearance": float(min_clearance),
+            "critical_step": float(critical_step),
+            "terminal_clearance": float(terminal_clearance),
+            "scenario_distance": float(scenario_distance),
+            "forward_proj": float(forward_proj),
+            "score": float(score),
+        }
+
+    def _select_active_occlusion_entries(self, x0, goal_xy, occ_scenarios, nominal_points, max_active_occlusions=None):
+        if occ_scenarios is None or len(occ_scenarios) == 0:
+            return [], []
+
+        if max_active_occlusions is None:
+            max_active_occlusions = int(getattr(self, "max_active_occlusions", 1))
+        max_active_occlusions = max(0, int(max_active_occlusions))
+        if max_active_occlusions == 0:
+            return [], []
+
+        entries = []
+        for sc_idx, sc in enumerate(occ_scenarios):
+            entry = self._build_active_occlusion_entry(
+                x0=x0,
+                goal_xy=goal_xy,
+                scenario=sc,
+                nominal_points=nominal_points,
+                scenario_index=sc_idx,
+            )
+            if entry is not None:
+                entries.append(entry)
+
+        if len(entries) == 0:
+            return [], []
+
+        score_ref = float(np.mean([float(e["score"]) for e in entries]))
+        for entry in entries:
+            score = float(entry["score"])
+            entry["p_occ"] = float(np.clip(score / (score + score_ref + 1e-9), 0.0, 1.0))
+            entry["interaction_active"] = bool(np.isfinite(entry["critical_step"]))
+
+        critical = [e for e in entries if bool(e["interaction_active"])]
+        critical.sort(
+            key=lambda e: (
+                float(e["critical_step"]),
+                float(e["min_clearance"]),
+                float(e["scenario_distance"]),
+            )
+        )
+
+        selected = list(critical[:max_active_occlusions])
+        if len(selected) < max_active_occlusions:
+            selected_ids = {int(e["scenario_index"]) for e in selected}
+            remainder = [e for e in entries if int(e["scenario_index"]) not in selected_ids]
+            remainder.sort(
+                key=lambda e: (
+                    float(e["min_clearance"]),
+                    float(e["scenario_distance"]),
+                )
+            )
+            selected.extend(remainder[: max_active_occlusions - len(selected)])
+
+        selected.sort(
+            key=lambda e: (
+                float(e["critical_step"]),
+                float(e["min_clearance"]),
+                float(e["scenario_distance"]),
+            )
+        )
+        return selected[:max_active_occlusions], entries
+
     def _nearest_visible_obs(self, visible_obs, x0):
         if visible_obs is None or len(visible_obs) == 0:
             return []

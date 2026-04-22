@@ -275,7 +275,7 @@ def _sample_hidden_for_event(
         return None
     max_attempts = int(max(1, attempts))
     for _ in range(max_attempts):
-        hidden_radius = float(rng.uniform(0.28, 0.45))
+        hidden_radius = float(rng.uniform(0.3, 0.4))
         gap = occ_radius + hidden_radius + float(rng.uniform(0.12, 0.34))
         hidden_xy = np.asarray(occ_xy, dtype=float).reshape(2,) + gap * occ_dir + lateral * float(rng.uniform(-lateral_jitter, lateral_jitter))
         hidden_xy = _clip_to_workspace(hidden_xy, margin=0.8)
@@ -390,7 +390,7 @@ def _build_route_random_scenario(*, case_seed, n_rand, rand_obs, static_occluder
             v_obs_min=v_obs_min,
             x_range=(1.0, ENV_WIDTH - 1.0),
             y_spawn_range=(1.0, ENV_HEIGHT - 1.0),
-            r_range=(0.28, 0.42),
+            r_range=(0.3, 0.4),
             y_bounds=(0.0, ENV_HEIGHT),
             seed=batch_seed,
             rand_obs=bool(rand_obs),
@@ -715,7 +715,7 @@ def _build_route_forced_emergence_scenario(
                 v_obs_min=bg_v_obs_min,
                 x_range=(1.0, ENV_WIDTH - 1.0),
                 y_spawn_range=(1.0, ENV_HEIGHT - 1.0),
-                r_range=(0.28, 0.40),
+                r_range=(0.3, 0.4),
                 y_bounds=(0.0, ENV_HEIGHT),
                 seed=int(case_seed) + 7919 * int(batch_id),
                 rand_obs=bool(rand_obs),

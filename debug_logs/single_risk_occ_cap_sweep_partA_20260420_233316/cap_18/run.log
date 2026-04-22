@@ -1,0 +1,38 @@
+[RUN] scenario=crowd2 label=single_risk_mpc baseline=single_risk_mpc pos=single_risk_mpc model=di seed=42 idx=1..10 n_rand=20 tf=200.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/010] idx=  4 -> collision  (raw=collision, solve_ms=63.43596193354287, intv=1.3561162311431725)
+[002/010] idx=  2 -> collision  (raw=collision, solve_ms=58.236214775865065, intv=1.5520558496419603)
+[003/010] idx=  3 -> success    (raw=success, solve_ms=45.21464966903563, intv=1.496147474660729)
+[004/010] idx=  1 -> success    (raw=success, solve_ms=43.85482885928333, intv=1.3692476466126344)
+[005/010] idx=  5 -> success    (raw=success, solve_ms=41.18686547437335, intv=1.4432211887664457)
+[006/010] idx=  6 -> success    (raw=success, solve_ms=43.916435640180296, intv=1.3654276912250727)
+[007/010] idx=  7 -> success    (raw=success, solve_ms=39.540230262275905, intv=1.2547851319068024)
+[008/010] idx=  8 -> success    (raw=success, solve_ms=42.224132446122226, intv=1.382725976245235)
+[009/010] idx= 10 -> success    (raw=success, solve_ms=41.75109687751371, intv=1.3887137380741734)
+[010/010] idx=  9 -> success    (raw=success, solve_ms=52.661981117392024, intv=1.6417068563687398)
+Collision with known obstacle detected! Obs: [-1.80375566 26.57139719  0.35837804  0.17314512 -0.77085853 -2.
+ 32.          1.        ], Robot: [-1.52258963 26.04111006] 0.25, Distance: 0.6002156093115303, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.52935419 12.91562575  0.37939399  0.96904535  0.09429718 -2.
+ 32.          1.        ], Robot: [ 1.15154244 12.84648359] 0.25, Distance: 0.6260182458363003, True
+Collision detected !!
+
+=== Crowd Trial Summary (3-way) ===
+success=8 | collision=2 | infeasible=0 | total=10
+success idx   : [1, 3, 5, 6, 7, 8, 9, 10]
+collision idx : [2, 4]
+infeasible idx: []
+avg solve time over idx [ms]: 47.20223970555844
+avg control intervention over idx: 1.4250147784644966
+avg terminal slack L1 over idx: None
+avg terminal slack max over idx: None
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 99.095
+avg wall time per idx [s]: 91.51658340821159
+avg forced initially occluded over idx: 3.0
+avg forced revealed over idx: 2.2
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/single_risk_occ_cap_sweep_partA_20260420_233316/cap_18/crowd_trials_single_risk_mpc_42_1_10_20260421_004241.csv
+saved summary : debug_logs/single_risk_occ_cap_sweep_partA_20260420_233316/cap_18/crowd_trials_single_risk_mpc_42_1_10_20260421_004241.json
+

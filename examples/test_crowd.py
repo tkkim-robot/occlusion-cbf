@@ -99,7 +99,7 @@ def _str2bool(value):
 
 
 def _apply_single_risk_defaults(robot_spec):
-    """Apply goal-only single_risk_mpc baseline defaults."""
+    """Apply ICRA-style joint hidden-world single-hypothesis defaults."""
     robot_spec["occlusion_types"] = [1]
     sr_cfg = robot_spec.setdefault("single_risk_mpc", {})
     # Use a planning grid aligned with the runtime DI integration step.
@@ -107,20 +107,26 @@ def _apply_single_risk_defaults(robot_spec):
     sr_cfg.setdefault("dt_plan", 0.05)
     sr_cfg.setdefault("Th", 1.0)
     sr_cfg.setdefault("N", 20)
-    sr_cfg.setdefault("risk_regions_per_tangent", 2)
-    sr_cfg.setdefault("max_occ_regions", 1)
+    sr_cfg.setdefault("max_active_occlusions", 2)
+    sr_cfg.setdefault("max_occ_regions", 2)
+    sr_cfg.setdefault("hypothesis_model", "direct_hidden_obstacle")
+    # Use the current small hidden-obstacle upper bound as a conservative
+    # single-world hidden-agent model in crowd-style emergence scenes.
+    sr_cfg.setdefault("hidden_agent_radius", 0.4)
+    sr_cfg.setdefault("hidden_spawn_clearance", 0.12)
+    sr_cfg.setdefault("hidden_speed_scale", 1.0)
+    sr_cfg.setdefault("active_selection_delta", 1.0)
+    sr_cfg.setdefault("hidden_selection_mode", "joint_min_clearance_earliest")
     sr_cfg.setdefault("wguide", 3.5)
     sr_cfg.setdefault("wgoal", 3.5)
     sr_cfg.setdefault("wvel", 5.0)
     sr_cfg.setdefault("wacc", 1.8)
     sr_cfg.setdefault("lambda_w", 1.0)
     sr_cfg.setdefault("margin_obs", 0.05)
-    sr_cfg.setdefault("margin_risk", 0.05)
-    sr_cfg.setdefault("risk_time_model", "distance_over_vref")
 
 
 def _apply_control_tree_defaults(robot_spec):
-    """Apply control_tree_mpc baseline defaults aligned with the current controller."""
+    """Apply direct-hidden control-tree defaults with K-active occlusion world hypotheses."""
     robot_spec["occlusion_types"] = [1]
     ct_cfg = robot_spec.setdefault("control_tree_mpc", {})
     ct_cfg.setdefault("dt_plan", 0.05)
@@ -129,14 +135,16 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("forward_only", True)
     ct_cfg.setdefault("v_plan_min", 0.05)
     ct_cfg.setdefault("n_split", 3)
-    ct_cfg.setdefault("n_occ_hypotheses", 1)
-    ct_cfg.setdefault("risk_regions_per_tangent", 1)
-    ct_cfg.setdefault("drisk", 0.7)
-    ct_cfg.setdefault("risk_sigma", 1e-4)
-    ct_cfg.setdefault("rrisk_max", 0.8)
-    ct_cfg.setdefault("min_v_for_risk", 0.3)
-    ct_cfg.setdefault("risk_time_model", "distance_over_vref")
-    ct_cfg.setdefault("max_branch_risk_regions", 4)
+    ct_cfg.setdefault("max_active_occlusions", 2)
+    ct_cfg.setdefault("n_occ_hypotheses", 2)
+    ct_cfg.setdefault("hypothesis_model", "direct_hidden_obstacle")
+    # Use the current small hidden-obstacle upper bound as a conservative
+    # branch model for the direct hidden-world hypotheses.
+    ct_cfg.setdefault("hidden_agent_radius", 0.4)
+    ct_cfg.setdefault("hidden_spawn_clearance", 0.12)
+    ct_cfg.setdefault("hidden_speed_scale", 1.0)
+    ct_cfg.setdefault("active_selection_delta", 1.0)
+    ct_cfg.setdefault("max_branch_hidden_obs", 2)
     ct_cfg.setdefault("wgoal", 4.0)
     ct_cfg.setdefault("wvel", 12.0)
     ct_cfg.setdefault("wacc", 1.2)
@@ -144,10 +152,14 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("wtrack_tail", 0.12)
     ct_cfg.setdefault("lambda_w", 1.0)
     ct_cfg.setdefault("margin_obs", 0.05)
-    ct_cfg.setdefault("margin_risk", 0.05)
-    ct_cfg.setdefault("solver_backend", "opti")
-    ct_cfg.setdefault("persistent_fallback_opti", False)
-    ct_cfg.setdefault("warm_start_dual", False)
+    # Use the persistent joint CasADi backend by default so control-tree is
+    # benchmarked with the same class of solver engineering already used by
+    # the single-hypothesis baseline. Keep opti as an automatic fallback if
+    # persistent setup fails, and enable dual warm-starts on the persistent
+    # path to reduce per-step solve time without changing planner semantics.
+    ct_cfg.setdefault("solver_backend", "joint_persistent")
+    ct_cfg.setdefault("persistent_fallback_opti", True)
+    ct_cfg.setdefault("warm_start_dual", True)
     ct_cfg.setdefault("max_iter", 150)
     ct_cfg.setdefault("solver_tol", 1e-4)
     ct_cfg.setdefault("solver_acceptable_tol", 1e-2)
@@ -523,7 +535,7 @@ def _build_forced_emergence_crowd_scenario(
         occ_lat = np.array([-occ_dir[1], occ_dir[0]], dtype=float)
 
         for _ in range(int(max(1, attempts))):
-            hidden_radius = float(rng.uniform(0.28, 0.48))
+            hidden_radius = float(rng.uniform(0.3, 0.4))
             behind_gap = occ_radius + hidden_radius + float(rng.uniform(0.08, 0.30))
             hidden_xy = (
                 np.asarray(occ_xy, dtype=float).reshape(2,)

@@ -1,0 +1,83 @@
+{
+  "config": {
+    "scenario": "crowd2",
+    "label": "single_risk_mpc_occ_cap_24",
+    "baseline": "single_risk_mpc",
+    "controller_pos": "single_risk_mpc",
+    "model": "di",
+    "seed": 42,
+    "idx_start": 1,
+    "idx_end": 10,
+    "exclude_idx": [],
+    "n_rand": 20,
+    "tf": 200.0,
+    "oa_wmax": "default",
+    "oa_allow_solver_fallback": null,
+    "oa_dynamic_occluders": null,
+    "oa_dsafe": null,
+    "oa_visible_reach_mode": null,
+    "oa_use_nominal_tracking_cost": null,
+    "oa_dt": null,
+    "occ_version": null,
+    "occ_visible_scale": null,
+    "occ_enable_visible_hocbf": false,
+    "crowd_mode": "forced_emergence",
+    "forced_events": 3,
+    "forced_bg_rand": null,
+    "forced_hidden_speed": 0.5,
+    "forced_occluder_radius_min": 0.8,
+    "forced_occluder_radius_max": 1.0,
+    "forced_validate_occlusion": true,
+    "forced_require_corridor_conflict": true,
+    "backup_cbf_overrides": null,
+    "robot_spec_overrides": {
+      "single_risk_mpc": {
+        "max_occ_regions": 24
+      }
+    },
+    "classification": {
+      "success": "raw_outcome == success",
+      "collision": "raw_outcome == collision",
+      "infeasible": "all remaining raw outcomes (infeasible/timeout/deadlock/exception/unknown)"
+    }
+  },
+  "counts": {
+    "success": 0,
+    "collision": 0,
+    "infeasible": 10,
+    "total": 10
+  },
+  "idx_lists": {
+    "success": [],
+    "collision": [],
+    "infeasible": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  "averages": {
+    "avg_solve_time_ms_over_idx": null,
+    "avg_control_intervention_l2_sq_over_idx": null,
+    "avg_terminal_slack_l1_over_idx": null,
+    "avg_terminal_slack_max_over_idx": null,
+    "avg_terminal_slack_active_ratio_over_idx": null,
+    "avg_total_sim_time_s_over_idx": null,
+    "avg_case_wall_time_s_over_idx": null,
+    "avg_n_forced_initially_occluded_over_idx": 0.0,
+    "avg_n_forced_revealed_over_idx": 0.0,
+    "avg_n_forced_corridor_conflict_over_idx": 0.0,
+    "forced_reveal_positive_trial_rate": 0.0
+  },
+  "artifacts": {
+    "rows_csv": "debug_logs/single_risk_occ_cap_sweep_20260420_232302/crowd_trials_single_risk_mpc_occ_cap_24_42_1_10_cap24_20260420_232417.csv",
+    "summary_json": "debug_logs/single_risk_occ_cap_sweep_20260420_232302/crowd_trials_single_risk_mpc_occ_cap_24_42_1_10_cap24_20260420_232417.json"
+  }
+}

@@ -1,3 +1,4 @@
+import itertools
 import time
 
 import numpy as np
@@ -16,12 +17,45 @@ except Exception:
 
 class SingleRiskMPC(MPCCommonUtils):
     """
-    Single-hypothesis worst-case risk-region MPC baseline.
+    Centralized single-hypothesis MPC baseline inspired by:
+      - the classical single-hypothesis baseline used in ICRA 2021,
+        "Control-Tree Optimization: an approach to MPC under discrete Partial Observability",
+      - adapted here to crowd-style occlusion scenes through one direct hidden-
+        obstacle world hypothesis selected deterministically at each MPC step.
 
-    This controller intentionally keeps one baseline behavior only:
-    - DoubleIntegrator2D / Unicycle2D / DynamicUnicycle2D model
-    - hidden speed bound taken from benchmark/scenario config
-    - single NMPC (no multi-branch / no consensus)
+    Implemented here from that single-hypothesis baseline spirit:
+      - one single centralized NMPC trajectory only, with no belief weighting,
+        no branching, and no consensus segment,
+      - visible-obstacle avoidance together with one direct hidden-world
+        hypothesis in the same single plan,
+      - deterministic active-occlusion selection so only a small set of
+        geometrically relevant occlusions enters the hypothesis construction,
+      - deterministic worst-case joint hidden-world selection over the active
+        occlusions; for each active occlusion the planner considers occupied
+        tangent hypotheses and selects the joint world that most tightly
+        constrains the nominal rollout,
+      - no "no_hidden" local state for active occlusions, so the selected world
+        is a conservative occupied single hypothesis rather than a
+        multi-branch contingency plan,
+      - worst-case hidden-speed assumptions taken from benchmark/scenario
+        configuration rather than multi-hypothesis probabilities,
+      - receding-horizon execution where only the first control from the single
+        optimized plan is applied each cycle,
+      - goal-only planning in the main solve path so the baseline remains a
+        single-hypothesis MPC.
+
+    Not implemented paper-faithfully here:
+      - the paper's original application-specific symbolic-state definitions and
+        full experiment stacks; this file is a crowd2 adaptation that reuses the
+        repo's occlusion geometry to synthesize one direct hidden-world
+        hypothesis per MPC solve,
+      - an exact reproduction claim: this file is a framework-adapted,
+        centralized single-hypothesis worst-case baseline aligned with the
+        reference papers' baseline semantics, not their full original
+        implementations,
+      - the original paper's full solver/application stack; this baseline keeps
+        the single-world decision structure while adapting horizon, hidden-world
+        synthesis, and benchmark settings to this repo's crowd2 environment.
     """
 
     def __init__(self, robot, robot_spec, num_obs=30):
@@ -61,8 +95,31 @@ class SingleRiskMPC(MPCCommonUtils):
         # unless the user explicitly overrides either cap in config.
         self.max_visible_obs = int(cfg.get("max_visible_obs", self.num_obs))
         self.max_visible_obs = max(1, self.max_visible_obs)
-        self.max_occ_regions = int(cfg.get("max_occ_regions", self.max_visible_obs))
-        self.max_occ_regions = max(1, self.max_occ_regions)
+        self.max_active_occlusions = int(cfg.get("max_active_occlusions", cfg.get("max_occ_regions", 2)))
+        self.max_active_occlusions = max(1, min(2, self.max_active_occlusions))
+        self.max_occ_regions = int(self.max_active_occlusions)
+        self.hypothesis_model = str(cfg.get("hypothesis_model", "direct_hidden_obstacle")).strip().lower()
+        if self.hypothesis_model != "direct_hidden_obstacle":
+            self.hypothesis_model = "direct_hidden_obstacle"
+        self.hidden_agent_radius = float(cfg.get("hidden_agent_radius", 0.4))
+        self.hidden_spawn_clearance = float(cfg.get("hidden_spawn_clearance", 0.12))
+        self.hidden_speed_scale = float(cfg.get("hidden_speed_scale", 1.0))
+        self.active_selection_delta = float(cfg.get("active_selection_delta", 1.0))
+        self.hidden_selection_mode = str(cfg.get("hidden_selection_mode", "joint_min_clearance_earliest")).strip().lower()
+        if self.hidden_selection_mode not in {"joint_min_clearance_earliest", "min_clearance_earliest"}:
+            self.hidden_selection_mode = "joint_min_clearance_earliest"
+        if self.hidden_selection_mode == "min_clearance_earliest":
+            self.hidden_selection_mode = "joint_min_clearance_earliest"
+        self.max_hidden_obs_total = max(
+            1,
+            min(
+                int(cfg.get("max_hidden_obs_total", self.max_active_occlusions)),
+                int(self.max_active_occlusions),
+            ),
+        )
+        # Legacy risk-region parameters are retained only for config
+        # compatibility; the current ICRA-style adaptation no longer uses
+        # tangent risk circles inside the planner.
         self.risk_regions_per_tangent = int(cfg.get("risk_regions_per_tangent", 2))
         self.drisk = float(cfg.get("drisk", 0.7))
         self.risk_sigma = float(cfg.get("risk_sigma", 1e-4))
@@ -71,6 +128,9 @@ class SingleRiskMPC(MPCCommonUtils):
         if self.risk_time_model not in {"distance_over_vref", "nominal_rollout"}:
             self.risk_time_model = "distance_over_vref"
         self.nominal_k_heading = float(cfg.get("nominal_k_heading", 2.0))
+        # Legacy clip retained in config files for backward compatibility, but
+        # the stage-dependent risk-radius model below no longer saturates
+        # hidden-risk growth with a hard rrisk_max cap.
         self.rrisk_max = cfg.get("rrisk_max", 1.5)
         if self.rrisk_max is not None:
             self.rrisk_max = float(self.rrisk_max)
@@ -337,17 +397,21 @@ class SingleRiskMPC(MPCCommonUtils):
             best = min(best, d)
         return None if np.isinf(best) else float(best)
 
-    def _nearest_risk_distance(self, x0, risk_regions):
-        if risk_regions is None or len(risk_regions) == 0:
+    def _nearest_hidden_distance(self, x0, hidden_obs):
+        if hidden_obs is None or len(hidden_obs) == 0:
             return None
         p = np.asarray(x0, dtype=float).reshape(-1)[:2]
         best = np.inf
-        for center, rr in risk_regions:
-            center = np.asarray(center, dtype=float).reshape(2,)
-            clear = self.robot_radius + float(rr) + self.margin_risk
+        for obs in hidden_obs:
+            obs = np.asarray(obs, dtype=float).reshape(-1)
+            center = obs[:2]
+            clear = self.robot_radius + float(obs[2]) + self.margin_obs
             d = float(np.linalg.norm(p - center) - clear)
             best = min(best, d)
         return None if np.isinf(best) else float(best)
+
+    def _nearest_risk_distance(self, x0, risk_regions):
+        return self._nearest_hidden_distance(x0, risk_regions)
 
     def _guidance_heading_error(self, x0, goal_xy, guidance_xy):
         p = np.asarray(x0, dtype=float).reshape(-1)[:2]
@@ -382,65 +446,125 @@ class SingleRiskMPC(MPCCommonUtils):
             points[k + 1] = x[:2]
         return points
 
-    def _risk_regions_from_scenario(self, scenario, v_ref_nom, nominal_points):
-        hidden_speed = scenario.get("v_adv_max", None)
-        if hidden_speed is None:
-            v_expand_vec = np.asarray(scenario.get("v_expand_vec", np.zeros((0,))), dtype=float).reshape(-1)
-            if v_expand_vec.size > 0:
-                hidden_speed = float(np.max(v_expand_vec))
-        if hidden_speed is None:
-            hidden_speed = self.hidden_speed
-        hidden_speed = float(hidden_speed)
+    def _hidden_obstacle_from_tangent(self, scenario, tangent_key):
+        return self._direct_hidden_obstacle_from_tangent(scenario, tangent_key)
 
-        if hidden_speed <= 1e-9:
-            return []
+    def _hidden_candidate_clearance_stats(self, hidden_obs, nominal_points):
+        return self._hidden_obs_clearance_stats(
+            hidden_obs,
+            nominal_points,
+            activation_margin=float(self.active_selection_delta),
+        )
 
-        p = np.asarray(scenario.get("robot_pos", np.zeros(2)), dtype=float).reshape(2,)
-        c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
-        r_obs = float(scenario.get("obs_radius", 0.0))
+    def _select_hidden_hypothesis(self, active_entries, nominal_points):
+        entries = list(active_entries[: int(self.max_active_occlusions)])
+        if len(entries) == 0:
+            return [], {
+                "selected_hidden_label": None,
+                "selected_hidden_stats": None,
+                "candidate_labels": [],
+                "candidate_min_clearances": [],
+                "candidate_min_steps": [],
+                "candidate_critical_steps": [],
+                "candidate_terminal_clearances": [],
+                "candidate_aggregate_clearance_sums": [],
+            }
 
-        t1 = scenario.get("t1", None)
-        t2 = scenario.get("t2", None)
-        if t1 is None or t2 is None:
-            t1, t2 = self._occ_utils._circle_tangents(p, c, r_obs)
-        if t1 is None or t2 is None:
-            return []
+        local_state_sets = []
+        for entry in entries:
+            scenario_index = int(entry.get("scenario_index", -1))
+            candidates = []
+            if entry.get("hidden_t1", None) is not None:
+                candidates.append(
+                    {
+                        "label": f"occ{scenario_index}_t1",
+                        "obs": np.asarray(entry["hidden_t1"], dtype=float),
+                        "scenario_index": scenario_index,
+                        "tangent_key": "t1",
+                        "scenario_distance": float(entry.get("scenario_distance", np.inf)),
+                    }
+                )
+            if entry.get("hidden_t2", None) is not None:
+                candidates.append(
+                    {
+                        "label": f"occ{scenario_index}_t2",
+                        "obs": np.asarray(entry["hidden_t2"], dtype=float),
+                        "scenario_index": scenario_index,
+                        "tangent_key": "t2",
+                        "scenario_distance": float(entry.get("scenario_distance", np.inf)),
+                    }
+                )
+            if len(candidates) == 0:
+                continue
+            local_state_sets.append(candidates)
 
-        t1 = np.asarray(t1, dtype=float).reshape(2,)
-        t2 = np.asarray(t2, dtype=float).reshape(2,)
+        if len(local_state_sets) == 0:
+            return [], {
+                "selected_hidden_label": None,
+                "selected_hidden_stats": None,
+                "candidate_labels": [],
+                "candidate_min_clearances": [],
+                "candidate_min_steps": [],
+                "candidate_critical_steps": [],
+                "candidate_terminal_clearances": [],
+                "candidate_aggregate_clearance_sums": [],
+            }
 
-        rays = []
-        for t in (t1, t2):
-            d = t - p
-            n = float(np.linalg.norm(d))
-            if n > 1e-9:
-                rays.append((t, d / n))
-        if len(rays) == 0:
-            return []
+        joint_candidates = []
+        for combo in itertools.product(*local_state_sets):
+            hidden_obs = [np.asarray(item["obs"], dtype=float) for item in combo]
+            stats = self._joint_hidden_state_clearance_stats(
+                hidden_obs,
+                nominal_points,
+                activation_margin=float(self.active_selection_delta),
+            )
+            joint_candidates.append(
+                {
+                    "label": "__".join(str(item["label"]) for item in combo),
+                    "obs_list": hidden_obs,
+                    "scenario_indices": [int(item["scenario_index"]) for item in combo],
+                    "tangent_keys": [str(item["tangent_key"]) for item in combo],
+                    "scenario_distance_sum": float(sum(float(item["scenario_distance"]) for item in combo)),
+                    **stats,
+                }
+            )
 
-        v_nom = max(float(v_ref_nom), float(self.min_v_for_risk), 1e-3)
-        regions = []
-        for t, d in rays:
-            for i in range(1, self.risk_regions_per_tangent + 1):
-                center = t + d * (self.drisk * (i - 1))
-                if self.risk_time_model == "nominal_rollout" and nominal_points is not None:
-                    dists = np.linalg.norm(nominal_points - center[None, :], axis=1)
-                    idx = int(np.argmin(dists))
-                    travel_t = idx * self.dt_plan + float(dists[idx]) / v_nom
-                else:
-                    travel_t = float(np.linalg.norm(center - p)) / v_nom
-                rr = travel_t * hidden_speed + r_obs + self.risk_sigma
-                if self.rrisk_max is not None:
-                    rr = min(rr, self.rrisk_max)
-                if np.isfinite(rr) and rr > 0.0:
-                    regions.append((center, float(rr)))
-        return regions
+        if self.hidden_selection_mode == "joint_min_clearance_earliest":
+            joint_candidates.sort(
+                key=lambda item: (
+                    float(item["min_clearance"]),
+                    float(item["critical_step"]),
+                    float(item["terminal_clearance"]),
+                    float(item["aggregate_clearance_sum"]),
+                    float(item["scenario_distance_sum"]),
+                    str(item["label"]),
+                )
+            )
 
-    def _build_risk_regions(self, occ_scenarios, v_ref_nom, nominal_points):
-        out = []
-        for sc in occ_scenarios:
-            out.extend(self._risk_regions_from_scenario(sc, v_ref_nom, nominal_points))
-        return out
+        selected = joint_candidates[0]
+        return [np.asarray(obs, dtype=float) for obs in selected["obs_list"][: int(self.max_hidden_obs_total)]], {
+            "selected_hidden_label": str(selected["label"]),
+            "selected_hidden_stats": {
+                "min_clearance": float(selected["min_clearance"]),
+                "min_step": int(selected["min_step"]),
+                "critical_step": (
+                    None if not np.isfinite(float(selected["critical_step"])) else float(selected["critical_step"])
+                ),
+                "terminal_clearance": float(selected["terminal_clearance"]),
+                "aggregate_clearance_sum": float(selected["aggregate_clearance_sum"]),
+                "scenario_indices": [int(idx) for idx in selected["scenario_indices"]],
+                "tangent_keys": [str(key) for key in selected["tangent_keys"]],
+            },
+            "candidate_labels": [str(item["label"]) for item in joint_candidates],
+            "candidate_min_clearances": [float(item["min_clearance"]) for item in joint_candidates],
+            "candidate_min_steps": [int(item["min_step"]) for item in joint_candidates],
+            "candidate_critical_steps": [
+                None if not np.isfinite(float(item["critical_step"])) else float(item["critical_step"])
+                for item in joint_candidates
+            ],
+            "candidate_terminal_clearances": [float(item["terminal_clearance"]) for item in joint_candidates],
+            "candidate_aggregate_clearance_sums": [float(item["aggregate_clearance_sum"]) for item in joint_candidates],
+        }
 
     def _guidance_track_point(self, k, guidance_xy, goal_xy, n_split_eff):
         if k <= int(n_split_eff):
@@ -472,11 +596,11 @@ class SingleRiskMPC(MPCCommonUtils):
         J += self.wgoal * float(terr @ terr)
         return float(J)
 
-    def _feasibility_stats(self, X, visible_obs, risk_regions):
+    def _feasibility_stats(self, X, visible_obs, hidden_obs):
         X = np.asarray(X, dtype=float)
         n_ok = 0
         min_vis = np.inf
-        min_risk = np.inf
+        min_hidden = np.inf
         tol = 1e-7
         for k in range(1, self.N + 1):
             pos = X[:2, k]
@@ -487,19 +611,21 @@ class SingleRiskMPC(MPCCommonUtils):
                 m = float(np.linalg.norm(pos - c) - clear)
                 step_min = min(step_min, m)
                 min_vis = min(min_vis, m)
-            for center, rr in risk_regions:
-                clear = self.robot_radius + float(rr) + self.margin_risk
-                m = float(np.linalg.norm(pos - center) - clear)
+            for obs in hidden_obs:
+                obs = np.asarray(obs, dtype=float).reshape(-1)
+                c = self._predict_obs_center(obs, k)
+                clear = self.robot_radius + float(obs[2]) + self.margin_obs
+                m = float(np.linalg.norm(pos - c) - clear)
                 step_min = min(step_min, m)
-                min_risk = min(min_risk, m)
+                min_hidden = min(min_hidden, m)
             if np.isinf(step_min) or step_min >= -tol:
                 n_ok += 1
         frac = float(n_ok) / float(max(1, self.N))
         if np.isinf(min_vis):
             min_vis = None
-        if np.isinf(min_risk):
-            min_risk = None
-        return frac, min_vis, min_risk
+        if np.isinf(min_hidden):
+            min_hidden = None
+        return frac, min_vis, min_hidden
 
     def _init_persistent_backend(self):
         if self._persistent_setup_done:
@@ -511,14 +637,14 @@ class SingleRiskMPC(MPCCommonUtils):
         try:
             N = int(self.N)
             M = int(self.max_visible_obs)
-            R = int(self.max_risk_regions_total)
+            H = int(self.max_hidden_obs_total)
             lb_u, ub_u = self._input_bounds()
 
             X = ca.SX.sym("X", self._n_state, N + 1)
             U = ca.SX.sym("U", 2, N)
             Z = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
 
-            p_dim = self._n_state + 2 + 2 * N + 1 + 1 + 2 + 6 * M + 4 * R
+            p_dim = self._n_state + 2 + 2 * N + 1 + 1 + 2 + 6 * M + 6 * H
             P = ca.SX.sym("P", p_dim)
             idx = 0
             p_x0 = P[idx : idx + self._n_state]
@@ -548,17 +674,19 @@ class SingleRiskMPC(MPCCommonUtils):
                 )
                 idx += 6
 
-            risk_params = []
-            for _ in range(R):
-                risk_params.append(
+            hidden_params = []
+            for _ in range(H):
+                hidden_params.append(
                     (
-                        P[idx + 0],  # cx
-                        P[idx + 1],  # cy
+                        P[idx + 0],  # ox
+                        P[idx + 1],  # oy
                         P[idx + 2],  # r
-                        P[idx + 3],  # active
+                        P[idx + 3],  # vx
+                        P[idx + 4],  # vy
+                        P[idx + 5],  # active
                     )
                 )
-                idx += 4
+                idx += 6
 
             g = []
             lbg = []
@@ -600,8 +728,10 @@ class SingleRiskMPC(MPCCommonUtils):
                     lbg.append(-np.inf)
                     ubg.append(0.0)
 
-                for (cx, cy, rr, active) in risk_params:
-                    safe2 = (self.robot_radius + rr + self.margin_risk) ** 2
+                for (ox, oy, rr, vx, vy, active) in hidden_params:
+                    cx = ox + vx * tk
+                    cy = oy + vy * tk
+                    safe2 = (self.robot_radius + rr + self.margin_obs) ** 2
                     expr = active * (safe2 - ((X[0, k] - cx) ** 2 + (X[1, k] - cy) ** 2))
                     g.append(ca.vertcat(expr))
                     lbg.append(-np.inf)
@@ -660,7 +790,7 @@ class SingleRiskMPC(MPCCommonUtils):
         goal_xy,
         guidance_xy,
         visible_obs,
-        risk_regions,
+        hidden_obs,
         v_ref_nom,
         wtrack_eff,
         n_split_eff,
@@ -698,18 +828,19 @@ class SingleRiskMPC(MPCCommonUtils):
                 p[idx + 5] = 1.0
             idx += 6
 
-        n_risk_active = int(min(len(risk_regions), int(self.max_risk_regions_total)))
-        for j in range(int(self.max_risk_regions_total)):
-            if j < n_risk_active:
-                c, rr = risk_regions[j]
-                c = np.asarray(c, dtype=float).reshape(2,)
-                p[idx + 0] = float(c[0])
-                p[idx + 1] = float(c[1])
-                p[idx + 2] = float(rr)
-                p[idx + 3] = 1.0
-            idx += 4
+        n_hidden_active = int(min(len(hidden_obs), int(self.max_hidden_obs_total)))
+        for j in range(int(self.max_hidden_obs_total)):
+            if j < n_hidden_active:
+                obs = np.asarray(hidden_obs[j], dtype=float).reshape(-1)
+                p[idx + 0] = float(obs[0])
+                p[idx + 1] = float(obs[1])
+                p[idx + 2] = float(obs[2])
+                p[idx + 3] = float(obs[3]) if obs.size >= 4 else 0.0
+                p[idx + 4] = float(obs[4]) if obs.size >= 5 else 0.0
+                p[idx + 5] = 1.0
+            idx += 6
 
-        return p, n_visible_active, n_risk_active
+        return p, n_visible_active, n_hidden_active
 
     def _pack_persistent_guess(self, x_init, u_init):
         x0 = np.asarray(x_init, dtype=float).reshape(self._n_state, self.N + 1, order="F")
@@ -733,7 +864,7 @@ class SingleRiskMPC(MPCCommonUtils):
         goal_xy,
         guidance_xy,
         visible_obs,
-        risk_regions,
+        hidden_obs,
         x_init,
         u_init,
         v_ref_nom,
@@ -749,7 +880,7 @@ class SingleRiskMPC(MPCCommonUtils):
             goal_xy=goal_xy,
             guidance_xy=guidance_xy,
             visible_obs=visible_obs,
-            risk_regions=risk_regions,
+            hidden_obs=hidden_obs,
             v_ref_nom=v_ref_nom,
             wtrack_eff=wtrack_eff,
             n_split_eff=n_split_eff,
@@ -806,7 +937,7 @@ class SingleRiskMPC(MPCCommonUtils):
         goal_xy,
         guidance_xy,
         visible_obs,
-        risk_regions,
+        hidden_obs,
         x_init,
         u_init,
         v_ref_nom,
@@ -856,10 +987,11 @@ class SingleRiskMPC(MPCCommonUtils):
                 dy = X[1, k] - float(c[1])
                 opti.subject_to(dx * dx + dy * dy >= clear * clear)
                 n_constraints += 1
-            for center, rr in risk_regions:
-                clear = self.robot_radius + float(rr) + self.margin_risk
-                dx = X[0, k] - float(center[0])
-                dy = X[1, k] - float(center[1])
+            for obs in hidden_obs:
+                c = self._predict_obs_center(obs, k)
+                clear = self.robot_radius + float(obs[2]) + self.margin_obs
+                dx = X[0, k] - float(c[0])
+                dy = X[1, k] - float(c[1])
                 opti.subject_to(dx * dx + dy * dy >= clear * clear)
                 n_constraints += 1
 
@@ -917,28 +1049,24 @@ class SingleRiskMPC(MPCCommonUtils):
             "selected_gap_width": None,
         }
 
-        nominal_points = None
-        if self.risk_time_model == "nominal_rollout":
-            nominal_points = self._nominal_rollout_positions(x0, guidance_xy, v_ref_nom)
+        nominal_points = self._nominal_rollout_positions(x0, goal_xy, v_ref_nom)
+        active_entries, occ_candidates = self._select_active_occlusion_entries(
+            x0=x0,
+            goal_xy=goal_xy,
+            occ_scenarios=occ_scenarios_all,
+            nominal_points=nominal_points,
+            max_active_occlusions=self.max_active_occlusions,
+        )
+        self.occlusion_scenarios = list(occ_scenarios_all)
+        hidden_obs, hidden_meta = self._select_hidden_hypothesis(active_entries, nominal_points)
 
-        occ_scenarios = self._nearest_occ_scenarios(occ_scenarios_all, x0)
-        self.occlusion_scenarios = list(occ_scenarios)
-        risk_regions = self._build_risk_regions(occ_scenarios, v_ref_nom, nominal_points)
-
-        nearest_risk_distance = self._nearest_risk_distance(x0, risk_regions)
+        nearest_hidden_distance = self._nearest_hidden_distance(x0, hidden_obs)
         nearest_visible_distance = self._nearest_visible_distance(x0, visible_obs)
 
         guidance_active = False
         guidance_reason = "disabled_goal_only"
         effective_wtrack = 0.0
         effective_n_split = 0
-
-        # In nominal-rollout mode, risk timing now depends only on the
-        # goal-directed nominal rollout.
-        if self.risk_time_model == "nominal_rollout":
-            nominal_points = self._nominal_rollout_positions(x0, guidance_xy, v_ref_nom)
-            risk_regions = self._build_risk_regions(occ_scenarios, v_ref_nom, nominal_points)
-            nearest_risk_distance = self._nearest_risk_distance(x0, risk_regions)
 
         guidance_heading_error = self._guidance_heading_error(x0, goal_xy, guidance_xy)
 
@@ -950,7 +1078,7 @@ class SingleRiskMPC(MPCCommonUtils):
                 goal_xy=goal_xy,
                 guidance_xy=guidance_xy,
                 visible_obs=visible_obs,
-                risk_regions=risk_regions,
+                hidden_obs=hidden_obs,
                 x_init=x_guess,
                 u_init=u_guess,
                 v_ref_nom=v_ref_nom,
@@ -964,7 +1092,7 @@ class SingleRiskMPC(MPCCommonUtils):
                     goal_xy=goal_xy,
                     guidance_xy=guidance_xy,
                     visible_obs=visible_obs,
-                    risk_regions=risk_regions,
+                    hidden_obs=hidden_obs,
                     x_init=x_guess,
                     u_init=u_guess,
                     v_ref_nom=v_ref_nom,
@@ -978,7 +1106,7 @@ class SingleRiskMPC(MPCCommonUtils):
                 goal_xy=goal_xy,
                 guidance_xy=guidance_xy,
                 visible_obs=visible_obs,
-                risk_regions=risk_regions,
+                hidden_obs=hidden_obs,
                 x_init=x_guess,
                 u_init=u_guess,
                 v_ref_nom=v_ref_nom,
@@ -1015,7 +1143,7 @@ class SingleRiskMPC(MPCCommonUtils):
                     effective_n_split,
                 )
                 feasible_frac, min_vis_margin, min_risk_margin = self._feasibility_stats(
-                    x_sol, visible_obs, risk_regions
+                    x_sol, visible_obs, hidden_obs
                 )
             else:
                 plan_cost = None
@@ -1028,12 +1156,20 @@ class SingleRiskMPC(MPCCommonUtils):
             feasible_frac, min_vis_margin, min_risk_margin = 0.0, None, None
 
         self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
-        rr = np.asarray([float(r[1]) for r in risk_regions], dtype=float)
-        rr_stats = {
-            "min": (None if rr.size == 0 else float(np.min(rr))),
-            "max": (None if rr.size == 0 else float(np.max(rr))),
-            "mean": (None if rr.size == 0 else float(np.mean(rr))),
+        hidden_r = np.asarray([float(np.asarray(obs, dtype=float).reshape(-1)[2]) for obs in hidden_obs], dtype=float)
+        hidden_r_stats = {
+            "min": (None if hidden_r.size == 0 else float(np.min(hidden_r))),
+            "max": (None if hidden_r.size == 0 else float(np.max(hidden_r))),
+            "mean": (None if hidden_r.size == 0 else float(np.mean(hidden_r))),
         }
+        active_occlusion_indices = [int(e["scenario_index"]) for e in active_entries]
+        active_occlusion_scores = [float(e["score"]) for e in active_entries]
+        active_occlusion_probabilities = [float(e["p_occ"]) for e in active_entries]
+        active_occlusion_min_clearances = [float(e["min_clearance"]) for e in active_entries]
+        active_occlusion_critical_steps = [
+            None if not np.isfinite(float(e["critical_step"])) else float(e["critical_step"])
+            for e in active_entries
+        ]
         self.last_profile = {
             "backend": str(active_backend),
             "total_ms": float(self.last_total_compute_time_ms),
@@ -1043,10 +1179,35 @@ class SingleRiskMPC(MPCCommonUtils):
             "n_visible_obs": int(len(visible_obs)),
             "n_visible_obs_active": int(min(len(visible_obs), int(self.max_visible_obs))),
             "n_occ_regions_total": int(len(occ_scenarios_all)),
-            "n_occ_regions_active": int(len(occ_scenarios)),
-            "n_risk_regions_total": int(len(risk_regions)),
-            "n_risk_regions_active": int(min(len(risk_regions), int(self.max_risk_regions_total))),
-            "risk_circle_radii_stats": rr_stats,
+            "n_occ_regions_active": int(len(active_entries)),
+            "n_hidden_obs_total": int(len(hidden_obs)),
+            "n_hidden_obs_active": int(min(len(hidden_obs), int(self.max_hidden_obs_total))),
+            "hidden_obstacle_radii_stats": hidden_r_stats,
+            "selected_hidden_label": hidden_meta.get("selected_hidden_label", None),
+            "selected_hidden_stats": hidden_meta.get("selected_hidden_stats", None),
+            "hidden_candidate_labels": list(hidden_meta.get("candidate_labels", [])),
+            "hidden_candidate_min_clearances": list(hidden_meta.get("candidate_min_clearances", [])),
+            "hidden_candidate_min_steps": list(hidden_meta.get("candidate_min_steps", [])),
+            "hidden_candidate_critical_steps": list(hidden_meta.get("candidate_critical_steps", [])),
+            "hidden_candidate_terminal_clearances": list(hidden_meta.get("candidate_terminal_clearances", [])),
+            "hidden_candidate_aggregate_clearance_sums": list(
+                hidden_meta.get("candidate_aggregate_clearance_sums", [])
+            ),
+            "hidden_selection_mode": str(self.hidden_selection_mode),
+            "hypothesis_model": str(self.hypothesis_model),
+            "active_occlusion_indices": active_occlusion_indices,
+            "active_occlusion_scores": active_occlusion_scores,
+            "active_occlusion_probabilities": active_occlusion_probabilities,
+            "active_occlusion_min_clearances": active_occlusion_min_clearances,
+            "active_occlusion_critical_steps": active_occlusion_critical_steps,
+            "n_occ_candidates_considered": int(len(occ_candidates)),
+            # Legacy aliases kept for downstream aggregation that still expects
+            # "risk region" keys from the previous implementation.
+            "n_risk_regions_total": int(len(hidden_obs)),
+            "n_risk_regions_active": int(min(len(hidden_obs), int(self.max_hidden_obs_total))),
+            "risk_circle_radii_stats": hidden_r_stats,
+            "risk_circle_terminal_radii_stats": hidden_r_stats,
+            "risk_radius_mode": "direct_hidden_obstacle",
             "guidance_mode": "goal_only",
             "guidance_point_xy": [float(guidance_xy[0]), float(guidance_xy[1])],
             "guidance_source": "goal_only",
@@ -1057,9 +1218,10 @@ class SingleRiskMPC(MPCCommonUtils):
             "n_guidance_obs_used": 0,
             "tau_guidance": 0.0,
             "guidance_prediction_horizon_s": 0.0,
-            "risk_time_model": str(self.risk_time_model),
+            "risk_time_model": "direct_hidden_obstacle",
             "nearest_visible_distance": (None if nearest_visible_distance is None else float(nearest_visible_distance)),
-            "nearest_risk_distance": (None if nearest_risk_distance is None else float(nearest_risk_distance)),
+            "nearest_hidden_distance": (None if nearest_hidden_distance is None else float(nearest_hidden_distance)),
+            "nearest_risk_distance": (None if nearest_hidden_distance is None else float(nearest_hidden_distance)),
             "guidance_goal_heading_error": float(guidance_heading_error),
             "effective_wtrack": float(effective_wtrack),
             "effective_n_split": int(effective_n_split),
@@ -1069,6 +1231,7 @@ class SingleRiskMPC(MPCCommonUtils):
                 None if feasible_frac is None else float(feasible_frac)
             ),
             "min_visible_margin": (None if min_vis_margin is None else float(min_vis_margin)),
+            "min_hidden_margin": (None if min_risk_margin is None else float(min_risk_margin)),
             "min_risk_margin": (None if min_risk_margin is None else float(min_risk_margin)),
             "num_constraints": int(self.last_num_constraints),
             "plan_cost": (None if plan_cost is None else float(plan_cost)),

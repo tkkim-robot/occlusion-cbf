@@ -1,0 +1,32 @@
+[RUN] scenario=crowd2 label=single_risk_mpc baseline=single_risk_mpc pos=single_risk_mpc model=di seed=42 idx=1..10 n_rand=20 tf=200.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/010] idx=  4 -> success    (raw=success, solve_ms=17.52902047805553, intv=1.2202681981571093)
+[002/010] idx=  3 -> success    (raw=success, solve_ms=18.301083127923622, intv=1.3727843129349355)
+[003/010] idx=  2 -> success    (raw=success, solve_ms=20.260794338457114, intv=1.2529329642343108)
+[004/010] idx=  1 -> success    (raw=success, solve_ms=19.423488397113093, intv=1.396950424523031)
+[005/010] idx=  5 -> success    (raw=success, solve_ms=17.751091802682065, intv=1.3490425121787524)
+[006/010] idx=  7 -> success    (raw=success, solve_ms=18.358539243654317, intv=1.2779348086361013)
+[007/010] idx=  8 -> success    (raw=success, solve_ms=18.972452670200973, intv=1.4106363232809025)
+[008/010] idx=  6 -> success    (raw=success, solve_ms=24.335821415803277, intv=1.4984795091630405)
+[009/010] idx=  9 -> success    (raw=success, solve_ms=18.93558257614218, intv=1.3392359997556693)
+[010/010] idx= 10 -> success    (raw=success, solve_ms=18.337416325382982, intv=1.4514211578477187)
+
+=== Crowd Trial Summary (3-way) ===
+success=10 | collision=0 | infeasible=0 | total=10
+success idx   : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+collision idx : []
+infeasible idx: []
+avg solve time over idx [ms]: 19.22052903754151
+avg control intervention over idx: 1.3569686210711571
+avg terminal slack L1 over idx: None
+avg terminal slack max over idx: None
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 113.30500000000002
+avg wall time per idx [s]: 46.96417364992085
+avg forced initially occluded over idx: 3.0
+avg forced revealed over idx: 2.8
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/single_risk_occ_cap_sweep_partB_20260420_233316/cap_01/crowd_trials_single_risk_mpc_42_1_10_20260421_002053.csv
+saved summary : debug_logs/single_risk_occ_cap_sweep_partB_20260420_233316/cap_01/crowd_trials_single_risk_mpc_42_1_10_20260421_002053.json
+

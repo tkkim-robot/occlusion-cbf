@@ -1,0 +1,11 @@
+[RUN] scenario=crowd2 label=single_risk_mpc baseline=single_risk_mpc pos=single_risk_mpc model=di seed=42 idx=1..10 n_rand=20 tf=200.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/010] idx=  4 -> collision  (raw=collision, solve_ms=53.38984599380013, intv=1.3517215672977103)
+[002/010] idx=  2 -> success    (raw=success, solve_ms=34.68247506124242, intv=1.3300429970582737)
+[003/010] idx=  6 -> success    (raw=success, solve_ms=37.377910570378894, intv=1.3589631282061279)
+[004/010] idx=  5 -> success    (raw=success, solve_ms=35.92620033889229, intv=1.4454448256316417)
+[005/010] idx=  7 -> success    (raw=success, solve_ms=32.34507887619241, intv=1.2525612415633587)
+[006/010] idx=  3 -> success    (raw=success, solve_ms=38.53382769351036, intv=1.5271165896025047)
+[007/010] idx=  1 -> success    (raw=success, solve_ms=37.895631906600656, intv=1.4394868038257396)
+/opt/homebrew/Caskroom/miniforge/base/envs/myenv/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 5 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
