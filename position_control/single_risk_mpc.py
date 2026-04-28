@@ -23,7 +23,7 @@ class SingleRiskMPC(MPCCommonUtils):
       - adapted here to crowd-style occlusion scenes through one direct hidden-
         obstacle world hypothesis selected deterministically at each MPC step.
 
-    Implemented here from that single-hypothesis baseline spirit:
+    Implemented features from the paper:
       - one single centralized NMPC trajectory only, with no belief weighting,
         no branching, and no consensus segment,
       - visible-obstacle avoidance together with one direct hidden-world
@@ -34,19 +34,17 @@ class SingleRiskMPC(MPCCommonUtils):
         occlusions; for each active occlusion the planner considers occupied
         tangent hypotheses and selects the joint world that most tightly
         constrains the nominal rollout,
-      - no "no_hidden" local state for active occlusions, so the selected world
-        is a conservative occupied single hypothesis rather than a
+      - no "no_hidden" local state for active occlusions compared to the full multi-hypothesis approach,
+        so the selected world is a conservative occupied single hypothesis rather than a
         multi-branch contingency plan,
       - worst-case hidden-speed assumptions taken from benchmark/scenario
         configuration rather than multi-hypothesis probabilities,
       - receding-horizon execution where only the first control from the single
-        optimized plan is applied each cycle,
-      - goal-only planning in the main solve path so the baseline remains a
-        single-hypothesis MPC.
+        optimized plan is applied each cycle.
 
     Not implemented paper-faithfully here:
       - the paper's original application-specific symbolic-state definitions and
-        full experiment stacks; this file is a crowd2 adaptation that reuses the
+        full experiment stacks; this file is a test_crowd2 adaptation that reuses the
         repo's occlusion geometry to synthesize one direct hidden-world
         hypothesis per MPC solve,
       - an exact reproduction claim: this file is a framework-adapted,
@@ -923,6 +921,17 @@ class SingleRiskMPC(MPCCommonUtils):
                 pass
 
             n_constraints = int(self.N * (n_visible_active + n_risk_active))
+            raw_status_l = str(raw_status).strip().lower()
+            status_ok = (
+                raw_status_l in {"optimal", "solve_succeeded"}
+                or "succeeded" in raw_status_l
+                or "acceptable" in raw_status_l
+            )
+            if not status_ok:
+                self._persistent_z_prev = None
+                self._persistent_lam_x_prev = None
+                self._persistent_lam_g_prev = None
+                return False, None, None, raw_status, "persistent_solver_bad_status", solve_ms, n_constraints
             return True, x_sol, u_sol, raw_status, "", solve_ms, n_constraints
         except Exception as exc:
             solve_ms = (time.perf_counter() - t0) * 1000.0

@@ -21,14 +21,14 @@ class ControlTreeMPC(MPCCommonUtils):
     "Control-Tree Optimization: an approach to MPC under discrete Partial
     Observability", adapted here to crowd-style occlusion scenes.
 
-    Implemented here from the ICRA 2021 control-tree spirit:
+    Implemented features from the paper:
       - one explicit control tree with a shared trunk and branch-specific tails,
       - non-anticipativity through a common optimized prefix shared by all
         branches,
       - belief-weighted branch costs,
       - deterministic active-occlusion selection before tree construction so
         the planner reasons over a small set of geometrically relevant
-        occlusions rather than a single top-ranked occlusion only,
+        occlusions
       - local discrete branch states of the form
         {no_hidden, hidden_t1, hidden_t2} for each active occlusion, yielding
         joint hidden-world branches,
@@ -46,7 +46,7 @@ class ControlTreeMPC(MPCCommonUtils):
         occlusion geometry by generating direct hidden-obstacle candidates on
         tangent rays of active occlusions,
       - the paper's original application-specific experiment stack; this file is
-        a crowd2-style centralized adaptation with benchmark-specific horizon,
+        a crowd-style centralized adaptation with benchmark-specific horizon,
         branch caps, and conservative hidden-agent assumptions.
     """
 
@@ -112,6 +112,7 @@ class ControlTreeMPC(MPCCommonUtils):
         self.wacc = float(cfg.get("wacc", 1.8))
         self.wtrack_shared = float(cfg.get("wtrack_shared", 2.0))
         self.wtrack_tail = float(cfg.get("wtrack_tail", 0.5))
+        self.wlat_vel_di = float(cfg.get("wlat_vel_di", 4.0))
         self.lambda_w = float(cfg.get("lambda_w", 1.0))
         self.v_des = float(cfg.get("v_des", robot_spec.get("v_max", 0.5)))
         self.branch_zero_prob_reg = float(cfg.get("branch_zero_prob_reg", 1e-3))
@@ -422,7 +423,12 @@ class ControlTreeMPC(MPCCommonUtils):
                     dv = Us[0, k] - Us[0, k - 1]
                     dw = Us[1, k] - Us[1, k - 1]
                 J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
-                J += self.wvel * ((self._stage_speed_ca(Xs, Us, k) - p_vref) ** 2)
+                if self.model == "DoubleIntegrator2D":
+                    v_along, v_lat = self._di_progress_components_ca(Xs, k, p_x0[0:2], p_guidance)
+                    J += self.wvel * ((v_along - p_vref) ** 2)
+                    J += self.wlat_vel_di * (v_lat**2)
+                else:
+                    J += self.wvel * ((self._stage_speed_ca(Xs, Us, k) - p_vref) ** 2)
                 J += self.wtrack_shared * ca.sumsqr(Xs[0:2, k] - p_guidance)
                 if self.model == "DoubleIntegrator2D":
                     g.append(ca.vertcat(ca.sumsqr(Xs[2:4, k + 1]) - self.v_state_bound * self.v_state_bound))
@@ -476,7 +482,12 @@ class ControlTreeMPC(MPCCommonUtils):
                         dv = Ut[b][0, k] - Ut[b][0, k - 1]
                         dw = Ut[b][1, k] - Ut[b][1, k - 1]
                     J += weight * self.wacc * (dv * dv + self.lambda_w * dw * dw)
-                    J += weight * self.wvel * ((self._stage_speed_ca(Xt[b], Ut[b], k) - p_vref) ** 2)
+                    if self.model == "DoubleIntegrator2D":
+                        v_along, v_lat = self._di_progress_components_ca(Xt[b], k, p_x0[0:2], p_goal)
+                        J += weight * self.wvel * ((v_along - p_vref) ** 2)
+                        J += weight * self.wlat_vel_di * (v_lat**2)
+                    else:
+                        J += weight * self.wvel * ((self._stage_speed_ca(Xt[b], Ut[b], k) - p_vref) ** 2)
                     J += weight * self.wtrack_tail * ca.sumsqr(Xt[b][0:2, k] - p_branch_targets[b])
                     if self.model == "DoubleIntegrator2D":
                         g.append(ca.vertcat(ca.sumsqr(Xt[b][2:4, k + 1]) - self.v_state_bound * self.v_state_bound))
@@ -542,6 +553,7 @@ class ControlTreeMPC(MPCCommonUtils):
                 ubx[base] = float(ub_u[0])
                 lbx[base + 1] = float(lb_u[1])
                 ubx[base + 1] = float(ub_u[1])
+            cursor += sz["Us"]
 
             xt_off = []
             ut_off = []
@@ -775,6 +787,17 @@ class ControlTreeMPC(MPCCommonUtils):
                 n_hidden_active_total=n_hidden_active_total,
                 n_branches=self.max_branches,
             )["total"]
+            raw_status_l = str(raw_status).strip().lower()
+            status_ok = (
+                raw_status_l in {"optimal", "solve_succeeded"}
+                or "succeeded" in raw_status_l
+                or "acceptable" in raw_status_l
+            )
+            if not status_ok:
+                self._z_prev = None
+                self._lam_x_prev = None
+                self._lam_g_prev = None
+                return False, None, None, None, None, raw_status, "persistent_solver_bad_status", solve_ms, n_constraints
             return True, Xs, Us, Xt, Ut, raw_status, "", solve_ms, n_constraints
         except Exception as exc:
             solve_ms = (time.perf_counter() - t0) * 1000.0
@@ -831,7 +854,12 @@ class ControlTreeMPC(MPCCommonUtils):
                 dv = Us[0, k] - Us[0, k - 1]
                 dw = Us[1, k] - Us[1, k - 1]
             J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
-            J += self.wvel * ((self._stage_speed_ca(Xs, Us, k) - float(v_ref_nom)) ** 2)
+            if self.model == "DoubleIntegrator2D":
+                v_along, v_lat = self._di_progress_components_ca(Xs, k, x0_dm[0:2], guidance_dm)
+                J += self.wvel * ((v_along - float(v_ref_nom)) ** 2)
+                J += self.wlat_vel_di * (v_lat**2)
+            else:
+                J += self.wvel * ((self._stage_speed_ca(Xs, Us, k) - float(v_ref_nom)) ** 2)
             J += self.wtrack_shared * ca.sumsqr(Xs[0:2, k] - guidance_dm)
             if self.model == "DoubleIntegrator2D":
                 opti.subject_to(ca.sumsqr(Xs[2:4, k + 1]) <= self.v_state_bound * self.v_state_bound)
@@ -865,7 +893,12 @@ class ControlTreeMPC(MPCCommonUtils):
                     dv = Ut[b][0, k] - Ut[b][0, k - 1]
                     dw = Ut[b][1, k] - Ut[b][1, k - 1]
                 J += weight * self.wacc * (dv * dv + self.lambda_w * dw * dw)
-                J += weight * self.wvel * ((self._stage_speed_ca(Xt[b], Ut[b], k) - float(v_ref_nom)) ** 2)
+                if self.model == "DoubleIntegrator2D":
+                    v_along, v_lat = self._di_progress_components_ca(Xt[b], k, x0_dm[0:2], goal_dm)
+                    J += weight * self.wvel * ((v_along - float(v_ref_nom)) ** 2)
+                    J += weight * self.wlat_vel_di * (v_lat**2)
+                else:
+                    J += weight * self.wvel * ((self._stage_speed_ca(Xt[b], Ut[b], k) - float(v_ref_nom)) ** 2)
                 J += weight * self.wtrack_tail * ca.sumsqr(Xt[b][0:2, k] - branch_targets_dm[b])
                 if self.model == "DoubleIntegrator2D":
                     opti.subject_to(ca.sumsqr(Xt[b][2:4, k + 1]) <= self.v_state_bound * self.v_state_bound)
@@ -962,49 +995,84 @@ class ControlTreeMPC(MPCCommonUtils):
             return out
         return self._solve_joint_opti(x0, goal_xy, guidance_xy, branch_targets, visible_obs, branches, v_ref_nom)
 
+    def _di_progress_components_ca(self, X, k, ref_from, ref_to):
+        d = ref_to - ref_from
+        inv_norm = 1.0 / ca.sqrt(ca.sumsqr(d) + 1e-9)
+        ex = d[0] * inv_norm
+        ey = d[1] * inv_norm
+        vx = X[2, k]
+        vy = X[3, k]
+        v_along = vx * ex + vy * ey
+        v_lateral = -vx * ey + vy * ex
+        return v_along, v_lateral
+
+    def _di_progress_components_np(self, X, k, ref_from, ref_to):
+        d = np.asarray(ref_to, dtype=float).reshape(2,) - np.asarray(ref_from, dtype=float).reshape(2,)
+        nd = float(np.linalg.norm(d))
+        if nd <= 1e-9:
+            e = np.array([1.0, 0.0], dtype=float)
+        else:
+            e = d / nd
+        v = np.asarray(X, dtype=float)[2:4, k]
+        v_along = float(v @ e)
+        v_lateral = float(v @ np.array([-e[1], e[0]], dtype=float))
+        return v_along, v_lateral
+
     # ---------------------------------------------------------------------
     # Diagnostics helpers
     # ---------------------------------------------------------------------
-    def _shared_cost_numpy(self, Xs, Us, guidance_xy, v_ref_nom):
+    def _shared_cost_numpy(self, Xs, Us, x0_xy, guidance_xy, v_ref_nom):
         Xs = np.asarray(Xs, dtype=float)
         Us = np.asarray(Us, dtype=float)
         guidance_xy = np.asarray(guidance_xy, dtype=float).reshape(2,)
+        x0_xy = np.asarray(x0_xy, dtype=float).reshape(2,)
         up = np.asarray(self._u_prev_applied, dtype=float).reshape(2,)
         J = 0.0
         for k in range(int(self.n_split)):
-            vk = self._stage_speed_np(Xs, Us, k)
             wk = float(Us[1, k])
             if k == 0:
-                dv = vk - up[0]
+                dv = float(Us[0, k]) - up[0]
                 dw = wk - up[1]
             else:
-                dv = vk - float(Us[0, k - 1])
+                dv = float(Us[0, k]) - float(Us[0, k - 1])
                 dw = wk - float(Us[1, k - 1])
             J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
-            J += self.wvel * ((vk - v_ref_nom) ** 2)
+            if self.model == "DoubleIntegrator2D":
+                vk, vlat = self._di_progress_components_np(Xs, k, x0_xy, guidance_xy)
+                J += self.wvel * ((vk - v_ref_nom) ** 2)
+                J += self.wlat_vel_di * (vlat**2)
+            else:
+                vk = self._stage_speed_np(Xs, Us, k)
+                J += self.wvel * ((vk - v_ref_nom) ** 2)
             err = Xs[0:2, k] - guidance_xy
             J += self.wtrack_shared * float(err @ err)
         J += 0.5 * self.wtrack_shared * float(np.sum((Xs[0:2, int(self.n_split)] - guidance_xy) ** 2))
         return float(J)
 
-    def _tail_cost_numpy(self, Xt, Ut, branch_target_xy, goal_xy, v_ref_nom, prev_u):
+    def _tail_cost_numpy(self, Xt, Ut, x0_xy, branch_target_xy, goal_xy, v_ref_nom, prev_u):
         Xt = np.asarray(Xt, dtype=float)
         Ut = np.asarray(Ut, dtype=float)
+        x0_xy = np.asarray(x0_xy, dtype=float).reshape(2,)
         branch_target_xy = np.asarray(branch_target_xy, dtype=float).reshape(2,)
         goal_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
         prev_u = np.asarray(prev_u, dtype=float).reshape(2,)
         J = 0.0
         for k in range(int(self.tail_horizon)):
-            vk = self._stage_speed_np(Xt, Ut, k)
             wk = float(Ut[1, k])
             if k == 0:
-                dv = vk - prev_u[0]
+                dv = float(Ut[0, k]) - prev_u[0]
                 dw = wk - prev_u[1]
             else:
-                dv = vk - float(Ut[0, k - 1])
+                dv = float(Ut[0, k]) - float(Ut[0, k - 1])
                 dw = wk - float(Ut[1, k - 1])
             J += self.wacc * (dv * dv + self.lambda_w * dw * dw)
-            J += self.wvel * ((vk - v_ref_nom) ** 2)
+            if self.model == "DoubleIntegrator2D":
+                vk, vlat = self._di_progress_components_np(Xt, k, x0_xy, goal_xy)
+                J += self.wvel * ((vk - v_ref_nom) ** 2)
+                J += self.wlat_vel_di * (vlat**2)
+            else:
+                vk = self._stage_speed_np(Xt, Ut, k)
+                J += self.wvel * ((vk - v_ref_nom) ** 2)
             err = Xt[0:2, k] - branch_target_xy
             J += self.wtrack_tail * float(err @ err)
         terr = Xt[0:2, int(self.tail_horizon)] - goal_xy
@@ -1173,7 +1241,7 @@ class ControlTreeMPC(MPCCommonUtils):
                 "active_occlusion_critical_steps": active_occlusion_critical_steps,
                 "n_occ_candidates_considered": int(len(occ_candidates)),
                 "effective_v_ref": float(v_plan),
-                "speed_cost_mode": "speed_norm",
+                "speed_cost_mode": "di_progress_aligned" if self.model == "DoubleIntegrator2D" else "speed_norm",
                 "raw_solver_status": self.last_qp_status_raw,
                 "num_constraints": int(self.last_num_constraints),
             }
@@ -1185,10 +1253,10 @@ class ControlTreeMPC(MPCCommonUtils):
         self.status = "optimal"
         self.last_intervention = "control_tree_mpc"
 
-        shared_cost = self._shared_cost_numpy(Xs, Us, guidance_xy, v_plan)
+        shared_cost = self._shared_cost_numpy(Xs, Us, x0[:2], guidance_xy, v_plan)
         prev_u_tail = np.asarray(Us[:, int(self.n_split) - 1], dtype=float).reshape(2,)
         branch_tail_costs = [
-            self._tail_cost_numpy(Xt[b], Ut[b], branch_targets[b], goal_xy, v_plan, prev_u_tail)
+            self._tail_cost_numpy(Xt[b], Ut[b], x0[:2], branch_targets[b], goal_xy, v_plan, prev_u_tail)
             for b in range(len(branches))
         ]
         explore_cost = float(shared_cost + sum(float(branch_probs[b]) * float(branch_tail_costs[b]) for b in range(len(branches))))
@@ -1232,7 +1300,7 @@ class ControlTreeMPC(MPCCommonUtils):
             "goal_xy": [float(goal_xy[0]), float(goal_xy[1])],
             "shared_prefix_length": int(self.n_split),
             "effective_v_ref": float(v_plan),
-            "speed_cost_mode": "speed_norm",
+            "speed_cost_mode": "di_progress_aligned" if self.model == "DoubleIntegrator2D" else "speed_norm",
             "u_ref_0": float(u_ref[0, 0]),
             "u_ref_1": float(u_ref[1, 0]),
             "u_cmd_0": float(u_cmd[0, 0]),

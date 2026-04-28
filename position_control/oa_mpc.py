@@ -15,15 +15,37 @@ except Exception:
 
 class OAMPC:
     """
-    OA-MPC baseline controller following the paper structure:
-      1) Build reachable sets from visible/occlusion geometry.
-      2) Collision-avoidance projection on shifted open-loop trajectory.
-      3) Solve NMPC with projected-point distance constraints.
+    OA-MPC baseline inspired by:
+      "OA-MPC: Occlusion-Aware MPC for Guaranteed Safe Robot Navigation
+      with Unseen Dynamic Obstacles", adapted here to crowd-style occlusion
+      scenes.
 
-    Supported robot models:
-      - DoubleIntegrator2D
-      - Unicycle2D
-      - DynamicUnicycle2D
+    Implemented features from the paper:
+      - forward reachable sets for dynamic agents with no intention prediction:
+        hidden agents from occlusion boundaries and visible dynamic agents from
+        bounded-speed worst-case expansion,
+      - LiDAR-jump-style occlusion-boundary extraction and capsule-like hidden
+        reachable sets that grow over the MPC horizon,
+      - projected-point collision constraints against the shifted open-loop
+        trajectory followed by one CasADi/IPOPT NMPC solve,
+      - safe-distance defaults, effective 1.0 s horizon, input /
+        delta-input / terminal costs, and terminal stopping logic,
+      - visible dynamic agents can also act as occluders in test cases; this is a
+        benchmark adaptation because the paper experiments mostly use static
+        occluders and treat pedestrian-induced occlusion as negligible,
+
+    Not implemented paper-faithfully here:
+      - theorem-exact recursive feasibility is not claimed in dense dynamic
+        crowd scenes; full complementarity handling for every collision row is
+        solver-fragile, so visible/static circle rows are hard constraints by
+        default and terminal complementarity is not forced for dynamic-occluder
+        crowd2 runs,
+      - the full numerical Algorithm-2 fixed-point alternation is simplified by
+        default to one projection-target construction followed by one NMPC solve
+        per MPC step, though additional alternations can be enabled by config,
+      - this implementation preserves the main OA-MPC planning structure, but uses a
+        simplified single IPOPT NMPC solve rather than reproducing every numerical
+        detail of the original algorithm.
     """
 
     def __init__(self, robot, robot_spec, num_obs=30):
@@ -72,22 +94,21 @@ class OAMPC:
         self.prune_far_margin = float(cfg.get("prune_far_margin", 0.0))
         # Practical robustness guard: IPOPT may occasionally return
         # Restoration/Step_Computation failure on this nonconvex NMPC even when
-        # a safe stop action exists. Keep fallback enabled by default and allow
-        # strict disabling via cfg (`allow_solver_fallback=False`).
-        default_fallback = True
+        # a safe stop action exists. Keep it opt-in so benchmark defaults report
+        # solver failure as OA-MPC infeasibility rather than silently stopping.
+        default_fallback = False
         self.allow_solver_fallback = bool(cfg.get("allow_solver_fallback", default_fallback))
         self.occluder_speed_max = float(cfg.get("occluder_speed_max", 1e-3))
         self.dynamic_occluders = bool(cfg.get("dynamic_occluders", False))
-        # Paper writes complementarity in the formulation, but the same section
-        # also presents direct distance-constraint usage as a practical option.
-        # Keep complementarity available as an option; default to hard-distance
-        # constraints for robust baseline execution in this framework.
-        default_use_comp = False if self.paper_mode else True
+        # Keep the paper's occlusion projected-set complementarity active by
+        # default. Visible/static circle rows remain hard distance constraints
+        # unless explicitly overridden, which is the crowd2 adaptation used here.
+        default_use_comp = True
         self.use_complementarity = bool(cfg.get("use_complementarity", default_use_comp))
         self.complementarity_smax_kappa = float(cfg.get("complementarity_smax_kappa", 20.0))
         self.aggregate_complementarity = bool(cfg.get("aggregate_complementarity", False))
         self.complementarity_for_circles = bool(
-            cfg.get("complementarity_for_circles", self.use_complementarity and self.paper_mode)
+            cfg.get("complementarity_for_circles", False)
         )
         # Paper recursive-feasibility argument relies on a terminal stopping
         # contingency. In practice, encoding bilinear complementarity at every
@@ -119,8 +140,9 @@ class OAMPC:
         if self.di_terminal_stop_mode not in {"exact", "brake_reachable", "input_zero_only", "none"}:
             self.di_terminal_stop_mode = "exact"
         self.di_terminal_brake_steps = max(1, int(cfg.get("di_terminal_brake_steps", 1)))
-        # Paper Algorithm 2 performs one projection solve + one NMPC solve
-        # per control cycle (no inner fixed-point repeats by default).
+        # Paper Algorithm 2 alternates projected-distance construction and
+        # NMPC solves. The benchmark default uses one projection/NMPC pass per
+        # MPC step for robustness, while keeping extra alternations configurable.
         default_alt_iters = 1 if self.paper_mode else 1
         self.alternation_iters = max(1, int(cfg.get("alternation_iters", default_alt_iters)))
         self.alternation_tol = float(cfg.get("alternation_tol", 1e-3))
@@ -154,7 +176,11 @@ class OAMPC:
         self.w_du = float(cfg.get("w_du", 0.2))
         self.w_terminal = float(cfg.get("w_terminal", 25.0))
         self.di_use_progress_speed_cost = bool(cfg.get("di_use_progress_speed_cost", True))
-        self.di_use_speed_schedule = bool(cfg.get("di_use_speed_schedule", True))
+        # Pressure scores are retained as diagnostics, but the default DI
+        # adaptation does not add an extra risk-style speed governor. OA-MPC
+        # should slow through reachable-set constraints, complementarity, and
+        # terminal stopping rather than a separate pressure-based cap.
+        self.di_use_speed_schedule = bool(cfg.get("di_use_speed_schedule", False))
         self.di_use_speed_cap = bool(cfg.get("di_use_speed_cap", True))
         self.di_w_speed = float(cfg.get("di_w_speed", 6.0))
         self.di_w_lateral_velocity = float(cfg.get("di_w_lateral_velocity", 2.0))
@@ -1005,7 +1031,10 @@ class OAMPC:
             opti.subject_to(X[:, k + 1] == self._discrete_dynamics_ca(X[:, k], U[:, k]))
             opti.subject_to(opti.bounded(lb_u, U[:, k], ub_u))
             if self.model == "DoubleIntegrator2D" and self.di_use_speed_cap:
-                opti.subject_to(ca.sumsqr(X[2:4, k + 1]) <= (vref_sched_dm[k] + 1e-6) ** 2)
+                v_cap = float(self.robot_spec.get("v_max", 1.0))
+                if (not np.isfinite(v_cap)) or v_cap <= 0.0:
+                    v_cap = 1.0
+                opti.subject_to(ca.sumsqr(X[2:4, k + 1]) <= (v_cap + 1e-6) ** 2)
 
         # State bounds (model-specific).
         if self.model == "DoubleIntegrator2D":

@@ -32,26 +32,32 @@ class OACPMPC(MPCCommonUtils):
     Centralized contingency-MPC adaptation inspired by OACP,
     "Occlusion-Aware Contingency Safety-Critical Planning for Autonomous Driving".
 
-    Implemented here from the OACP method:
-      - a two-branch contingency structure with explicit explore and fallback
-        trajectories,
-      - a shared initial prefix so both branches apply the same immediate
-        action,
-      - joint optimization of shared/explore/fallback trajectories every MPC
-        cycle,
-      - branch-specific occlusion-aware speed caps and route-tracking costs,
-      - visible-obstacle avoidance and occlusion-risk constraints with soft
-        slack,
-      - receding-horizon execution where the applied control always comes from
-        the shared prefix.
+    Implemented features from the paper:
+      - a two-branch contingency structure with explicit shared/explore/
+        fallback trajectories,
+      - receding-horizon execution where the applied control comes from the
+        shared prefix,
+      - centralized joint optimization of the three trajectories as one coupled
+        CasADi IPOPT NLP,
+      - active-occlusion selection, SRQ-inspired occlusion scoring, and
+        branch-specific stage-wise velocity boundaries,
+      - explicit phantom hidden-agent hypotheses generated from occlusion
+        tangents and enforced through branch-wise barrier/avoidance
+        constraints,
+      - model-aware adaptations of the branch tracking / speed-bound logic,
+      - route-tracking references shared across the branches, with an optional
+        Bezier-smoothed reference scaffold used only for reference generation.
 
-    Not implemented paper-faithfully here:
-      - the paper's SRQ occlusion-risk quantification and its exact dynamic
-        velocity-boundary equations,
-      - the paper's biconvex control-point NLP with explicit consensus,
-      - the consensus-ADMM solve procedure, including primal/dual updates and
-        residual-based termination, we instead solve the full coupled NLP directly with CasADi IPOPT,
-      - the dynamics are different
+    Still not paper-exact here:
+      - the SRQ model and dynamic velocity-boundary equations are adapted
+        surrogates for the test_crowd2 benchmark rather than an exact reproduction of
+        the paper's road-structured formulation,
+      - the optimization is not the paper's biconvex Bezier control-point
+        program,
+      - the ALM / consensus-ADMM solve procedure is intentionally omitted; this
+        repo benchmarks a centralized coupled NLP instead,
+      - DoubleIntegrator2D support is a benchmark-specific 2D adaptation rather
+        than the paper's original vehicle / lane model.
     """
 
     def __init__(self, robot, robot_spec, num_obs=30):
@@ -83,15 +89,11 @@ class OACPMPC(MPCCommonUtils):
         self.n_shared = int(cfg.get("n_shared", min(3, self.N - 1)))
         self.n_shared = max(1, min(self.N - 1, self.n_shared))
         self.n_tail = int(self.N - self.n_shared)
-        self.backend = str(cfg.get("backend", "coupled_nlp")).strip().lower()
-        if self.backend not in {"coupled_nlp", "admm_lowdim"}:
-            self.backend = "coupled_nlp"
-        if self.backend == "admm_lowdim" and self.model != "DoubleIntegrator2D":
-            self.backend = "coupled_nlp"
-        if self.backend == "admm_lowdim" and cp is None:
-            self.backend = "coupled_nlp"
-        if self.backend == "admm_lowdim" and (osqp is None or sp is None):
-            self.backend = "coupled_nlp"
+        self.requested_backend = str(cfg.get("backend", "coupled_nlp")).strip().lower()
+        # OACP benchmarking in this repo is intentionally ADMM-free. Keep the
+        # public backend knob for compatibility, but execute the centralized NLP
+        # path as the paper-spirit baseline used in crowd benchmarks.
+        self.backend = "coupled_nlp"
 
         self.forward_only = bool(cfg.get("forward_only", True))
         self.du_nonnegative_speed = bool(cfg.get("du_nonnegative_speed", True))
@@ -104,7 +106,9 @@ class OACPMPC(MPCCommonUtils):
         # Keep anticipated obstacle counts close to the structured-road paper regime.
         self.max_visible_obs = max(1, int(cfg.get("max_visible_obs", min(self.num_obs, 30))))
         self.max_occ_scenarios = max(1, int(cfg.get("max_occ_scenarios", 30)))
+        self.max_active_occlusions = max(1, int(cfg.get("max_active_occlusions", min(2, self.max_occ_scenarios))))
         self.max_path_points = max(3, int(cfg.get("max_path_points", 10)))
+        self.max_phantom_obs = max(1, 2 * self.max_active_occlusions)
         self.num_occ_facets = 4
 
         self.margin_obs = float(cfg.get("margin_obs", 0.05))
@@ -115,37 +119,44 @@ class OACPMPC(MPCCommonUtils):
                 robot_spec.get("v_obs_max", robot_spec.get("v_adv_max_occ", 0.5)),
             )
         )
+        self.hidden_agent_radius = float(cfg.get("hidden_agent_radius", 0.4))
+        self.hidden_spawn_clearance = float(cfg.get("hidden_spawn_clearance", 0.12))
+        self.hidden_speed_scale = float(cfg.get("hidden_speed_scale", 1.0))
+        self.hidden_speed = float(
+            cfg.get(
+                "hidden_speed",
+                robot_spec.get("v_adv_max_occ", robot_spec.get("v_obs_max", 0.5)),
+            )
+        )
+        self.active_selection_delta = float(cfg.get("active_selection_delta", 1.0))
 
-        # Preserve a meaningful explore/fallback separation: explore stays less
-        # sensitive to occlusion risk, fallback remains distinctly slower.
-        self.risk_explore_scale = float(cfg.get("risk_explore_scale", 0.40))
-        self.risk_fallback_scale = float(cfg.get("risk_fallback_scale", 1.00))
-        self.explore_speed_scale = float(cfg.get("explore_speed_scale", 1.00))
-        self.fallback_speed_scale = float(cfg.get("fallback_speed_scale", 0.75))
-        self.shared_speed_blend = float(cfg.get("shared_speed_blend", 0.35))
+        # Keep the SRQ risk horizon tied to the active planning horizon so the
+        # risk window matches the receding-horizon optimization window.
+        self.srq_horizon = float(self.Th)
+        self.srq_confidence_z = float(cfg.get("srq_confidence_z", 1.645))
+        self.srq_lane_width_min = float(cfg.get("srq_lane_width_min", 0.8))
+        self.srq_lane_width_max = float(cfg.get("srq_lane_width_max", 2.5))
+        self.srq_lat_sigma_floor = float(cfg.get("srq_lat_sigma_floor", 0.18))
+        self.srq_risk_clip = float(cfg.get("srq_risk_clip", 4.0))
+        self.cth_min = float(cfg.get("cth_min", 0.0))
+        self.cth_max_explore = float(cfg.get("cth_max_explore", 0.85))
+        self.cth_max_fallback = float(cfg.get("cth_max_fallback", 0.55))
+        self.v_occ_min_scale = float(cfg.get("v_occ_min_scale", 0.15))
+        self.v_occ_min_abs = float(cfg.get("v_occ_min_abs", 0.0))
+
         self.di_use_progress_speed_cost = bool(cfg.get("di_use_progress_speed_cost", True))
-        self.di_use_dynamic_speed_profile = bool(cfg.get("di_use_dynamic_speed_profile", True))
         self.di_lateral_velocity_weight = float(cfg.get("di_lateral_velocity_weight", 1.25))
-        self.di_profile_occ_scale = float(cfg.get("di_profile_occ_scale", 1.00))
-        self.di_profile_visible_scale = float(cfg.get("di_profile_visible_scale", 0.45))
-        self.di_profile_speed_floor_scale = float(cfg.get("di_profile_speed_floor_scale", 0.35))
-        self.branch_switch_risk_on = float(cfg.get("branch_switch_risk_on", 0.45))
-        self.branch_switch_risk_off = float(cfg.get("branch_switch_risk_off", 0.25))
-        self.admm_rho = float(cfg.get("admm_rho", 2.0))
-        self.admm_max_iter = int(cfg.get("admm_max_iter", 3))
-        self.admm_pri_tol = float(cfg.get("admm_pri_tol", 1e-2))
-        self.admm_dual_tol = float(cfg.get("admm_dual_tol", 1e-2))
-        self.admm_shared_ctrl_pts = max(1, int(cfg.get("admm_shared_ctrl_pts", min(2, self.n_shared))))
-        self.admm_tail_ctrl_pts = max(1, int(cfg.get("admm_tail_ctrl_pts", min(3, self.n_tail))))
-        self.admm_shared_ctrl_pts = min(self.admm_shared_ctrl_pts, max(1, self.n_shared))
-        self.admm_tail_ctrl_pts = min(self.admm_tail_ctrl_pts, max(1, self.n_tail))
-
-        self.risk_decay = float(cfg.get("risk_decay", 0.35))
-        self.risk_distance_scale = float(cfg.get("risk_distance_scale", 3.5))
-        self.risk_softplus_k = float(cfg.get("risk_softplus_k", 8.0))
-        self.shared_risk_limit = float(cfg.get("shared_risk_limit", 0.75))
-        self.explore_risk_limit = float(cfg.get("explore_risk_limit", 0.90))
-        self.fallback_risk_limit = float(cfg.get("fallback_risk_limit", 0.60))
+        self.di_cross_track_scale_shared = float(cfg.get("di_cross_track_scale_shared", 0.50))
+        self.di_cross_track_scale_branch = float(cfg.get("di_cross_track_scale_branch", 0.35))
+        self.barrier_alpha_start = float(cfg.get("barrier_alpha_start", 0.4))
+        self.barrier_alpha_end = float(cfg.get("barrier_alpha_end", 1.0))
+        self.ellipse_scale_x = float(cfg.get("ellipse_scale_x", 1.0))
+        self.ellipse_scale_y = float(cfg.get("ellipse_scale_y", 1.0))
+        self.ellipse_buffer_x = float(cfg.get("ellipse_buffer_x", self.margin_obs))
+        self.ellipse_buffer_y = float(cfg.get("ellipse_buffer_y", self.margin_obs))
+        self.use_bezier_reference = bool(cfg.get("use_bezier_reference", True))
+        self.bezier_ref_order = max(2, int(cfg.get("bezier_ref_order", 10)))
+        self.branch_switch_margin = float(cfg.get("branch_switch_margin", 0.05))
 
         self.w_pos_shared = float(cfg.get("w_pos_shared", 12.0))
         self.w_heading_shared = float(cfg.get("w_heading_shared", 2.5))
@@ -159,16 +170,20 @@ class OACPMPC(MPCCommonUtils):
         self.w_u = float(cfg.get("w_u", 0.15))
         self.w_du = float(cfg.get("w_du", 0.35))
         self.w_terminal_goal = float(cfg.get("w_terminal_goal", 12.0))
-        self.w_risk_shared = float(cfg.get("w_risk_shared", 10.0))
-        self.w_risk_explore = float(cfg.get("w_risk_explore", 7.0))
-        self.w_risk_fallback = float(cfg.get("w_risk_fallback", 14.0))
-        self.w_risk_slack_shared = float(cfg.get("w_risk_slack_shared", 300.0))
-        self.w_risk_slack_explore = float(cfg.get("w_risk_slack_explore", 180.0))
-        self.w_risk_slack_fallback = float(cfg.get("w_risk_slack_fallback", 320.0))
-        self.w_vis_slack_shared = float(cfg.get("w_vis_slack_shared", 1200.0))
-        self.w_vis_slack_explore = float(cfg.get("w_vis_slack_explore", 900.0))
-        self.w_vis_slack_fallback = float(cfg.get("w_vis_slack_fallback", 1200.0))
+        self.w_barrier_slack_shared = float(
+            cfg.get("w_barrier_slack_shared", cfg.get("w_vis_slack_shared", 1200.0))
+        )
+        self.w_barrier_slack_explore = float(
+            cfg.get("w_barrier_slack_explore", cfg.get("w_vis_slack_explore", 900.0))
+        )
+        self.w_barrier_slack_fallback = float(
+            cfg.get("w_barrier_slack_fallback", cfg.get("w_vis_slack_fallback", 1200.0))
+        )
         self.di_lateral_speed_cap_scale = float(cfg.get("di_lateral_speed_cap_scale", 0.60))
+        self.branch_goal_weight = float(cfg.get("branch_goal_weight", 1.0))
+        self.branch_progress_weight = float(cfg.get("branch_progress_weight", 0.25))
+        self.branch_slack_weight = float(cfg.get("branch_slack_weight", 6.0))
+        self.branch_clearance_weight = float(cfg.get("branch_clearance_weight", 0.15))
 
         self.solver_tol = float(cfg.get("solver_tol", 1e-3))
         self.solver_acceptable_tol = float(cfg.get("solver_acceptable_tol", 5e-3))
@@ -217,6 +232,14 @@ class OACPMPC(MPCCommonUtils):
         self._u_prev_applied = np.zeros((self._u_dim, 1), dtype=float)
         self._sol_prev = None
         self._admm_prev = None
+        self.admm_rho = float(cfg.get("admm_rho", 2.0))
+        self.admm_max_iter = int(cfg.get("admm_max_iter", 3))
+        self.admm_pri_tol = float(cfg.get("admm_pri_tol", 1e-2))
+        self.admm_dual_tol = float(cfg.get("admm_dual_tol", 1e-2))
+        self.admm_shared_ctrl_pts = max(1, int(cfg.get("admm_shared_ctrl_pts", min(2, self.n_shared))))
+        self.admm_tail_ctrl_pts = max(1, int(cfg.get("admm_tail_ctrl_pts", min(3, self.n_tail))))
+        self.admm_shared_ctrl_pts = min(self.admm_shared_ctrl_pts, max(1, self.n_shared))
+        self.admm_tail_ctrl_pts = min(self.admm_tail_ctrl_pts, max(1, self.n_tail))
         self._basis_shared_np = self._bernstein_basis(self.admm_shared_ctrl_pts, self.n_shared)
         self._basis_tail_np = self._bernstein_basis(self.admm_tail_ctrl_pts, self.n_tail)
         self._basis_shared_ca = ca.DM(self._basis_shared_np)
@@ -423,124 +446,155 @@ class OACPMPC(MPCCommonUtils):
         scored.sort(key=lambda item: item[0])
         return [it[1] for it in scored[: self.max_occ_scenarios]]
 
-    def _aggregate_occ_risk(self, pos_xy, goal_xy, occ_scenarios, step_idx=0):
-        if occ_scenarios is None or len(occ_scenarios) == 0:
-            return 0.0, None
+    def _build_srq_frame(self, scenario):
+        c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
+        v_dir = np.asarray(scenario.get("arc_adv", np.zeros(2)), dtype=float).reshape(-1)
+        if v_dir.size >= 2:
+            e_long = np.asarray(v_dir[:2], dtype=float)
+        else:
+            e_long = np.array([1.0, 0.0], dtype=float)
+        nrm = float(np.linalg.norm(e_long))
+        if nrm <= 1e-9:
+            e_long = np.array([1.0, 0.0], dtype=float)
+        else:
+            e_long = e_long / nrm
+        n_lat = np.array([-e_long[1], e_long[0]], dtype=float)
+
+        poly = np.asarray(scenario.get("poly", np.zeros((0, 2))), dtype=float).reshape(-1, 2)
+        if poly.shape[0] == 0:
+            t1 = np.asarray(scenario.get("t1", c), dtype=float).reshape(2,)
+            t2 = np.asarray(scenario.get("t2", c), dtype=float).reshape(2,)
+            poly = np.vstack([t1, t2])
+        rel = poly - c[None, :]
+        long_coord = rel @ e_long
+        lat_coord = rel @ n_lat
+        s_s = float(np.min(long_coord))
+        s_e = float(np.max(long_coord))
+        lane_width = float(np.clip(2.0 * np.max(np.abs(lat_coord)), self.srq_lane_width_min, self.srq_lane_width_max))
+        sigma = float(max(self.srq_lat_sigma_floor, lane_width / max(2.0 * self.srq_confidence_z, 1e-6)))
+        peak_grid = np.linspace(s_s, s_e + max(0.0, float(scenario.get("v_adv_max", self.hidden_speed))) * self.srq_horizon, 48)
+        peak_r = 0.0
+        for s in peak_grid:
+            peak_r = max(peak_r, float(self._srq_longitudinal_risk(s, s_s, s_e, float(scenario.get("v_adv_max", self.hidden_speed)))))
+        peak_r = max(peak_r, 1e-6)
+        return {
+            "anchor": c,
+            "e_long": e_long,
+            "n_lat": n_lat,
+            "s_s": s_s,
+            "s_e": s_e,
+            "lane_width": lane_width,
+            "sigma_lat": sigma,
+            "v_pv_max": float(max(0.0, scenario.get("v_adv_max", self.hidden_speed))),
+            "peak_longitudinal_risk": peak_r,
+            "scenario": scenario,
+        }
+
+    def _srq_longitudinal_risk(self, s, s_s, s_e, v_pv_max):
+        s = float(s)
+        s_s = float(s_s)
+        s_e = float(max(s_e, s_s + 1e-6))
+        T = float(max(self.srq_horizon, 1e-6))
+        v_pv_max = float(max(0.0, v_pv_max))
+        span = float(max(s_e - s_s, 1e-6))
+        i2_hi = s_s + v_pv_max * T
+        i3_hi = s_e + v_pv_max * T
+        if s < s_s or s > i3_hi:
+            return 0.0
+        if s <= s_e:
+            g = 0.5 * (2.0 * v_pv_max - (s - s_s) / T) * (s - s_s)
+        elif s <= i2_hi:
+            g = 0.5 * (2.0 * v_pv_max - (s - s_s) / T - (s - s_e) / T) * span
+        else:
+            g = 0.5 * (v_pv_max - (s - s_e) / T) * (s_e - (s - v_pv_max * T))
+        return float(max(0.0, span * g))
+
+    def _srq_lateral_risk(self, d_abs, sigma):
+        sigma = float(max(self.srq_lat_sigma_floor, sigma))
+        z = float(d_abs) / sigma
+        return float(np.exp(-0.5 * z * z))
+
+    def _srq_risk_at_position(self, pos_xy, frame):
         pos_xy = np.asarray(pos_xy, dtype=float).reshape(2,)
-        scores = []
-        tau = max(0.0, float(step_idx) * float(self.dt_plan))
-        for idx, sc in enumerate(occ_scenarios):
-            A = np.asarray(sc.get("A", np.zeros((0, 2))), dtype=float)
-            b0 = np.asarray(sc.get("b0", np.zeros((0,))), dtype=float).reshape(-1)
-            if A.ndim != 2 or A.shape[0] == 0 or A.shape[1] != 2 or b0.size != A.shape[0]:
+        anchor = np.asarray(frame["anchor"], dtype=float).reshape(2,)
+        rel = pos_xy - anchor
+        s = float(rel @ np.asarray(frame["e_long"], dtype=float).reshape(2,))
+        d_abs = float(abs(rel @ np.asarray(frame["n_lat"], dtype=float).reshape(2,)))
+        r_lon = self._srq_longitudinal_risk(s, frame["s_s"], frame["s_e"], frame["v_pv_max"])
+        r_lat = self._srq_lateral_risk(d_abs, frame["sigma_lat"])
+        raw = float(r_lon * r_lat)
+        norm = float(raw / max(frame["peak_longitudinal_risk"], 1e-6))
+        return raw, norm
+
+    def _aggregate_srq_risk(self, pos_xy, srq_frames):
+        if srq_frames is None or len(srq_frames) == 0:
+            return 0.0, 0.0, None
+        raw_total = 0.0
+        norm_total = 0.0
+        dominant_idx = None
+        dominant_val = -np.inf
+        for idx, frame in enumerate(srq_frames):
+            raw, norm = self._srq_risk_at_position(pos_xy, frame)
+            raw_total += float(raw)
+            norm_total += float(norm)
+            if norm > dominant_val:
+                dominant_val = float(norm)
+                dominant_idx = idx
+        return (
+            float(raw_total),
+            float(np.clip(norm_total, 0.0, max(self.srq_risk_clip, 1e-6))),
+            dominant_idx,
+        )
+
+    def _active_occlusion_context(self, x0, goal_xy, occ_scenarios, nominal_points):
+        selected_entries, all_entries = self._select_active_occlusion_entries(
+            x0=x0,
+            goal_xy=goal_xy,
+            occ_scenarios=occ_scenarios,
+            nominal_points=nominal_points,
+            max_active_occlusions=self.max_active_occlusions,
+        )
+        srq_frames = []
+        phantom_obs = []
+        for entry in selected_entries:
+            scenario = entry.get("scenario", None)
+            if scenario is None:
                 continue
-            v_expand = np.asarray(sc.get("v_expand_vec", np.zeros((A.shape[0],))), dtype=float).reshape(-1)
-            if v_expand.size != A.shape[0]:
-                v_expand = np.zeros((A.shape[0],), dtype=float)
-            signed = float(np.max(A @ pos_xy - (b0 + self.robot_radius + v_expand * tau)))
-            poly_term = 1.0 / (1.0 + np.exp(float(self.risk_softplus_k) * signed / max(self.risk_decay, 1e-6)))
-            c = np.asarray(sc.get("obs_center", pos_xy), dtype=float).reshape(2,)
-            dist = float(np.linalg.norm(pos_xy - c))
-            center_term = float(np.exp(-(dist ** 2) / max(self.risk_distance_scale ** 2, 1e-6)))
-            scores.append((float(poly_term * center_term), idx))
-        if len(scores) == 0:
-            return 0.0, None
-        scores.sort(reverse=True)
-        total = sum(s for s, _ in scores[: self.max_occ_scenarios])
-        risk = float(np.clip(total, 0.0, 2.0))
-        dominant_idx = scores[0][1] if scores[0][0] > 1e-6 else None
-        return risk, dominant_idx
+            frame = self._build_srq_frame(scenario)
+            frame["entry"] = entry
+            srq_frames.append(frame)
+            for key in ("hidden_t1", "hidden_t2"):
+                obs = entry.get(key, None)
+                if obs is not None:
+                    phantom_obs.append(np.asarray(obs, dtype=float).reshape(-1))
+        return selected_entries, all_entries, srq_frames, phantom_obs[: self.max_phantom_obs]
 
-    def _branch_speed_caps(self, v_ref_nom, risk_score):
-        v_ref_nom = max(0.0, float(v_ref_nom))
-        v_explore = self.explore_speed_scale * v_ref_nom * (1.0 - self.risk_explore_scale * risk_score)
-        v_fallback = self.fallback_speed_scale * v_ref_nom * (1.0 - self.risk_fallback_scale * risk_score)
-        v_explore = float(np.clip(v_explore, 0.0, max(v_ref_nom, 0.0)))
-        v_fallback = float(np.clip(v_fallback, 0.0, v_explore))
-        shared = float(np.clip(v_fallback + self.shared_speed_blend * (v_explore - v_fallback), 0.0, max(v_explore, 0.0)))
-        return shared, v_explore, v_fallback
+    def _velocity_boundary_from_risk(self, v_ref_nom, risk_value, cth_max):
+        v_ref_nom = float(max(0.0, v_ref_nom))
+        cth_max = float(max(self.cth_min + 1e-6, cth_max))
+        v_occ_max = v_ref_nom
+        v_occ_min = float(min(v_occ_max, max(self.v_occ_min_abs, self.v_occ_min_scale * v_ref_nom)))
+        if risk_value >= cth_max:
+            return v_occ_min
+        slope = (v_occ_min - v_occ_max) / max(cth_max - self.cth_min, 1e-6)
+        v = slope * (float(risk_value) - self.cth_min) + v_occ_max
+        return float(np.clip(v, v_occ_min, v_occ_max))
 
-    def _aggregate_visible_pressure(self, pos_xy, goal_xy, visible_obs):
-        if visible_obs is None or len(visible_obs) == 0:
-            return 0.0
-        p = np.asarray(pos_xy, dtype=float).reshape(2,)
-        g = np.asarray(goal_xy, dtype=float).reshape(2,)
-        dg = g - p
-        ng = float(np.linalg.norm(dg))
-        if ng <= 1e-9:
-            goal_dir = np.array([1.0, 0.0], dtype=float)
-        else:
-            goal_dir = dg / ng
-        scores = []
-        for obs in visible_obs:
-            o = np.asarray(obs, dtype=float).reshape(-1)
-            c = o[:2]
-            r = float(o[2]) if o.size >= 3 else 0.0
-            rel = c - p
-            ahead = float(np.dot(rel, goal_dir))
-            if ahead < -(self.robot_radius + r):
-                continue
-            lateral = rel - ahead * goal_dir
-            lat_d = float(np.linalg.norm(lateral))
-            lat_scale = max(0.8, self.robot_radius + r + 0.35)
-            lat_term = float(np.exp(-((lat_d / lat_scale) ** 2)))
-            clear = float(np.linalg.norm(rel) - (self.robot_radius + r + self.margin_obs))
-            clear_term = 1.0 / (1.0 + max(clear, 0.0) / 1.5)
-            ahead_term = 1.0 / (1.0 + max(ahead, 0.0) / 3.0)
-            scores.append(lat_term * clear_term * ahead_term)
-        if len(scores) == 0:
-            return 0.0
-        return float(np.clip(max(scores), 0.0, 1.0))
-
-    def _aggregate_visible_pressure_step(self, pos_xy, goal_xy, visible_obs, step_idx=0):
-        if visible_obs is None or len(visible_obs) == 0:
-            return 0.0
-        p = np.asarray(pos_xy, dtype=float).reshape(2,)
-        g = np.asarray(goal_xy, dtype=float).reshape(2,)
-        dg = g - p
-        ng = float(np.linalg.norm(dg))
-        if ng <= 1e-9:
-            goal_dir = np.array([1.0, 0.0], dtype=float)
-        else:
-            goal_dir = dg / ng
-        scores = []
-        for obs in visible_obs:
-            o = np.asarray(obs, dtype=float).reshape(-1)
-            c = self._predict_obs_center(o, step_idx)
-            r = float(o[2]) if o.size >= 3 else 0.0
-            if self.visible_reach_mode == "worst_case":
-                r += float(self.v_visible_max) * float(self.dt_plan) * float(step_idx)
-            rel = c - p
-            ahead = float(np.dot(rel, goal_dir))
-            if ahead < -(self.robot_radius + r):
-                continue
-            lateral = rel - ahead * goal_dir
-            lat_d = float(np.linalg.norm(lateral))
-            lat_scale = max(0.8, self.robot_radius + r + 0.35)
-            lat_term = float(np.exp(-((lat_d / lat_scale) ** 2)))
-            clear = float(np.linalg.norm(rel) - (self.robot_radius + r + self.margin_obs))
-            clear_term = 1.0 / (1.0 + max(clear, 0.0) / 1.5)
-            ahead_term = 1.0 / (1.0 + max(ahead, 0.0) / 3.0)
-            scores.append(lat_term * clear_term * ahead_term)
-        if len(scores) == 0:
-            return 0.0
-        return float(np.clip(max(scores), 0.0, 1.0))
-
-    def _risk_shaped_speed_profile(self, ref_pos, goal_xy, base_cap, visible_obs, occ_scenarios, step_offset):
-        count = int(ref_pos.shape[1] - 1)
-        prof = np.full((1, count), float(base_cap), dtype=float)
-        if self.model != "DoubleIntegrator2D" or not self.di_use_dynamic_speed_profile:
-            return prof
-        floor = float(self.di_profile_speed_floor_scale)
-        for k in range(count):
-            abs_step = int(step_offset + k + 1)
-            pos_k = np.asarray(ref_pos[:, k + 1], dtype=float).reshape(2,)
-            occ_risk_k, _ = self._aggregate_occ_risk(pos_k, goal_xy, occ_scenarios, abs_step)
-            vis_pressure_k = self._aggregate_visible_pressure_step(pos_k, goal_xy, visible_obs, abs_step)
-            denom = 1.0 + self.di_profile_occ_scale * float(occ_risk_k) + self.di_profile_visible_scale * float(vis_pressure_k)
-            scale = float(np.clip(1.0 / max(denom, 1e-6), floor, 1.0))
-            prof[0, k] = float(base_cap * scale)
-        return prof
+    def _branch_velocity_boundaries(self, nominal_points, srq_frames, v_ref_nom):
+        full_explore = np.full((self.N,), float(max(0.0, v_ref_nom)), dtype=float)
+        full_fallback = np.full((self.N,), float(max(0.0, v_ref_nom)), dtype=float)
+        risk_vec = np.zeros((self.N,), dtype=float)
+        risk_raw_vec = np.zeros((self.N,), dtype=float)
+        for k in range(1, min(int(self.N), int(len(nominal_points) - 1)) + 1):
+            raw_k, norm_k, _ = self._aggregate_srq_risk(nominal_points[k], srq_frames)
+            risk_raw_vec[k - 1] = float(raw_k)
+            risk_vec[k - 1] = float(norm_k)
+            full_explore[k - 1] = self._velocity_boundary_from_risk(v_ref_nom, norm_k, self.cth_max_explore)
+            full_fallback[k - 1] = self._velocity_boundary_from_risk(v_ref_nom, norm_k, self.cth_max_fallback)
+        shared = np.minimum(full_explore[: self.n_shared], full_fallback[: self.n_shared]).reshape(1, -1)
+        explore = full_explore[self.n_shared:].reshape(1, -1)
+        fallback = full_fallback[self.n_shared:].reshape(1, -1)
+        return shared, explore, fallback, risk_raw_vec, risk_vec
 
     def _progress_speed_ca(self, xk, ref_heading):
         e = ca.vertcat(ca.cos(ref_heading), ca.sin(ref_heading))
@@ -624,34 +678,90 @@ class OACPMPC(MPCCommonUtils):
         heading = float(np.arctan2(seg[1], seg[0]))
         return pts[-1].copy(), heading
 
-    def _reference_bundle(self, x0, control_ref, goal_xy, visible_obs, occ_scenarios, shared_cap, explore_cap, fallback_cap):
+    @staticmethod
+    def _heading_from_positions(pos):
+        pos = np.asarray(pos, dtype=float)
+        n = int(pos.shape[1])
+        hdg = np.zeros((1, n), dtype=float)
+        if n <= 1:
+            return hdg
+        diffs = pos[:, 1:] - pos[:, :-1]
+        for k in range(n - 1):
+            d = np.asarray(diffs[:, k], dtype=float).reshape(2,)
+            if float(np.linalg.norm(d)) <= 1e-9:
+                hdg[0, k] = hdg[0, max(k - 1, 0)]
+            else:
+                hdg[0, k] = float(np.arctan2(d[1], d[0]))
+        hdg[0, -1] = hdg[0, -2]
+        return hdg
+
+    def _sample_polyline_speed_profile(self, pts, cum, s_start, speed_profile):
+        speed_profile = np.asarray(speed_profile, dtype=float).reshape(-1)
+        count = int(speed_profile.size)
+        pos = np.zeros((2, count + 1), dtype=float)
+        s = float(s_start)
+        for k in range(count + 1):
+            pk, _ = self._sample_polyline(pts, cum, s)
+            pos[:, k] = pk
+            if k < count:
+                s += float(speed_profile[k]) * float(self.dt_plan)
+        hdg = self._heading_from_positions(pos)
+        return pos, hdg
+
+    def _bezier_smooth_reference(self, pos):
+        pos = np.asarray(pos, dtype=float)
+        if (not self.use_bezier_reference) or pos.shape[1] <= 3:
+            return pos.copy(), self._heading_from_positions(pos), None
+        n_steps = int(pos.shape[1])
+        n_ctrl = min(int(self.bezier_ref_order) + 1, n_steps)
+        basis = self._bernstein_basis(n_ctrl, n_steps)
+        ctrl = self._fit_ctrl_points_np(pos, basis)
+        smooth = ctrl @ basis
+        smooth[:, 0] = pos[:, 0]
+        smooth[:, -1] = pos[:, -1]
+        return smooth, self._heading_from_positions(smooth), ctrl
+
+    def _nominal_route_rollout(self, x0, control_ref, goal_xy, v_ref_nom):
+        path_pts = self._extract_path_points(control_ref, x0, goal_xy)
+        pts, _, cum = self._polyline_arc_data(path_pts)
+        s0 = self._closest_progress_on_polyline(np.asarray(x0, dtype=float).reshape(-1)[:2], pts, cum)
+        nominal_speed = np.full((self.N,), float(max(0.0, v_ref_nom)), dtype=float)
+        nominal_pos, nominal_hdg = self._sample_polyline_speed_profile(pts, cum, s0, nominal_speed)
+        return {
+            "path_points": path_pts,
+            "pts": pts,
+            "cum": cum,
+            "s0": float(s0),
+            "pos": nominal_pos,
+            "hdg": nominal_hdg,
+            "speed": nominal_speed.reshape(1, -1),
+        }
+
+    def _reference_bundle(self, x0, control_ref, goal_xy, speed_s, speed_e, speed_f):
         path_pts = self._extract_path_points(control_ref, x0, goal_xy)
         pts, _, cum = self._polyline_arc_data(path_pts)
         s0 = self._closest_progress_on_polyline(np.asarray(x0, dtype=float).reshape(-1)[:2], pts, cum)
 
-        def build(count, v_ref, s_start):
-            pos = np.zeros((2, count + 1), dtype=float)
-            hdg = np.zeros((1, count + 1), dtype=float)
-            speed = np.full((1, count), float(v_ref), dtype=float)
-            for k in range(count + 1):
-                sk = s_start + float(v_ref) * self.dt_plan * float(k)
-                pk, hk = self._sample_polyline(pts, cum, sk)
-                pos[:, k] = pk
-                hdg[0, k] = hk
-            return pos, hdg, speed
+        speed_s = np.asarray(speed_s, dtype=float).reshape(1, -1)
+        speed_e = np.asarray(speed_e, dtype=float).reshape(1, -1)
+        speed_f = np.asarray(speed_f, dtype=float).reshape(1, -1)
 
-        pos_s, hdg_s, speed_s = build(self.n_shared, shared_cap, s0)
-        s_shared_end = s0 + float(shared_cap) * self.dt_plan * float(self.n_shared)
-        pos_e, hdg_e, speed_e = build(self.n_tail, explore_cap, s_shared_end)
-        pos_f, hdg_f, speed_f = build(self.n_tail, fallback_cap, s_shared_end)
-        speed_s = self._risk_shaped_speed_profile(pos_s, goal_xy, shared_cap, visible_obs, occ_scenarios, 0)
-        speed_e = self._risk_shaped_speed_profile(pos_e, goal_xy, explore_cap, visible_obs, occ_scenarios, self.n_shared)
-        speed_f = self._risk_shaped_speed_profile(pos_f, goal_xy, fallback_cap, visible_obs, occ_scenarios, self.n_shared)
+        pos_s_raw, _ = self._sample_polyline_speed_profile(pts, cum, s0, speed_s.reshape(-1))
+        s_shared_end = float(s0 + np.sum(speed_s) * float(self.dt_plan))
+        pos_e_raw, _ = self._sample_polyline_speed_profile(pts, cum, s_shared_end, speed_e.reshape(-1))
+        pos_f_raw, _ = self._sample_polyline_speed_profile(pts, cum, s_shared_end, speed_f.reshape(-1))
+
+        pos_s, hdg_s, ctrl_s = self._bezier_smooth_reference(pos_s_raw)
+        pos_e, hdg_e, ctrl_e = self._bezier_smooth_reference(pos_e_raw)
+        pos_f, hdg_f, ctrl_f = self._bezier_smooth_reference(pos_f_raw)
         return {
             "path_points": path_pts,
             "shared": (pos_s, hdg_s, speed_s),
             "explore": (pos_e, hdg_e, speed_e),
             "fallback": (pos_f, hdg_f, speed_f),
+            "shared_ctrl_pts": ctrl_s,
+            "explore_ctrl_pts": ctrl_e,
+            "fallback_ctrl_pts": ctrl_f,
         }
 
     def _build_coupled_solver(self):
@@ -662,8 +772,7 @@ class OACPMPC(MPCCommonUtils):
         Ns = self.n_shared
         Nt = self.n_tail
         Mv = self.max_visible_obs
-        Mo = self.max_occ_scenarios
-        Mf = self.num_occ_facets
+        Mh = self.max_phantom_obs
 
         # Decision variables
         Xs = opti.variable(nx, Ns + 1)
@@ -691,26 +800,24 @@ class OACPMPC(MPCCommonUtils):
         ref_hdg_f = opti.parameter(1, Nt + 1)
         ref_speed_f = opti.parameter(1, Nt)
 
-        shared_cap_p = opti.parameter(1, 1)
-        explore_cap_p = opti.parameter(1, 1)
-        fallback_cap_p = opti.parameter(1, 1)
+        shared_bound_p = opti.parameter(1, Ns)
+        explore_bound_p = opti.parameter(1, Nt)
+        fallback_bound_p = opti.parameter(1, Nt)
 
         obs_center_p = opti.parameter(2, Mv)
         obs_vel_p = opti.parameter(2, Mv)
         obs_rad_p = opti.parameter(1, Mv)
         obs_active_p = opti.parameter(1, Mv)
 
-        occ_A_p = opti.parameter(2 * Mf, Mo)
-        occ_b0_p = opti.parameter(Mf, Mo)
-        occ_vexp_p = opti.parameter(Mf, Mo)
-        occ_center_p = opti.parameter(2, Mo)
-        occ_active_p = opti.parameter(1, Mo)
+        hid_center_p = opti.parameter(2, Mh)
+        hid_vel_p = opti.parameter(2, Mh)
+        hid_rad_p = opti.parameter(1, Mh)
+        hid_active_p = opti.parameter(1, Mh)
 
         lb_u, ub_u = self._input_bounds()
         v_min, v_max = self._speed_bounds()
 
-        big_clear = 1e4
-        big_risk = 10.0
+        big_inactive = 100.0
         objective = 0
 
         opti.subject_to(Xs[:, 0] == x0_p)
@@ -750,58 +857,64 @@ class OACPMPC(MPCCommonUtils):
             opti.subject_to(Xe[:, k + 1] == self._discrete_ca(Xe[:, k], Ue[:, k]))
             opti.subject_to(Xf[:, k + 1] == self._discrete_ca(Xf[:, k], Uf[:, k]))
 
-        def softplus(z):
-            return ca.log(1.0 + ca.exp(z))
+        def _barrier_alpha(abs_step):
+            if self.N <= 1:
+                return float(self.barrier_alpha_end)
+            frac = float(np.clip((float(abs_step) - 1.0) / max(float(self.N - 1), 1e-6), 0.0, 1.0))
+            return float(self.barrier_alpha_start + frac * (self.barrier_alpha_end - self.barrier_alpha_start))
 
-        def risk_sum(pos_xy, step_idx):
-            terms = []
-            tau = float(step_idx) * float(self.dt_plan)
-            for j in range(Mo):
-                signed_terms = []
-                for m in range(Mf):
-                    rhs = occ_b0_p[m, j] + self.robot_radius + occ_vexp_p[m, j] * tau
-                    a0 = occ_A_p[2 * m + 0, j]
-                    a1 = occ_A_p[2 * m + 1, j]
-                    signed_terms.append(a0 * pos_xy[0] + a1 * pos_xy[1] - rhs)
-                signed_stack = ca.vertcat(*signed_terms)
-                smax = ca.log(ca.sum1(ca.exp(self.risk_softplus_k * signed_stack))) / self.risk_softplus_k
-                poly_term = 1.0 / (1.0 + ca.exp(self.risk_softplus_k * smax / max(self.risk_decay, 1e-6)))
-                dc = pos_xy - occ_center_p[:, j]
-                center_term = ca.exp(-(ca.sumsqr(dc)) / max(self.risk_distance_scale ** 2, 1e-6))
-                terms.append(occ_active_p[0, j] * poly_term * center_term)
-            if len(terms) == 0:
-                return 0
-            return ca.sum1(ca.vertcat(*terms))
+        def _barrier_h(pos_xy, center_xy, r_eff):
+            rx = max(1e-6, float(self.ellipse_scale_x)) * (
+                self.robot_radius + r_eff + float(self.ellipse_buffer_x)
+            )
+            ry = max(1e-6, float(self.ellipse_scale_y)) * (
+                self.robot_radius + r_eff + float(self.ellipse_buffer_y)
+            )
+            dx = (pos_xy[0] - center_xy[0]) / rx
+            dy = (pos_xy[1] - center_xy[1]) / ry
+            return dx * dx + dy * dy - 1.0
 
-        def add_visible_constraints(X, seg_offset):
-            n_steps = X.shape[1] - 1
-            for k in range(1, n_steps + 1):
-                pos = X[:2, k]
-                abs_step = seg_offset + k
-                for j in range(Mv):
-                    center = obs_center_p[:, j] + float(self.dt_plan * abs_step) * obs_vel_p[:, j]
-                    inflate = 0.0
-                    if self.visible_reach_mode == "worst_case":
-                        inflate = self.v_visible_max * self.dt_plan * abs_step
-                    r_eff = obs_rad_p[0, j] + self.robot_radius + self.margin_obs + inflate
-                    dist2 = ca.sumsqr(pos - center)
-                    rhs = (r_eff ** 2) - big_clear * (1.0 - obs_active_p[0, j])
-                    opti.subject_to(dist2 >= rhs)
+        def add_barrier_bank(prev_pos, curr_pos, abs_prev, abs_curr, slack_stage, center_p, vel_p, rad_p, active_p, n_obs, inflate_visible):
+            for j in range(n_obs):
+                center_prev = center_p[:, j] + float(self.dt_plan * abs_prev) * vel_p[:, j]
+                center_curr = center_p[:, j] + float(self.dt_plan * abs_curr) * vel_p[:, j]
+                rad_prev = rad_p[0, j]
+                rad_curr = rad_p[0, j]
+                if inflate_visible and self.visible_reach_mode == "worst_case":
+                    rad_prev = rad_prev + float(self.v_visible_max) * float(self.dt_plan) * float(abs_prev)
+                    rad_curr = rad_curr + float(self.v_visible_max) * float(self.dt_plan) * float(abs_curr)
+                h_prev = _barrier_h(prev_pos, center_prev, rad_prev)
+                h_curr = _barrier_h(curr_pos, center_curr, rad_curr)
+                active = active_p[0, j]
+                alpha = _barrier_alpha(abs_curr)
+                opti.subject_to(h_curr >= -slack_stage - big_inactive * (1.0 - active))
+                opti.subject_to(
+                    h_curr - (1.0 - alpha) * h_prev >= -slack_stage - big_inactive * (1.0 - active)
+                )
 
-        add_visible_constraints(Xs, 0)
-        add_visible_constraints(Xe, Ns)
-        add_visible_constraints(Xf, Ns)
+        def _pos_track_cost(pos_xy, ref_xy, ref_heading, pos_w, cross_scale):
+            pos_err = pos_xy - ref_xy
+            if self.model != "DoubleIntegrator2D":
+                return pos_w * ca.sumsqr(pos_err)
+            e_ref = ca.vertcat(ca.cos(ref_heading), ca.sin(ref_heading))
+            n_ref = ca.vertcat(-ca.sin(ref_heading), ca.cos(ref_heading))
+            along_err = ca.dot(pos_err, e_ref)
+            cross_err = ca.dot(pos_err, n_ref)
+            return pos_w * ((along_err ** 2) + float(max(0.0, cross_scale)) * (cross_err ** 2))
 
-        def add_branch_costs(X, U, ref_pos, ref_hdg, ref_speed, pos_w, hdg_w, speed_w, risk_w, slack_w, risk_limit, speed_cap, slack_var, seg_offset):
+        def add_branch_costs(X, U, ref_pos, ref_hdg, ref_speed, pos_w, hdg_w, speed_w, slack_w, speed_bound, slack_var, seg_offset):
             J = 0
             u_prev_local = u_prev_p
             n_steps = U.shape[1]
             for k in range(n_steps):
+                xk0 = X[:, k]
                 xk1 = X[:, k + 1]
                 uk = U[:, k]
-                pos_err = xk1[:2] - ref_pos[:, k + 1]
                 hdg_err = self._heading_error_ca(xk1, ref_hdg[0, k + 1])
-                hdg_w_eff = hdg_w * self._heading_track_weight_ca(xk1)
+                if self.model == "DoubleIntegrator2D":
+                    hdg_w_eff = 0.0
+                else:
+                    hdg_w_eff = hdg_w * self._heading_track_weight_ca(xk1)
                 if self.model == "DoubleIntegrator2D" and self.di_use_progress_speed_cost:
                     v_track = self._progress_speed_ca(xk1, ref_hdg[0, k + 1])
                     v_lat = self._lateral_speed_ca(xk1, ref_hdg[0, k + 1])
@@ -810,8 +923,15 @@ class OACPMPC(MPCCommonUtils):
                     v_lat = 0.0
                 v_err = v_track - ref_speed[0, k]
                 du = uk - u_prev_local
-                J += pos_w * ca.sumsqr(pos_err)
-                J += hdg_w_eff * (hdg_err ** 2)
+                J += _pos_track_cost(
+                    xk1[:2],
+                    ref_pos[:, k + 1],
+                    ref_hdg[0, k + 1],
+                    pos_w,
+                    self.di_cross_track_scale_branch,
+                )
+                if self.model != "DoubleIntegrator2D":
+                    J += hdg_w_eff * (hdg_err ** 2)
                 J += speed_w * (v_err ** 2)
                 if self.model == "DoubleIntegrator2D" and self.di_use_progress_speed_cost:
                     J += speed_w * self.di_lateral_velocity_weight * (v_lat ** 2)
@@ -820,17 +940,19 @@ class OACPMPC(MPCCommonUtils):
                 u_prev_local = uk
 
                 if self.model == "DynamicUnicycle2D":
-                    opti.subject_to(X[3, k] <= speed_cap + 1e-6)
+                    opti.subject_to(X[3, k + 1] <= speed_bound[0, k] + 1e-6)
                 elif self.model == "DoubleIntegrator2D":
-                    opti.subject_to(ca.sumsqr(X[2:4, k + 1]) <= (speed_cap + 1e-6) ** 2)
+                    v_progress = self._progress_speed_ca(xk1, ref_hdg[0, k + 1])
+                    opti.subject_to(v_progress <= speed_bound[0, k] + 1e-6)
                 else:
-                    opti.subject_to(U[0, k] <= speed_cap + 1e-6)
+                    opti.subject_to(U[0, k] <= speed_bound[0, k] + 1e-6)
                     if self.forward_only:
                         opti.subject_to(U[0, k] >= 0.0)
 
-                r_sum = risk_sum(xk1[:2], seg_offset + k + 1)
-                opti.subject_to(r_sum <= risk_limit + slack_var[0, k] + big_risk * (1.0 - ca.fmin(1.0, ca.sum1(occ_active_p))))
-                J += risk_w * (r_sum ** 2)
+                abs_prev = seg_offset + k
+                abs_curr = seg_offset + k + 1
+                add_barrier_bank(xk0[:2], xk1[:2], abs_prev, abs_curr, slack_var[0, k], obs_center_p, obs_vel_p, obs_rad_p, obs_active_p, Mv, True)
+                add_barrier_bank(xk0[:2], xk1[:2], abs_prev, abs_curr, slack_var[0, k], hid_center_p, hid_vel_p, hid_rad_p, hid_active_p, Mh, False)
                 J += slack_w * (slack_var[0, k] ** 2)
 
             term_pos = X[:2, -1] - goal_p
@@ -843,9 +965,11 @@ class OACPMPC(MPCCommonUtils):
             for k in range(Ns):
                 xk1 = Xs[:, k + 1]
                 uk = Us[:, k]
-                pos_err = xk1[:2] - ref_pos_s[:, k + 1]
                 hdg_err = self._heading_error_ca(xk1, ref_hdg_s[0, k + 1])
-                hdg_w_eff = self.w_heading_shared * self._heading_track_weight_ca(xk1)
+                if self.model == "DoubleIntegrator2D":
+                    hdg_w_eff = 0.0
+                else:
+                    hdg_w_eff = self.w_heading_shared * self._heading_track_weight_ca(xk1)
                 if self.model == "DoubleIntegrator2D" and self.di_use_progress_speed_cost:
                     v_track = self._progress_speed_ca(xk1, ref_hdg_s[0, k + 1])
                     v_lat = self._lateral_speed_ca(xk1, ref_hdg_s[0, k + 1])
@@ -854,8 +978,15 @@ class OACPMPC(MPCCommonUtils):
                     v_lat = 0.0
                 v_err = v_track - ref_speed_s[0, k]
                 du = uk - u_prev_local
-                J += self.w_pos_shared * ca.sumsqr(pos_err)
-                J += hdg_w_eff * (hdg_err ** 2)
+                J += _pos_track_cost(
+                    xk1[:2],
+                    ref_pos_s[:, k + 1],
+                    ref_hdg_s[0, k + 1],
+                    self.w_pos_shared,
+                    self.di_cross_track_scale_shared,
+                )
+                if self.model != "DoubleIntegrator2D":
+                    J += hdg_w_eff * (hdg_err ** 2)
                 J += self.w_speed_shared * (v_err ** 2)
                 if self.model == "DoubleIntegrator2D" and self.di_use_progress_speed_cost:
                     J += self.w_speed_shared * self.di_lateral_velocity_weight * (v_lat ** 2)
@@ -864,32 +995,30 @@ class OACPMPC(MPCCommonUtils):
                 u_prev_local = uk
 
                 if self.model == "DynamicUnicycle2D":
-                    opti.subject_to(Xs[3, k] <= shared_cap_p[0, 0] + 1e-6)
+                    opti.subject_to(Xs[3, k + 1] <= shared_bound_p[0, k] + 1e-6)
                 elif self.model == "DoubleIntegrator2D":
-                    opti.subject_to(ca.sumsqr(Xs[2:4, k + 1]) <= (shared_cap_p[0, 0] + 1e-6) ** 2)
+                    v_progress = self._progress_speed_ca(xk1, ref_hdg_s[0, k + 1])
+                    opti.subject_to(v_progress <= shared_bound_p[0, k] + 1e-6)
                 else:
-                    opti.subject_to(Us[0, k] <= shared_cap_p[0, 0] + 1e-6)
+                    opti.subject_to(Us[0, k] <= shared_bound_p[0, k] + 1e-6)
                     if self.forward_only:
                         opti.subject_to(Us[0, k] >= 0.0)
 
-                r_sum = risk_sum(xk1[:2], k + 1)
-                opti.subject_to(r_sum <= self.shared_risk_limit + Sshared[0, k] + big_risk * (1.0 - ca.fmin(1.0, ca.sum1(occ_active_p))))
-                J += self.w_risk_shared * (r_sum ** 2)
-                J += self.w_risk_slack_shared * (Sshared[0, k] ** 2)
+                add_barrier_bank(Xs[:2, k], xk1[:2], k, k + 1, Sshared[0, k], obs_center_p, obs_vel_p, obs_rad_p, obs_active_p, Mv, True)
+                add_barrier_bank(Xs[:2, k], xk1[:2], k, k + 1, Sshared[0, k], hid_center_p, hid_vel_p, hid_rad_p, hid_active_p, Mh, False)
+                J += self.w_barrier_slack_shared * (Sshared[0, k] ** 2)
             return J
 
         objective += add_shared_costs()
         objective += add_branch_costs(
             Xe, Ue, ref_pos_e, ref_hdg_e, ref_speed_e,
             self.w_pos_explore, self.w_heading_explore, self.w_speed_explore,
-            self.w_risk_explore, self.w_risk_slack_explore, self.explore_risk_limit,
-            explore_cap_p[0, 0], Se, Ns,
+            self.w_barrier_slack_explore, explore_bound_p, Se, Ns,
         )
         objective += add_branch_costs(
             Xf, Uf, ref_pos_f, ref_hdg_f, ref_speed_f,
             self.w_pos_fallback, self.w_heading_fallback, self.w_speed_fallback,
-            self.w_risk_fallback, self.w_risk_slack_fallback, self.fallback_risk_limit,
-            fallback_cap_p[0, 0], Sf, Ns,
+            self.w_barrier_slack_fallback, fallback_bound_p, Sf, Ns,
         )
 
         opti.minimize(objective)
@@ -916,10 +1045,9 @@ class OACPMPC(MPCCommonUtils):
             "ref_pos_s": ref_pos_s, "ref_hdg_s": ref_hdg_s, "ref_speed_s": ref_speed_s,
             "ref_pos_e": ref_pos_e, "ref_hdg_e": ref_hdg_e, "ref_speed_e": ref_speed_e,
             "ref_pos_f": ref_pos_f, "ref_hdg_f": ref_hdg_f, "ref_speed_f": ref_speed_f,
-            "shared_cap": shared_cap_p, "explore_cap": explore_cap_p, "fallback_cap": fallback_cap_p,
+            "shared_bound": shared_bound_p, "explore_bound": explore_bound_p, "fallback_bound": fallback_bound_p,
             "obs_center": obs_center_p, "obs_vel": obs_vel_p, "obs_rad": obs_rad_p, "obs_active": obs_active_p,
-            "occ_A": occ_A_p, "occ_b0": occ_b0_p, "occ_vexp": occ_vexp_p,
-            "occ_center": occ_center_p, "occ_active": occ_active_p,
+            "hid_center": hid_center_p, "hid_vel": hid_vel_p, "hid_rad": hid_rad_p, "hid_active": hid_active_p,
         }
 
     def _build_lowdim_branch_solver(self, branch_name):
@@ -1260,35 +1388,78 @@ class OACPMPC(MPCCommonUtils):
             active[0, j] = 1.0
         return centers, vels, radii, active
 
-    def _set_occ_params(self, occ_scenarios):
-        A = np.zeros((2 * self.num_occ_facets, self.max_occ_scenarios), dtype=float)
-        b0 = np.zeros((self.num_occ_facets, self.max_occ_scenarios), dtype=float)
-        vexp = np.zeros((self.num_occ_facets, self.max_occ_scenarios), dtype=float)
-        centers = np.zeros((2, self.max_occ_scenarios), dtype=float)
-        active = np.zeros((1, self.max_occ_scenarios), dtype=float)
-        for j, sc in enumerate(list(occ_scenarios)[: self.max_occ_scenarios]):
-            A_j = np.asarray(sc.get("A", np.zeros((0, 2))), dtype=float)
-            b_j = np.asarray(sc.get("b0", np.zeros((0,))), dtype=float).reshape(-1)
-            v_j = np.asarray(sc.get("v_expand_vec", np.zeros((0,))), dtype=float).reshape(-1)
-            m = min(self.num_occ_facets, A_j.shape[0], b_j.size)
-            if m <= 0:
-                continue
-            for row in range(m):
-                A[2 * row: 2 * row + 2, j] = A_j[row, :]
-            b0[:m, j] = b_j[:m]
-            if v_j.size >= m:
-                vexp[:m, j] = v_j[:m]
-            centers[:, j] = np.asarray(sc.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
+    def _set_hidden_params(self, hidden_obs):
+        centers = np.zeros((2, self.max_phantom_obs), dtype=float)
+        vels = np.zeros((2, self.max_phantom_obs), dtype=float)
+        radii = np.zeros((1, self.max_phantom_obs), dtype=float)
+        active = np.zeros((1, self.max_phantom_obs), dtype=float)
+        for j, obs in enumerate(list(hidden_obs)[: self.max_phantom_obs]):
+            o = np.asarray(obs, dtype=float).reshape(-1)
+            centers[:, j] = o[:2]
+            radii[0, j] = float(o[2]) if o.size >= 3 else 0.0
+            if o.size >= 5:
+                vels[:, j] = o[3:5]
             active[0, j] = 1.0
-        return A, b0, vexp, centers, active
+        return centers, vels, radii, active
 
-    def _select_branch(self, risk_score, explore_cost, fallback_cost, feasible):
+    def _trajectory_min_clearance(self, X, obs_list, seg_offset):
+        if obs_list is None or len(obs_list) == 0:
+            return None
+        X = np.asarray(X, dtype=float)
+        min_clear = float("inf")
+        n_steps = int(max(0, X.shape[1] - 1))
+        for k in range(1, n_steps + 1):
+            pos = np.asarray(X[:2, k], dtype=float).reshape(2,)
+            abs_step = int(seg_offset + k)
+            for obs in obs_list:
+                obs = np.asarray(obs, dtype=float).reshape(-1)
+                c = self._predict_obs_center(obs, abs_step)
+                clear = float(np.linalg.norm(pos - c) - (self.robot_radius + float(obs[2]) + self.margin_obs))
+                min_clear = min(min_clear, clear)
+        return None if not np.isfinite(min_clear) else float(min_clear)
+
+    def _branch_diag(self, X, U, goal_xy, path_pts, seg_offset, slack, visible_obs, hidden_obs):
+        goal_xy = np.asarray(goal_xy, dtype=float).reshape(2,)
+        term = np.asarray(X[:2, -1], dtype=float).reshape(2,)
+        goal_err = float(np.linalg.norm(term - goal_xy))
+        pts, _, cum = self._polyline_arc_data(path_pts)
+        progress = float(self._closest_progress_on_polyline(term, pts, cum))
+        effort = float(np.sum(np.square(np.asarray(U, dtype=float))))
+        slack = float(slack)
+        min_visible_clear = self._trajectory_min_clearance(X, visible_obs, seg_offset)
+        min_hidden_clear = self._trajectory_min_clearance(X, hidden_obs, seg_offset)
+        min_clear = min(
+            float(min_visible_clear) if min_visible_clear is not None else float("inf"),
+            float(min_hidden_clear) if min_hidden_clear is not None else float("inf"),
+        )
+        clear_term = 0.0 if not np.isfinite(min_clear) else float(min_clear)
+        score = (
+            self.branch_goal_weight * goal_err
+            - self.branch_progress_weight * progress
+            + self.branch_slack_weight * slack
+            - self.branch_clearance_weight * clear_term
+            + 0.01 * effort
+        )
+        return {
+            "goal_err": goal_err,
+            "progress": progress,
+            "effort": effort,
+            "slack": slack,
+            "min_visible_clearance": min_visible_clear,
+            "min_hidden_clearance": min_hidden_clear,
+            "score": float(score),
+        }
+
+    def _select_branch(self, explore_diag, fallback_diag, feasible):
         if not feasible:
             return None
         prev = str(self._last_selected_branch)
+        score_e = float(explore_diag.get("score", np.inf))
+        score_f = float(fallback_diag.get("score", np.inf))
+        margin = float(max(0.0, self.branch_switch_margin))
         if prev == "fallback":
-            return "fallback" if risk_score >= self.branch_switch_risk_off else "explore"
-        return "fallback" if risk_score >= self.branch_switch_risk_on else "explore"
+            return "explore" if (score_e + margin) < score_f else "fallback"
+        return "fallback" if (score_f + margin) < score_e else "explore"
 
     def _solve_control_problem_coupled(self, robot_state, control_ref, obs_list):
         t0 = time.perf_counter()
@@ -1315,30 +1486,39 @@ class OACPMPC(MPCCommonUtils):
             obs_list,
         )
         visible_obs = self._nearest_visible_obs(visible_obs, x0)
-        occ_scenarios = self._nearest_occ_scenarios(occ_all, x0)
-        self.occlusion_scenarios = list(occ_scenarios)
-
-        occ_risk_score, _ = self._aggregate_occ_risk(x0[:2], goal_xy, occ_scenarios, 0)
-        visible_pressure = self._aggregate_visible_pressure(x0[:2], goal_xy, visible_obs)
-        risk_score = float(max(occ_risk_score, visible_pressure))
-        self.occlusion_risk_score = float(occ_risk_score)
-        self.visible_pressure_score = float(visible_pressure)
+        occ_candidates = self._nearest_occ_scenarios(occ_all, x0)
 
         v_ref_nom = self._nominal_speed_reference(x0, u_ref, self.v_ref_default)
-        shared_cap, explore_cap, fallback_cap = self._branch_speed_caps(v_ref_nom, risk_score)
-        self.explore_speed_cap = float(explore_cap)
-        self.fallback_speed_cap = float(fallback_cap)
+        nominal_rollout = self._nominal_route_rollout(x0, control_ref, goal_xy, v_ref_nom)
+        nominal_points = np.asarray(nominal_rollout["pos"].T, dtype=float)
+        active_entries, all_entries, srq_frames, phantom_obs = self._active_occlusion_context(
+            x0=x0,
+            goal_xy=goal_xy,
+            occ_scenarios=occ_candidates,
+            nominal_points=nominal_points,
+        )
+        self.occlusion_scenarios = [dict(entry["scenario"]) for entry in active_entries]
 
-        refs = self._reference_bundle(x0, control_ref, goal_xy, visible_obs, occ_scenarios, shared_cap, explore_cap, fallback_cap)
+        speed_s_bound, speed_e_bound, speed_f_bound, risk_raw_vec, risk_norm_vec = self._branch_velocity_boundaries(
+            nominal_points=nominal_points,
+            srq_frames=srq_frames,
+            v_ref_nom=v_ref_nom,
+        )
+        self.occlusion_risk_score = float(risk_norm_vec[0]) if risk_norm_vec.size else 0.0
+        self.visible_pressure_score = 0.0
+        self.explore_speed_cap = float(np.min(speed_e_bound)) if speed_e_bound.size else float(np.min(speed_s_bound))
+        self.fallback_speed_cap = float(np.min(speed_f_bound)) if speed_f_bound.size else float(np.min(speed_s_bound))
+
+        refs = self._reference_bundle(x0, control_ref, goal_xy, speed_s_bound, speed_e_bound, speed_f_bound)
         pos_s, hdg_s, speed_s = refs["shared"]
         pos_e, hdg_e, speed_e = refs["explore"]
         pos_f, hdg_f, speed_f = refs["fallback"]
-        self.shared_speed_ref_min = float(np.min(speed_s)) if speed_s.size else float(shared_cap)
-        self.explore_speed_ref_min = float(np.min(speed_e)) if speed_e.size else float(explore_cap)
-        self.fallback_speed_ref_min = float(np.min(speed_f)) if speed_f.size else float(fallback_cap)
+        self.shared_speed_ref_min = float(np.min(speed_s)) if speed_s.size else float(v_ref_nom)
+        self.explore_speed_ref_min = float(np.min(speed_e)) if speed_e.size else float(v_ref_nom)
+        self.fallback_speed_ref_min = float(np.min(speed_f)) if speed_f.size else float(v_ref_nom)
 
         obs_center, obs_vel, obs_rad, obs_active = self._set_obs_params(visible_obs)
-        occ_A, occ_b0, occ_vexp, occ_center, occ_active = self._set_occ_params(occ_scenarios)
+        hid_center, hid_vel, hid_rad, hid_active = self._set_hidden_params(phantom_obs)
 
         p = self._pars
         self._opti.set_value(p["x0"], np.asarray(x0, dtype=float).reshape(-1, 1))
@@ -1353,18 +1533,17 @@ class OACPMPC(MPCCommonUtils):
         self._opti.set_value(p["ref_pos_f"], pos_f)
         self._opti.set_value(p["ref_hdg_f"], hdg_f)
         self._opti.set_value(p["ref_speed_f"], speed_f)
-        self._opti.set_value(p["shared_cap"], np.array([[shared_cap]], dtype=float))
-        self._opti.set_value(p["explore_cap"], np.array([[explore_cap]], dtype=float))
-        self._opti.set_value(p["fallback_cap"], np.array([[fallback_cap]], dtype=float))
+        self._opti.set_value(p["shared_bound"], speed_s)
+        self._opti.set_value(p["explore_bound"], speed_e)
+        self._opti.set_value(p["fallback_bound"], speed_f)
         self._opti.set_value(p["obs_center"], obs_center)
         self._opti.set_value(p["obs_vel"], obs_vel)
         self._opti.set_value(p["obs_rad"], obs_rad)
         self._opti.set_value(p["obs_active"], obs_active)
-        self._opti.set_value(p["occ_A"], occ_A)
-        self._opti.set_value(p["occ_b0"], occ_b0)
-        self._opti.set_value(p["occ_vexp"], occ_vexp)
-        self._opti.set_value(p["occ_center"], occ_center)
-        self._opti.set_value(p["occ_active"], occ_active)
+        self._opti.set_value(p["hid_center"], hid_center)
+        self._opti.set_value(p["hid_vel"], hid_vel)
+        self._opti.set_value(p["hid_rad"], hid_rad)
+        self._opti.set_value(p["hid_active"], hid_active)
 
         v = self._vars
         if self._sol_prev is not None:
@@ -1396,8 +1575,12 @@ class OACPMPC(MPCCommonUtils):
 
         self.last_qp_solve_time_ms = (time.perf_counter() - t0) * 1000.0
         self.last_num_constraints = int(
-            (self.N + self.n_shared) * min(len(visible_obs), self.max_visible_obs)
-            + self.N * min(len(occ_scenarios), self.max_occ_scenarios)
+            2
+            * (self.n_shared + 2 * self.n_tail)
+            * (
+                int(min(len(visible_obs), self.max_visible_obs))
+                + int(min(len(phantom_obs), self.max_phantom_obs))
+            )
         )
 
         if feasible and sol is not None:
@@ -1437,20 +1620,41 @@ class OACPMPC(MPCCommonUtils):
             self.explore_risk_slack = float(np.max(Se_val)) if Se_val.size else 0.0
             self.fallback_risk_slack = float(np.max(Sf_val)) if Sf_val.size else 0.0
 
-            # branch diagnostics are used for interpretability only; control is always shared-prefix.
-            explore_cost = float(np.sum((Xe_val[:2, -1] - np.asarray(goal_xy).reshape(2,)) ** 2) + 50.0 * self.explore_risk_slack)
-            fallback_cost = float(np.sum((Xf_val[:2, -1] - np.asarray(goal_xy).reshape(2,)) ** 2) + 50.0 * self.fallback_risk_slack)
-            self.explore_cost = explore_cost
-            self.fallback_cost = fallback_cost
-            selected_branch = self._select_branch(risk_score, explore_cost, fallback_cost, True)
+            explore_diag = self._branch_diag(
+                Xe_val,
+                Ue_val,
+                goal_xy,
+                refs["path_points"],
+                self.n_shared,
+                self.explore_risk_slack,
+                visible_obs,
+                phantom_obs,
+            )
+            fallback_diag = self._branch_diag(
+                Xf_val,
+                Uf_val,
+                goal_xy,
+                refs["path_points"],
+                self.n_shared,
+                self.fallback_risk_slack,
+                visible_obs,
+                phantom_obs,
+            )
+            self.explore_cost = float(explore_diag["score"])
+            self.fallback_cost = float(fallback_diag["score"])
+            selected_branch = self._select_branch(explore_diag, fallback_diag, True)
             self.selected_branch = selected_branch
             if selected_branch is not None and selected_branch != self._last_selected_branch:
                 self.branch_switch_count += 1
             if selected_branch is not None:
                 self._last_selected_branch = str(selected_branch)
 
+            shared_min_visible = self._trajectory_min_clearance(Xs_val, visible_obs, 0)
+            shared_min_hidden = self._trajectory_min_clearance(Xs_val, phantom_obs, 0)
+
             self.last_profile = {
                 "backend": str(self.backend),
+                "backend_requested": str(self.requested_backend),
                 "total_ms": 0.0,  # filled below
                 "solver_ms": float(self.last_qp_solve_time_ms),
                 "selected_branch": self.selected_branch,
@@ -1461,6 +1665,8 @@ class OACPMPC(MPCCommonUtils):
                 "fallback_feasible": True,
                 "occlusion_risk_score": float(self.occlusion_risk_score),
                 "visible_pressure_score": float(self.visible_pressure_score),
+                "occlusion_risk_raw_max": float(np.max(risk_raw_vec)) if risk_raw_vec.size else 0.0,
+                "occlusion_risk_norm_max": float(np.max(risk_norm_vec)) if risk_norm_vec.size else 0.0,
                 "explore_speed_cap": float(self.explore_speed_cap),
                 "fallback_speed_cap": float(self.fallback_speed_cap),
                 "shared_speed_ref_min": float(self.shared_speed_ref_min),
@@ -1471,15 +1677,26 @@ class OACPMPC(MPCCommonUtils):
                 ),
                 "branch_switch_count": int(self.branch_switch_count),
                 "num_visible_obs": int(min(len(visible_obs), self.max_visible_obs)),
-                "num_occ_scenarios": int(min(len(occ_scenarios), self.max_occ_scenarios)),
+                "num_occ_scenarios": int(min(len(occ_candidates), self.max_occ_scenarios)),
+                "num_active_occlusions": int(len(active_entries)),
+                "num_phantom_obs": int(min(len(phantom_obs), self.max_phantom_obs)),
                 "shared_prefix_feasible": True,
                 "shared_prefix_cost": float(np.sum((Xs_val[:2, -1] - pos_s[:, -1]) ** 2)),
-                "shared_min_visible_clearance": None,
-                "explore_max_risk": float(self.explore_risk_slack + risk_score),
-                "fallback_max_risk": float(self.fallback_risk_slack + risk_score),
+                "shared_min_visible_clearance": shared_min_visible,
+                "shared_min_hidden_clearance": shared_min_hidden,
+                "explore_min_visible_clearance": explore_diag["min_visible_clearance"],
+                "explore_min_hidden_clearance": explore_diag["min_hidden_clearance"],
+                "fallback_min_visible_clearance": fallback_diag["min_visible_clearance"],
+                "fallback_min_hidden_clearance": fallback_diag["min_hidden_clearance"],
+                "explore_max_risk": float(np.max(risk_norm_vec)) if risk_norm_vec.size else 0.0,
+                "fallback_max_risk": float(np.max(risk_norm_vec)) if risk_norm_vec.size else 0.0,
                 "shared_risk_slack": float(self.shared_risk_slack),
                 "explore_risk_slack": float(self.explore_risk_slack),
                 "fallback_risk_slack": float(self.fallback_risk_slack),
+                "explore_goal_err": float(explore_diag["goal_err"]),
+                "fallback_goal_err": float(fallback_diag["goal_err"]),
+                "explore_progress": float(explore_diag["progress"]),
+                "fallback_progress": float(fallback_diag["progress"]),
                 "status_raw": str(self.last_qp_status_raw),
             }
         else:
@@ -1506,6 +1723,7 @@ class OACPMPC(MPCCommonUtils):
                 self.last_qp_status_raw = "infeasible"
             self.last_profile = {
                 "backend": str(self.backend),
+                "backend_requested": str(self.requested_backend),
                 "total_ms": 0.0,
                 "solver_ms": float(self.last_qp_solve_time_ms),
                 "selected_branch": None,
@@ -1516,6 +1734,8 @@ class OACPMPC(MPCCommonUtils):
                 "fallback_feasible": False,
                 "occlusion_risk_score": float(self.occlusion_risk_score),
                 "visible_pressure_score": float(self.visible_pressure_score),
+                "occlusion_risk_raw_max": float(np.max(risk_raw_vec)) if risk_raw_vec.size else 0.0,
+                "occlusion_risk_norm_max": float(np.max(risk_norm_vec)) if risk_norm_vec.size else 0.0,
                 "explore_speed_cap": float(self.explore_speed_cap),
                 "fallback_speed_cap": float(self.fallback_speed_cap),
                 "shared_speed_ref_min": float(self.shared_speed_ref_min),
@@ -1526,10 +1746,13 @@ class OACPMPC(MPCCommonUtils):
                 ),
                 "branch_switch_count": int(self.branch_switch_count),
                 "num_visible_obs": int(min(len(visible_obs), self.max_visible_obs)),
-                "num_occ_scenarios": int(min(len(occ_scenarios), self.max_occ_scenarios)),
+                "num_occ_scenarios": int(min(len(occ_candidates), self.max_occ_scenarios)),
+                "num_active_occlusions": int(len(active_entries)),
+                "num_phantom_obs": int(min(len(phantom_obs), self.max_phantom_obs)),
                 "shared_prefix_feasible": False,
                 "shared_prefix_cost": None,
                 "shared_min_visible_clearance": None,
+                "shared_min_hidden_clearance": None,
                 "explore_max_risk": None,
                 "fallback_max_risk": None,
                 "shared_risk_slack": 0.0,
@@ -1543,249 +1766,7 @@ class OACPMPC(MPCCommonUtils):
         return u_cmd
 
     def _solve_control_problem_admm_lowdim(self, robot_state, control_ref, obs_list):
-        t_all0 = time.perf_counter()
-        x0 = self._state_from_robot_state(robot_state)
-        u_ref = np.asarray(control_ref.get("u_ref", np.zeros((self._u_dim, 1))), dtype=float).reshape(-1, 1)
-        u_ref = self._clip_input(u_ref)
-        self.last_u_ref = u_ref
-
-        goal_xy = self._goal_xy(x0, control_ref.get("goal", None))
-        if control_ref.get("goal", None) is None:
-            self.status = "optimal"
-            self.last_qp_status_raw = "goal_none"
-            self.last_qp_exception = ""
-            self.last_num_constraints = 0
-            self.last_qp_solve_time_ms = 0.0
-            self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
-            self.last_intervention = "u_ref"
-            self.last_u = u_ref
-            self.last_profile = {
-                "selected_branch": None,
-                "shared_prefix_length": int(self.n_shared),
-                "backend": str(self.backend),
-                "total_ms": float(self.last_total_compute_time_ms),
-            }
-            return u_ref
-
-        visible_obs, occ_all = self._occ_utils._filter_visible_and_build_occ(
-            np.asarray(robot_state, dtype=float).reshape(-1, 1),
-            obs_list,
-        )
-        visible_obs = self._nearest_visible_obs(visible_obs, x0)
-        occ_scenarios = self._nearest_occ_scenarios(occ_all, x0)
-        self.occlusion_scenarios = list(occ_scenarios)
-
-        occ_risk_score, _ = self._aggregate_occ_risk(x0[:2], goal_xy, occ_scenarios, 0)
-        visible_pressure = self._aggregate_visible_pressure(x0[:2], goal_xy, visible_obs)
-        risk_score = float(max(occ_risk_score, visible_pressure))
-        self.occlusion_risk_score = float(occ_risk_score)
-        self.visible_pressure_score = float(visible_pressure)
-
-        v_ref_nom = self._nominal_speed_reference(x0, u_ref, self.v_ref_default)
-        shared_cap, explore_cap, fallback_cap = self._branch_speed_caps(v_ref_nom, risk_score)
-        self.explore_speed_cap = float(explore_cap)
-        self.fallback_speed_cap = float(fallback_cap)
-
-        refs = self._reference_bundle(x0, control_ref, goal_xy, visible_obs, occ_scenarios, shared_cap, explore_cap, fallback_cap)
-        pos_s, hdg_s, speed_s = refs["shared"]
-        pos_e, hdg_e, speed_e = refs["explore"]
-        pos_f, hdg_f, speed_f = refs["fallback"]
-        self.shared_speed_ref_min = float(np.min(speed_s)) if speed_s.size else float(shared_cap)
-        self.explore_speed_ref_min = float(np.min(speed_e)) if speed_e.size else float(explore_cap)
-        self.fallback_speed_ref_min = float(np.min(speed_f)) if speed_f.size else float(fallback_cap)
-
-        z, Ct_e, Ct_f = self._seed_lowdim_controls(x0, u_ref, refs)
-        Y_e = np.zeros_like(z)
-        Y_f = np.zeros_like(z)
-
-        solver_ms_total = 0.0
-        iter_count = 0
-        res_pri = None
-        res_dual = None
-        sol_e = None
-        sol_f = None
-        solve_exc = None
-
-        for it in range(max(1, self.admm_max_iter)):
-            iter_count = it + 1
-            try:
-                data_e = self._admm_solvers["explore"]
-                self._set_lowdim_branch_params(
-                    data_e, x0, self._u_prev_applied, goal_xy,
-                    pos_s, hdg_s, speed_s, pos_e, hdg_e, speed_e,
-                    shared_cap, explore_cap, z, Y_e, visible_obs, z, Ct_e,
-                )
-                sol_e = self._solve_lowdim_branch(data_e, z, Ct_e)
-                solver_ms_total += float(sol_e["solve_ms"])
-
-                data_f = self._admm_solvers["fallback"]
-                self._set_lowdim_branch_params(
-                    data_f, x0, self._u_prev_applied, goal_xy,
-                    pos_s, hdg_s, speed_s, pos_f, hdg_f, speed_f,
-                    shared_cap, fallback_cap, z, Y_f, visible_obs, z, Ct_f,
-                )
-                sol_f = self._solve_lowdim_branch(data_f, z, Ct_f)
-                solver_ms_total += float(sol_f["solve_ms"])
-            except Exception as exc:
-                solve_exc = exc
-                sol_e = None
-                sol_f = None
-                break
-
-            z_prev = z.copy()
-            z = 0.5 * (sol_e["Csh"] + sol_f["Csh"])
-            Y_e = Y_e + (sol_e["Csh"] - z)
-            Y_f = Y_f + (sol_f["Csh"] - z)
-            Ct_e = sol_e["Ct"]
-            Ct_f = sol_f["Ct"]
-
-            res_pri = max(
-                float(np.linalg.norm(sol_e["Csh"] - z)),
-                float(np.linalg.norm(sol_f["Csh"] - z)),
-            )
-            res_dual = float(self.admm_rho * np.linalg.norm(z - z_prev))
-            if res_pri <= self.admm_pri_tol and res_dual <= self.admm_dual_tol:
-                break
-
-        self.last_qp_solve_time_ms = float(solver_ms_total)
-        self.last_num_constraints = int(
-            (self.N + self.n_shared) * min(len(visible_obs), self.max_visible_obs)
-            + self.N * min(len(occ_scenarios), self.max_occ_scenarios)
-        )
-
-        if sol_e is not None and sol_f is not None:
-            Ushared_cons = self._expand_ctrl_points_np(z, self._basis_shared_np)
-            Xshared_cons = self._rollout_controls_np(x0, Ushared_cons)
-            u_cmd = np.asarray(Ushared_cons[:, 0], dtype=float).reshape(-1, 1)
-            u_cmd = self._clip_input(u_cmd)
-            delta = float(np.linalg.norm(u_cmd - u_ref))
-            tol = float(self.robot_spec.get("intervention_tol", 1e-3))
-            self.last_intervention = "u_ref" if delta <= tol else "oacp_mpc"
-            self.last_u = u_cmd
-            self._u_prev_applied = u_cmd
-            self.status = "optimal"
-            self.last_qp_status_raw = "optimal"
-            self.last_qp_exception = ""
-            self.explore_feasible = True
-            self.fallback_feasible = True
-            self.shared_risk_slack = float(max(np.max(sol_e["Ssh"]), np.max(sol_f["Ssh"]))) if self.n_shared > 0 else 0.0
-            self.explore_risk_slack = float(np.max(sol_e["St"])) if self.n_tail > 0 else 0.0
-            self.fallback_risk_slack = float(np.max(sol_f["St"])) if self.n_tail > 0 else 0.0
-            self.explore_cost = float(np.sum((sol_e["Xt"][:2, -1] - np.asarray(goal_xy).reshape(2,)) ** 2) + 50.0 * self.explore_risk_slack)
-            self.fallback_cost = float(np.sum((sol_f["Xt"][:2, -1] - np.asarray(goal_xy).reshape(2,)) ** 2) + 50.0 * self.fallback_risk_slack)
-            selected_branch = self._select_branch(risk_score, self.explore_cost, self.fallback_cost, True)
-            self.selected_branch = selected_branch
-            if selected_branch is not None and selected_branch != self._last_selected_branch:
-                self.branch_switch_count += 1
-            if selected_branch is not None:
-                self._last_selected_branch = str(selected_branch)
-
-            self._admm_prev = {
-                "z": z.copy(),
-                "Ct_explore": Ct_e.copy(),
-                "Ct_fallback": Ct_f.copy(),
-                "Xsh": Xshared_cons.copy(),
-                "Xt_explore": np.asarray(sol_e["Xt"], dtype=float).copy(),
-                "Xt_fallback": np.asarray(sol_f["Xt"], dtype=float).copy(),
-            }
-            self.last_profile = {
-                "backend": str(self.backend),
-                "total_ms": 0.0,
-                "solver_ms": float(self.last_qp_solve_time_ms),
-                "selected_branch": self.selected_branch,
-                "shared_prefix_length": int(self.n_shared),
-                "explore_cost": float(self.explore_cost),
-                "fallback_cost": float(self.fallback_cost),
-                "explore_feasible": True,
-                "fallback_feasible": True,
-                "occlusion_risk_score": float(self.occlusion_risk_score),
-                "visible_pressure_score": float(self.visible_pressure_score),
-                "explore_speed_cap": float(self.explore_speed_cap),
-                "fallback_speed_cap": float(self.fallback_speed_cap),
-                "shared_speed_ref_min": float(self.shared_speed_ref_min),
-                "explore_speed_ref_min": float(self.explore_speed_ref_min),
-                "fallback_speed_ref_min": float(self.fallback_speed_ref_min),
-                "speed_cost_mode": "progress_aligned",
-                "branch_switch_count": int(self.branch_switch_count),
-                "num_visible_obs": int(min(len(visible_obs), self.max_visible_obs)),
-                "num_occ_scenarios": int(min(len(occ_scenarios), self.max_occ_scenarios)),
-                "shared_prefix_feasible": True,
-                "shared_prefix_cost": float(np.sum((Xshared_cons[:2, -1] - pos_s[:, -1]) ** 2)),
-                "shared_min_visible_clearance": None,
-                "explore_max_risk": float(self.explore_risk_slack + risk_score),
-                "fallback_max_risk": float(self.fallback_risk_slack + risk_score),
-                "shared_risk_slack": float(self.shared_risk_slack),
-                "explore_risk_slack": float(self.explore_risk_slack),
-                "fallback_risk_slack": float(self.fallback_risk_slack),
-                "status_raw": str(self.last_qp_status_raw),
-                "admm_iterations": int(iter_count),
-                "admm_primal_residual": (None if res_pri is None else float(res_pri)),
-                "admm_dual_residual": (None if res_dual is None else float(res_dual)),
-                "shared_ctrl_pts": int(self.admm_shared_ctrl_pts),
-                "tail_ctrl_pts": int(self.admm_tail_ctrl_pts),
-            }
-        else:
-            self._admm_prev = None
-            u_cmd = self._stop_input()
-            self.last_u = u_cmd
-            self._u_prev_applied = u_cmd
-            self.explore_feasible = False
-            self.fallback_feasible = False
-            self.explore_cost = None
-            self.fallback_cost = None
-            self.selected_branch = None
-            self.shared_risk_slack = 0.0
-            self.explore_risk_slack = 0.0
-            self.fallback_risk_slack = 0.0
-            self.last_qp_exception = "" if solve_exc is None else str(solve_exc)
-            if self.allow_solver_fallback:
-                self.status = "optimal"
-                self.last_intervention = "backup_fallback"
-                self.last_qp_status_raw = "fallback_stop"
-            else:
-                self.status = "infeasible"
-                self.last_intervention = "infeasible"
-                self.last_qp_status_raw = "infeasible"
-            self.last_profile = {
-                "backend": str(self.backend),
-                "total_ms": 0.0,
-                "solver_ms": float(self.last_qp_solve_time_ms),
-                "selected_branch": None,
-                "shared_prefix_length": int(self.n_shared),
-                "explore_cost": None,
-                "fallback_cost": None,
-                "explore_feasible": False,
-                "fallback_feasible": False,
-                "occlusion_risk_score": float(self.occlusion_risk_score),
-                "visible_pressure_score": float(self.visible_pressure_score),
-                "explore_speed_cap": float(self.explore_speed_cap),
-                "fallback_speed_cap": float(self.fallback_speed_cap),
-                "shared_speed_ref_min": float(self.shared_speed_ref_min),
-                "explore_speed_ref_min": float(self.explore_speed_ref_min),
-                "fallback_speed_ref_min": float(self.fallback_speed_ref_min),
-                "speed_cost_mode": "progress_aligned",
-                "branch_switch_count": int(self.branch_switch_count),
-                "num_visible_obs": int(min(len(visible_obs), self.max_visible_obs)),
-                "num_occ_scenarios": int(min(len(occ_scenarios), self.max_occ_scenarios)),
-                "shared_prefix_feasible": False,
-                "shared_prefix_cost": None,
-                "shared_min_visible_clearance": None,
-                "explore_max_risk": None,
-                "fallback_max_risk": None,
-                "shared_risk_slack": 0.0,
-                "explore_risk_slack": 0.0,
-                "fallback_risk_slack": 0.0,
-                "status_raw": str(self.last_qp_status_raw),
-                "admm_iterations": int(iter_count),
-                "admm_primal_residual": (None if res_pri is None else float(res_pri)),
-                "admm_dual_residual": (None if res_dual is None else float(res_dual)),
-                "shared_ctrl_pts": int(self.admm_shared_ctrl_pts),
-                "tail_ctrl_pts": int(self.admm_tail_ctrl_pts),
-            }
-
-        self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
-        self.last_profile["total_ms"] = float(self.last_total_compute_time_ms)
-        return u_cmd
+        return self._solve_control_problem_coupled(robot_state, control_ref, obs_list)
 
     def solve_control_problem(self, robot_state, control_ref, obs_list):
         if self.backend == "admm_lowdim":
