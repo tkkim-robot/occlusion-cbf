@@ -150,6 +150,7 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("wacc", 1.2)
     ct_cfg.setdefault("wtrack_shared", 0.4)
     ct_cfg.setdefault("wtrack_tail", 0.12)
+    ct_cfg.setdefault("wlat_vel_di", 4.0)
     ct_cfg.setdefault("lambda_w", 1.0)
     ct_cfg.setdefault("margin_obs", 0.05)
     # Use the persistent joint CasADi backend by default so control-tree is
@@ -170,29 +171,37 @@ def _apply_control_tree_defaults(robot_spec):
 def _apply_oacp_defaults(robot_spec):
     """Apply adapted occlusion-aware contingency planner defaults."""
     oacp_cfg = robot_spec.setdefault("oacp_mpc", {})
-    # Match the crowd benchmark runtime step and keep the horizon compact for
-    # dense emergence events. Preserve a short but non-trivial shared prefix.
+    # Centralized, ADMM-free OACP adaptation for crowd-style occlusion events.
+    # Keep the dual-branch shared-prefix structure, but use SRQ-inspired risk
+    # quantification, dynamic velocity boundaries, explicit phantom barriers,
+    # and smooth Bezier reference scaffolds.
     oacp_cfg.setdefault("backend", "coupled_nlp")
     oacp_cfg.setdefault("dt_plan", 0.05)
     oacp_cfg.setdefault("Th", 1.0)
     oacp_cfg.setdefault("N", 20)
     oacp_cfg.setdefault("n_shared", 3)
-    # Keep a clear explore/fallback split without collapsing the shared prefix
-    # into an overly conservative stop-like behavior.
-    oacp_cfg.setdefault("risk_explore_scale", 0.40)
-    oacp_cfg.setdefault("risk_fallback_scale", 1.00)
-    oacp_cfg.setdefault("explore_speed_scale", 1.00)
-    oacp_cfg.setdefault("fallback_speed_scale", 0.75)
-    oacp_cfg.setdefault("shared_speed_blend", 0.35)
-    oacp_cfg.setdefault("di_profile_occ_scale", 1.00)
-    oacp_cfg.setdefault("di_profile_visible_scale", 0.45)
-    oacp_cfg.setdefault("di_profile_speed_floor_scale", 0.35)
-    oacp_cfg.setdefault("admm_shared_ctrl_pts", 2)
-    oacp_cfg.setdefault("admm_tail_ctrl_pts", 3)
-    oacp_cfg.setdefault("admm_rho", 2.0)
-    oacp_cfg.setdefault("admm_max_iter", 3)
-    oacp_cfg.setdefault("admm_pri_tol", 1e-2)
-    oacp_cfg.setdefault("admm_dual_tol", 1e-2)
+    oacp_cfg.setdefault("max_active_occlusions", 2)
+    oacp_cfg.setdefault("hidden_agent_radius", 0.4)
+    oacp_cfg.setdefault("hidden_spawn_clearance", 0.12)
+    oacp_cfg.setdefault("hidden_speed_scale", 1.0)
+    oacp_cfg.setdefault("active_selection_delta", 1.0)
+    oacp_cfg.setdefault("srq_confidence_z", 1.645)
+    oacp_cfg.setdefault("srq_lane_width_min", 0.8)
+    oacp_cfg.setdefault("srq_lane_width_max", 2.5)
+    oacp_cfg.setdefault("cth_min", 0.0)
+    oacp_cfg.setdefault("cth_max_explore", 0.85)
+    oacp_cfg.setdefault("cth_max_fallback", 0.55)
+    oacp_cfg.setdefault("v_occ_min_scale", 0.15)
+    oacp_cfg.setdefault("v_occ_min_abs", 0.0)
+    oacp_cfg.setdefault("barrier_alpha_start", 0.4)
+    oacp_cfg.setdefault("barrier_alpha_end", 1.0)
+    oacp_cfg.setdefault("ellipse_scale_x", 1.0)
+    oacp_cfg.setdefault("ellipse_scale_y", 1.0)
+    oacp_cfg.setdefault("ellipse_buffer_x", 0.05)
+    oacp_cfg.setdefault("ellipse_buffer_y", 0.05)
+    oacp_cfg.setdefault("use_bezier_reference", True)
+    oacp_cfg.setdefault("bezier_ref_order", 10)
+    oacp_cfg.setdefault("branch_switch_margin", 0.05)
     oacp_cfg.setdefault("allow_solver_fallback", False)
     oacp_cfg.setdefault("dynamic_occluders", True)
     oacp_cfg.setdefault("visible_reach_mode", "constant_velocity")
@@ -249,6 +258,8 @@ def _apply_crowd_dynamic_obstacle_defaults(robot_spec):
     dyn_cfg.setdefault("occluded_speed_boost_enable", False)
     dyn_cfg.setdefault("occluded_speed_boost_vmax", 1.0)
     dyn_cfg.setdefault("occluded_speed_boost_fov_only", True)
+    dyn_cfg.setdefault("occluded_speed_boost_exact", True)
+    dyn_cfg.setdefault("occluded_speed_boost_hold_time_s", 0.5)
     dyn_cfg.setdefault("occluded_speed_boost_on_hysteresis_steps", 2)
     dyn_cfg.setdefault("occluded_speed_boost_off_hysteresis_steps", 5)
 
@@ -1190,11 +1201,13 @@ def _prepare_crowd_runtime(
     if crowd_mode == "forced_emergence":
         robot_spec["v_adv_max_occ"] = 1.0
         dyn_cfg = robot_spec.setdefault("crowd_dyn_obs", {})
-        dyn_cfg["occluded_speed_boost_enable"] = False
-        dyn_cfg["occluded_speed_boost_vmax"] = float(robot_spec["v_adv_max_occ"])
+        dyn_cfg["occluded_speed_boost_enable"] = True
+        dyn_cfg["occluded_speed_boost_vmax"] = float(robot_spec.get("v_obs_max", robot_spec["v_adv_max_occ"]))
+        dyn_cfg["occluded_speed_boost_exact"] = True
         dyn_cfg["occluded_speed_boost_fov_only"] = True
-        dyn_cfg["occluded_speed_boost_on_hysteresis_steps"] = 2
-        dyn_cfg["occluded_speed_boost_off_hysteresis_steps"] = 5
+        dyn_cfg["occluded_speed_boost_on_hysteresis_steps"] = 1
+        dyn_cfg["occluded_speed_boost_hold_time_s"] = 0.5
+        dyn_cfg["occluded_speed_boost_off_hysteresis_steps"] = int(np.ceil(0.5 / max(float(dt), 1e-9))) + 1
 
     if occ_visible_scale is not None:
         vis_scale = float(occ_visible_scale)
@@ -1203,7 +1216,9 @@ def _prepare_crowd_runtime(
                 f"Invalid --occ-visible-scale: {occ_visible_scale}. It must be a positive finite value."
             )
         robot_spec["occ_visible_scale"] = float(vis_scale)
-    robot_spec.setdefault("occ_visibility_version", "v1")
+    # Use the rounded-cone initial occlusion geometry for visibility filtering.
+    # Keep rollout geometry separate via `occ_rollout_version`.
+    robot_spec.setdefault("occ_visibility_version", "u0")
     if occ_version is not None:
         occ_version_str = str(occ_version).strip().lower()
         if occ_version_str not in {"v1", "v2"}:
@@ -1229,8 +1244,9 @@ def _prepare_crowd_runtime(
         else:
             oa_cfg["dsafe"] = float(oa_dsafe)
         oa_cfg["dynamic_occluders"] = True
-        oa_cfg["visible_reach_mode"] = "constant_velocity"
-        oa_cfg["use_nominal_tracking_cost"] = True
+        # Keep visible dynamic obstacles in the same no-prediction,
+        # forward-reachable-set spirit used by the OA-MPC paper.
+        oa_cfg["visible_reach_mode"] = "worst_case"
         oa_cfg.setdefault("di_terminal_stop_mode", "brake_reachable")
         robot_spec["occlusion_types"] = [0, 1]
         if oa_dynamic_occluders is not None:
@@ -1714,6 +1730,8 @@ def run_crowd_scenario(
             None if len(min_reveal_ttc_actual) == 0 else float(np.min(min_reveal_ttc_actual))
         )
 
+    avg_compute_time_ms = (None if len(compute_ms) == 0 else float(np.mean(compute_ms)))
+
     return {
         "status": status,
         "ret": int(ret_last),
@@ -1724,7 +1742,11 @@ def run_crowd_scenario(
         "total_sim_time": total_sim_time,
         "end_goal_distance": end_goal_distance,
         "final_goal_distance": end_goal_distance,
-        "avg_solve_time_ms": (None if len(compute_ms) == 0 else float(np.mean(compute_ms))),
+        # Canonical benchmark timing metric: full controller compute time per
+        # step, excluding plotting. Keep the old `avg_solve_time_ms` alias for
+        # compatibility with existing analysis scripts.
+        "avg_compute_time_ms": avg_compute_time_ms,
+        "avg_solve_time_ms": avg_compute_time_ms,
         "avg_solve_ms_trunk": (None if len(solve_ms_trunk_vals) == 0 else float(np.mean(solve_ms_trunk_vals))),
         "avg_branch_sum_ms": (None if len(solve_ms_branch_sum_vals) == 0 else float(np.mean(solve_ms_branch_sum_vals))),
         "avg_feasible_horizon_fraction": (None if len(feasible_frac) == 0 else float(np.mean(feasible_frac))),
@@ -1908,6 +1930,25 @@ def main():
     parser.add_argument("--occ-k-d", type=float, default=None, help="Override backup_cbf.k_d_occ_di for DI occlusion backup controller.")
     parser.add_argument("--occ-kappa", type=float, default=None, help="Override occlusion CBF scenario softmax kappa.")
     parser.add_argument(
+        "--occ-vref-scenario-softmax-kappa",
+        type=float,
+        default=None,
+        help="Override backup_cbf.vref_scenario_softmax_kappa for occlusion-CBF front-speed scenario weighting.",
+    )
+    parser.add_argument(
+        "--occ-max-active-occlusions",
+        type=int,
+        default=None,
+        help="Limit occlusion-CBF to the top-K active occlusion scenarios. 0 keeps all scenarios.",
+    )
+    parser.add_argument(
+        "--occ-selection-mode",
+        type=str,
+        choices=["h_tilde", "distance"],
+        default=None,
+        help="Occlusion-CBF active occlusion selection score.",
+    )
+    parser.add_argument(
         "--occ-rollout-mode",
         type=str,
         choices=["common", "per_scenario"],
@@ -2010,29 +2051,40 @@ def main():
     parser.add_argument("--oacp-Th", type=float, default=None, help="Override oacp_mpc.Th.")
     parser.add_argument("--oacp-N", type=int, default=None, help="Override oacp_mpc.N.")
     parser.add_argument("--oacp-n-shared", type=int, default=None, help="Override oacp_mpc.n_shared.")
-    parser.add_argument("--oacp-backend", type=str, choices=["coupled_nlp", "admm_lowdim"], default=None, help="Override oacp_mpc.backend.")
-    parser.add_argument("--oacp-risk-explore-scale", type=float, default=None, help="Override oacp_mpc.risk_explore_scale.")
-    parser.add_argument("--oacp-risk-fallback-scale", type=float, default=None, help="Override oacp_mpc.risk_fallback_scale.")
-    parser.add_argument("--oacp-explore-speed-scale", type=float, default=None, help="Override oacp_mpc.explore_speed_scale.")
-    parser.add_argument("--oacp-fallback-speed-scale", type=float, default=None, help="Override oacp_mpc.fallback_speed_scale.")
-    parser.add_argument("--oacp-shared-speed-blend", type=float, default=None, help="Override oacp_mpc.shared_speed_blend.")
-    parser.add_argument("--oacp-di-profile-occ-scale", type=float, default=None, help="Override oacp_mpc.di_profile_occ_scale.")
-    parser.add_argument("--oacp-di-profile-visible-scale", type=float, default=None, help="Override oacp_mpc.di_profile_visible_scale.")
-    parser.add_argument("--oacp-di-profile-speed-floor-scale", type=float, default=None, help="Override oacp_mpc.di_profile_speed_floor_scale.")
-    parser.add_argument("--oacp-admm-shared-ctrl-pts", type=int, default=None, help="Override oacp_mpc.admm_shared_ctrl_pts.")
-    parser.add_argument("--oacp-admm-tail-ctrl-pts", type=int, default=None, help="Override oacp_mpc.admm_tail_ctrl_pts.")
-    parser.add_argument("--oacp-admm-rho", type=float, default=None, help="Override oacp_mpc.admm_rho.")
-    parser.add_argument("--oacp-admm-max-iter", type=int, default=None, help="Override oacp_mpc.admm_max_iter.")
-    parser.add_argument("--oacp-admm-pri-tol", type=float, default=None, help="Override oacp_mpc.admm_pri_tol.")
-    parser.add_argument("--oacp-admm-dual-tol", type=float, default=None, help="Override oacp_mpc.admm_dual_tol.")
+    parser.add_argument("--oacp-max-visible-obs", type=int, default=None, help="Override oacp_mpc.max_visible_obs.")
+    parser.add_argument("--oacp-max-occ-scenarios", type=int, default=None, help="Override oacp_mpc.max_occ_scenarios.")
+    parser.add_argument("--oacp-max-active-occlusions", type=int, default=None, help="Override oacp_mpc.max_active_occlusions.")
+    parser.add_argument("--oacp-margin-obs", type=float, default=None, help="Override oacp_mpc.margin_obs.")
+    parser.add_argument("--oacp-v-ref-default", type=float, default=None, help="Override oacp_mpc.v_ref_default.")
+    parser.add_argument("--oacp-hidden-agent-radius", type=float, default=None, help="Override oacp_mpc.hidden_agent_radius.")
+    parser.add_argument("--oacp-hidden-spawn-clearance", type=float, default=None, help="Override oacp_mpc.hidden_spawn_clearance.")
+    parser.add_argument("--oacp-hidden-speed", type=float, default=None, help="Override oacp_mpc.hidden_speed.")
+    parser.add_argument("--oacp-hidden-speed-scale", type=float, default=None, help="Override oacp_mpc.hidden_speed_scale.")
+    parser.add_argument("--oacp-active-selection-delta", type=float, default=None, help="Override oacp_mpc.active_selection_delta.")
+    parser.add_argument("--oacp-srq-confidence-z", type=float, default=None, help="Override oacp_mpc.srq_confidence_z.")
+    parser.add_argument("--oacp-srq-lane-width-min", type=float, default=None, help="Override oacp_mpc.srq_lane_width_min.")
+    parser.add_argument("--oacp-srq-lane-width-max", type=float, default=None, help="Override oacp_mpc.srq_lane_width_max.")
+    parser.add_argument("--oacp-cth-min", type=float, default=None, help="Override oacp_mpc.cth_min.")
+    parser.add_argument("--oacp-cth-max-explore", type=float, default=None, help="Override oacp_mpc.cth_max_explore.")
+    parser.add_argument("--oacp-cth-max-fallback", type=float, default=None, help="Override oacp_mpc.cth_max_fallback.")
+    parser.add_argument("--oacp-v-occ-min-scale", type=float, default=None, help="Override oacp_mpc.v_occ_min_scale.")
+    parser.add_argument("--oacp-v-occ-min-abs", type=float, default=None, help="Override oacp_mpc.v_occ_min_abs.")
+    parser.add_argument("--oacp-barrier-alpha-start", type=float, default=None, help="Override oacp_mpc.barrier_alpha_start.")
+    parser.add_argument("--oacp-barrier-alpha-end", type=float, default=None, help="Override oacp_mpc.barrier_alpha_end.")
+    parser.add_argument("--oacp-ellipse-scale-x", type=float, default=None, help="Override oacp_mpc.ellipse_scale_x.")
+    parser.add_argument("--oacp-ellipse-scale-y", type=float, default=None, help="Override oacp_mpc.ellipse_scale_y.")
+    parser.add_argument("--oacp-ellipse-buffer-x", type=float, default=None, help="Override oacp_mpc.ellipse_buffer_x.")
+    parser.add_argument("--oacp-ellipse-buffer-y", type=float, default=None, help="Override oacp_mpc.ellipse_buffer_y.")
     parser.add_argument(
-        "--oacp-use-nominal-tracking-cost",
+        "--oacp-use-bezier-reference",
         type=_str2bool,
         nargs="?",
         const=True,
         default=None,
-        help="Override oacp_mpc.use_nominal_tracking_cost.",
+        help="Override oacp_mpc.use_bezier_reference.",
     )
+    parser.add_argument("--oacp-bezier-ref-order", type=int, default=None, help="Override oacp_mpc.bezier_ref_order.")
+    parser.add_argument("--oacp-branch-switch-margin", type=float, default=None, help="Override oacp_mpc.branch_switch_margin.")
     parser.add_argument(
         "--oacp-allow-solver-fallback",
         type=_str2bool,
@@ -2119,6 +2171,12 @@ def main():
         backup_cbf_overrides["k_p_occ_di"] = float(args.occ_k_p)
     if args.occ_k_d is not None:
         backup_cbf_overrides["k_d_occ_di"] = float(args.occ_k_d)
+    if args.occ_vref_scenario_softmax_kappa is not None:
+        backup_cbf_overrides["vref_scenario_softmax_kappa"] = float(args.occ_vref_scenario_softmax_kappa)
+    if args.occ_max_active_occlusions is not None:
+        backup_cbf_overrides["max_active_occlusions"] = int(args.occ_max_active_occlusions)
+    if args.occ_selection_mode is not None:
+        backup_cbf_overrides["occ_selection_mode"] = str(args.occ_selection_mode).strip().lower()
     if args.occ_rollout_mode is not None:
         backup_cbf_overrides["occ_rollout_mode"] = str(args.occ_rollout_mode).strip().lower()
     if args.occ_terminal_slack_weight is not None:
@@ -2139,38 +2197,60 @@ def main():
         oacp_cfg["N"] = int(args.oacp_N)
     if args.oacp_n_shared is not None:
         oacp_cfg["n_shared"] = int(args.oacp_n_shared)
-    if args.oacp_backend is not None:
-        oacp_cfg["backend"] = str(args.oacp_backend).strip().lower()
-    if args.oacp_risk_explore_scale is not None:
-        oacp_cfg["risk_explore_scale"] = float(args.oacp_risk_explore_scale)
-    if args.oacp_risk_fallback_scale is not None:
-        oacp_cfg["risk_fallback_scale"] = float(args.oacp_risk_fallback_scale)
-    if args.oacp_explore_speed_scale is not None:
-        oacp_cfg["explore_speed_scale"] = float(args.oacp_explore_speed_scale)
-    if args.oacp_fallback_speed_scale is not None:
-        oacp_cfg["fallback_speed_scale"] = float(args.oacp_fallback_speed_scale)
-    if args.oacp_shared_speed_blend is not None:
-        oacp_cfg["shared_speed_blend"] = float(args.oacp_shared_speed_blend)
-    if args.oacp_di_profile_occ_scale is not None:
-        oacp_cfg["di_profile_occ_scale"] = float(args.oacp_di_profile_occ_scale)
-    if args.oacp_di_profile_visible_scale is not None:
-        oacp_cfg["di_profile_visible_scale"] = float(args.oacp_di_profile_visible_scale)
-    if args.oacp_di_profile_speed_floor_scale is not None:
-        oacp_cfg["di_profile_speed_floor_scale"] = float(args.oacp_di_profile_speed_floor_scale)
-    if args.oacp_admm_shared_ctrl_pts is not None:
-        oacp_cfg["admm_shared_ctrl_pts"] = int(args.oacp_admm_shared_ctrl_pts)
-    if args.oacp_admm_tail_ctrl_pts is not None:
-        oacp_cfg["admm_tail_ctrl_pts"] = int(args.oacp_admm_tail_ctrl_pts)
-    if args.oacp_admm_rho is not None:
-        oacp_cfg["admm_rho"] = float(args.oacp_admm_rho)
-    if args.oacp_admm_max_iter is not None:
-        oacp_cfg["admm_max_iter"] = int(args.oacp_admm_max_iter)
-    if args.oacp_admm_pri_tol is not None:
-        oacp_cfg["admm_pri_tol"] = float(args.oacp_admm_pri_tol)
-    if args.oacp_admm_dual_tol is not None:
-        oacp_cfg["admm_dual_tol"] = float(args.oacp_admm_dual_tol)
-    if args.oacp_use_nominal_tracking_cost is not None:
-        oacp_cfg["use_nominal_tracking_cost"] = bool(args.oacp_use_nominal_tracking_cost)
+    if args.oacp_max_visible_obs is not None:
+        oacp_cfg["max_visible_obs"] = int(args.oacp_max_visible_obs)
+    if args.oacp_max_occ_scenarios is not None:
+        oacp_cfg["max_occ_scenarios"] = int(args.oacp_max_occ_scenarios)
+    if args.oacp_max_active_occlusions is not None:
+        oacp_cfg["max_active_occlusions"] = int(args.oacp_max_active_occlusions)
+    if args.oacp_margin_obs is not None:
+        oacp_cfg["margin_obs"] = float(args.oacp_margin_obs)
+    if args.oacp_v_ref_default is not None:
+        oacp_cfg["v_ref_default"] = float(args.oacp_v_ref_default)
+    if args.oacp_hidden_agent_radius is not None:
+        oacp_cfg["hidden_agent_radius"] = float(args.oacp_hidden_agent_radius)
+    if args.oacp_hidden_spawn_clearance is not None:
+        oacp_cfg["hidden_spawn_clearance"] = float(args.oacp_hidden_spawn_clearance)
+    if args.oacp_hidden_speed is not None:
+        oacp_cfg["hidden_speed"] = float(args.oacp_hidden_speed)
+    if args.oacp_hidden_speed_scale is not None:
+        oacp_cfg["hidden_speed_scale"] = float(args.oacp_hidden_speed_scale)
+    if args.oacp_active_selection_delta is not None:
+        oacp_cfg["active_selection_delta"] = float(args.oacp_active_selection_delta)
+    if args.oacp_srq_confidence_z is not None:
+        oacp_cfg["srq_confidence_z"] = float(args.oacp_srq_confidence_z)
+    if args.oacp_srq_lane_width_min is not None:
+        oacp_cfg["srq_lane_width_min"] = float(args.oacp_srq_lane_width_min)
+    if args.oacp_srq_lane_width_max is not None:
+        oacp_cfg["srq_lane_width_max"] = float(args.oacp_srq_lane_width_max)
+    if args.oacp_cth_min is not None:
+        oacp_cfg["cth_min"] = float(args.oacp_cth_min)
+    if args.oacp_cth_max_explore is not None:
+        oacp_cfg["cth_max_explore"] = float(args.oacp_cth_max_explore)
+    if args.oacp_cth_max_fallback is not None:
+        oacp_cfg["cth_max_fallback"] = float(args.oacp_cth_max_fallback)
+    if args.oacp_v_occ_min_scale is not None:
+        oacp_cfg["v_occ_min_scale"] = float(args.oacp_v_occ_min_scale)
+    if args.oacp_v_occ_min_abs is not None:
+        oacp_cfg["v_occ_min_abs"] = float(args.oacp_v_occ_min_abs)
+    if args.oacp_barrier_alpha_start is not None:
+        oacp_cfg["barrier_alpha_start"] = float(args.oacp_barrier_alpha_start)
+    if args.oacp_barrier_alpha_end is not None:
+        oacp_cfg["barrier_alpha_end"] = float(args.oacp_barrier_alpha_end)
+    if args.oacp_ellipse_scale_x is not None:
+        oacp_cfg["ellipse_scale_x"] = float(args.oacp_ellipse_scale_x)
+    if args.oacp_ellipse_scale_y is not None:
+        oacp_cfg["ellipse_scale_y"] = float(args.oacp_ellipse_scale_y)
+    if args.oacp_ellipse_buffer_x is not None:
+        oacp_cfg["ellipse_buffer_x"] = float(args.oacp_ellipse_buffer_x)
+    if args.oacp_ellipse_buffer_y is not None:
+        oacp_cfg["ellipse_buffer_y"] = float(args.oacp_ellipse_buffer_y)
+    if args.oacp_use_bezier_reference is not None:
+        oacp_cfg["use_bezier_reference"] = bool(args.oacp_use_bezier_reference)
+    if args.oacp_bezier_ref_order is not None:
+        oacp_cfg["bezier_ref_order"] = int(args.oacp_bezier_ref_order)
+    if args.oacp_branch_switch_margin is not None:
+        oacp_cfg["branch_switch_margin"] = float(args.oacp_branch_switch_margin)
     if args.oacp_allow_solver_fallback is not None:
         oacp_cfg["allow_solver_fallback"] = bool(args.oacp_allow_solver_fallback)
     if args.oacp_dynamic_occluders is not None:

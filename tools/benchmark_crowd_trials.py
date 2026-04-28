@@ -51,6 +51,10 @@ def _load_run_crowd_scenario(scenario_name: str):
         from examples.test_crowd2 import run_crowd_scenario as runner
 
         return runner, "crowd2"
+    if scenario_key in {"occlusion_home", "test_occlusion_home", "occ_home"}:
+        from examples.test_occlusion_home import run_crowd_scenario as runner
+
+        return runner, "occlusion_home"
     raise ValueError(f"Unsupported scenario: {scenario_name}")
 
 
@@ -236,7 +240,7 @@ def _run_baseline_sweep(
             rows.append(row)
             print(
                 f"[{k:03d}/{total:03d}] idx={idx:3d} -> {row['class_3way']:10s} "
-                f"(raw={row['raw_outcome']}, solve_ms={row['avg_solve_time_ms']}, "
+                f"(raw={row['raw_outcome']}, compute_ms={row['avg_compute_time_ms']}, "
                 f"intv={row['avg_control_intervention_l2_sq']})",
                 flush=True,
             )
@@ -304,6 +308,7 @@ def _run_baseline_sweep(
                         "min_reveal_ttc_to_nominal_ego": None,
                         "reveal_steps": "[]",
                         "forced_event_meta": "[]",
+                        "avg_compute_time_ms": None,
                         "avg_solve_time_ms": None,
                         "avg_control_intervention_l2_sq": None,
                         "total_sim_time": None,
@@ -317,7 +322,7 @@ def _run_baseline_sweep(
                 rows.append(row)
                 print(
                     f"[{k:03d}/{total:03d}] idx={idx:3d} -> {row['class_3way']:10s} "
-                    f"(raw={row['raw_outcome']}, solve_ms={row['avg_solve_time_ms']}, "
+                    f"(raw={row['raw_outcome']}, compute_ms={row['avg_compute_time_ms']}, "
                     f"intv={row['avg_control_intervention_l2_sq']})",
                     flush=True,
                 )
@@ -333,7 +338,9 @@ def _run_baseline_sweep(
         else:
             idx_infeasible.append(idx)
 
-    avg_ms_all = _mean([_safe_float(r.get("avg_solve_time_ms")) for r in rows])
+    avg_ms_all = _mean(
+        [_safe_float(r.get("avg_compute_time_ms", r.get("avg_solve_time_ms"))) for r in rows]
+    )
     avg_intv_all = _mean([_safe_float(r.get("avg_control_intervention_l2_sq")) for r in rows])
     avg_term_slack_l1_all = _mean([_safe_float(r.get("avg_terminal_slack_l1")) for r in rows])
     avg_term_slack_max_all = _mean([_safe_float(r.get("avg_terminal_slack_max")) for r in rows])
@@ -375,6 +382,7 @@ def _run_baseline_sweep(
         "min_reveal_ttc_to_nominal_ego",
         "reveal_steps",
         "forced_event_meta",
+        "avg_compute_time_ms",
         "avg_solve_time_ms",
         "avg_control_intervention_l2_sq",
         "avg_terminal_slack_l1",
@@ -445,6 +453,7 @@ def _run_baseline_sweep(
             "infeasible": idx_infeasible,
         },
         "averages": {
+            "avg_compute_time_ms_over_idx": avg_ms_all,
             "avg_solve_time_ms_over_idx": avg_ms_all,
             "avg_control_intervention_l2_sq_over_idx": avg_intv_all,
             "avg_terminal_slack_l1_over_idx": avg_term_slack_l1_all,
@@ -474,7 +483,7 @@ def _run_baseline_sweep(
     print(f"success idx   : {idx_success}")
     print(f"collision idx : {idx_collision}")
     print(f"infeasible idx: {idx_infeasible}")
-    print(f"avg solve time over idx [ms]: {avg_ms_all}")
+    print(f"avg controller compute time over idx [ms]: {avg_ms_all}")
     print(f"avg control intervention over idx: {avg_intv_all}")
     print(f"avg terminal slack L1 over idx: {avg_term_slack_l1_all}")
     print(f"avg terminal slack max over idx: {avg_term_slack_max_all}")
@@ -553,6 +562,7 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
         "collision",
         "infeasible",
         "total",
+        "avg_compute_time_ms_over_idx",
         "avg_solve_time_ms_over_idx",
         "avg_control_intervention_l2_sq_over_idx",
         "avg_total_sim_time_s_over_idx",
@@ -576,6 +586,10 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
                 "collision": cnt.get("collision"),
                 "infeasible": cnt.get("infeasible"),
                 "total": cnt.get("total"),
+                "avg_compute_time_ms_over_idx": avg.get(
+                    "avg_compute_time_ms_over_idx",
+                    avg.get("avg_solve_time_ms_over_idx"),
+                ),
                 "avg_solve_time_ms_over_idx": avg.get("avg_solve_time_ms_over_idx"),
                 "avg_control_intervention_l2_sq_over_idx": avg.get("avg_control_intervention_l2_sq_over_idx"),
                 "avg_total_sim_time_s_over_idx": avg.get("avg_total_sim_time_s_over_idx"),
@@ -631,7 +645,7 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
         print(
             f"{row['label']:24s} | success={row['success']} collision={row['collision']} "
             f"infeasible={row['infeasible']} total={row['total']} "
-            f"| avg_ms={row['avg_solve_time_ms_over_idx']} "
+            f"| avg_compute_ms={row['avg_compute_time_ms_over_idx']} "
             f"| avg_intv={row['avg_control_intervention_l2_sq_over_idx']} "
             f"| avg_sim_s={row['avg_total_sim_time_s_over_idx']} "
             f"| avg_wall_s={row['avg_case_wall_time_s_over_idx']}"
@@ -649,8 +663,11 @@ def main() -> int:
         "--scenario",
         type=str,
         default="crowd1",
-        choices=["crowd1", "crowd2"],
-        help="Select which benchmark scenario runner to use: examples/test_crowd.py or examples/test_crowd2.py.",
+        choices=["crowd1", "crowd2", "occlusion_home"],
+        help=(
+            "Select which benchmark scenario runner to use: "
+            "examples/test_crowd.py, examples/test_crowd2.py, or examples/test_occlusion_home.py."
+        ),
     )
     p.add_argument(
         "--baseline",
@@ -691,8 +708,8 @@ def main() -> int:
         "--crowd-mode",
         type=str,
         default="random",
-        choices=["random", "forced_emergence"],
-        help="Forwarded to examples/test_crowd.py crowd generator.",
+        choices=["random", "forced_emergence", "single_event", "two_event"],
+        help="Forwarded to the selected scenario generator.",
     )
     p.add_argument("--forced-events", type=int, default=3)
     p.add_argument(
@@ -858,6 +875,18 @@ def main() -> int:
         help="Override backup_cbf.v_min_cmd_rev_occ_uni.",
     )
     p.add_argument(
+        "--occ-t-horizon",
+        type=float,
+        default=None,
+        help="Override backup_cbf.T_horizon for occlusion backup rollout.",
+    )
+    p.add_argument(
+        "--occ-rho-T",
+        type=str,
+        default=None,
+        help="Override backup_cbf.rho_T for terminal occlusion backup constraint. Accepts a float or 'auto'.",
+    )
+    p.add_argument(
         "--occ-dt-backup",
         type=float,
         default=None,
@@ -883,6 +912,31 @@ def main() -> int:
         help="Override backup_cbf.terminal_slack_max for terminal-set rows only.",
     )
     p.add_argument(
+        "--occ-vref-scenario-softmax-kappa",
+        type=float,
+        default=None,
+        help="Override backup_cbf.vref_scenario_softmax_kappa for occlusion-CBF front-speed scenario weighting.",
+    )
+    p.add_argument(
+        "--occ-max-active-occlusions",
+        type=int,
+        default=None,
+        help="Limit occlusion-CBF to the top-K active occlusion scenarios. 0 keeps all scenarios.",
+    )
+    p.add_argument(
+        "--occ-selection-mode",
+        type=str,
+        choices=["h_tilde", "distance"],
+        default=None,
+        help="Occlusion-CBF active occlusion selection score.",
+    )
+    p.add_argument(
+        "--occ-kappa",
+        type=float,
+        default=None,
+        help="Override robot_spec.occ_kappa for occlusion-CBF scenario softmax weighting.",
+    )
+    p.add_argument(
         "--vref",
         type=str,
         default=None,
@@ -905,7 +959,7 @@ def main() -> int:
     args = p.parse_args()
     args.exclude_idx = _parse_int_list_arg(args.exclude_idx)
     args.backup_cbf_overrides = _parse_json_arg(args.backup_cbf_json) or {}
-    args.robot_spec_overrides = _parse_json_arg(args.robot_spec_json)
+    args.robot_spec_overrides = _parse_json_arg(args.robot_spec_json) or {}
     if args.uni_reverse_bias is not None:
         args.backup_cbf_overrides["reverse_bias_occ_uni"] = float(args.uni_reverse_bias)
     if args.uni_reverse_gate_angle is not None:
@@ -914,6 +968,15 @@ def main() -> int:
         args.backup_cbf_overrides["reverse_speed_gate_power_occ_uni"] = float(args.uni_reverse_gate_power)
     if args.uni_v_min_cmd_rev is not None:
         args.backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
+    if args.occ_t_horizon is not None:
+        args.backup_cbf_overrides["T_horizon"] = float(args.occ_t_horizon)
+    if args.occ_rho_T is not None:
+        rho_raw = str(args.occ_rho_T).strip()
+        rho_key = rho_raw.lower()
+        if rho_key in {"auto", "auto_stop", "stop", "stopping_distance"}:
+            args.backup_cbf_overrides["rho_T"] = rho_key
+        else:
+            args.backup_cbf_overrides["rho_T"] = float(rho_raw)
     if args.occ_dt_backup is not None:
         args.backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
     if args.occ_rollout_mode is not None:
@@ -922,12 +985,18 @@ def main() -> int:
         args.backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
     if args.occ_terminal_slack_max is not None:
         args.backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
+    if args.occ_vref_scenario_softmax_kappa is not None:
+        args.backup_cbf_overrides["vref_scenario_softmax_kappa"] = float(args.occ_vref_scenario_softmax_kappa)
+    if args.occ_max_active_occlusions is not None:
+        args.backup_cbf_overrides["max_active_occlusions"] = int(args.occ_max_active_occlusions)
+    if args.occ_selection_mode is not None:
+        args.backup_cbf_overrides["occ_selection_mode"] = str(args.occ_selection_mode).strip().lower()
+    if args.occ_kappa is not None:
+        args.robot_spec_overrides["occ_kappa"] = float(args.occ_kappa)
     if args.vref is not None:
         args.backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     if not args.backup_cbf_overrides:
         args.backup_cbf_overrides = None
-    if args.robot_spec_overrides is None:
-        args.robot_spec_overrides = {}
     oacp_cfg = {}
     if args.oacp_dt_plan is not None:
         oacp_cfg["dt_plan"] = float(args.oacp_dt_plan)
@@ -1120,6 +1189,9 @@ def _run_one_idx_job(
             return_metrics=True,
         )
         raw_outcome = str(metrics.get("outcome", "unknown"))
+        avg_compute_time_ms = _safe_float(
+            metrics.get("avg_compute_time_ms", metrics.get("avg_solve_time_ms", None))
+        )
         return {
             "label": str(run_label),
             "scenario": str(scenario_label),
@@ -1152,7 +1224,8 @@ def _run_one_idx_job(
             ),
             "reveal_steps": json.dumps(metrics.get("reveal_steps", []), separators=(",", ":")),
             "forced_event_meta": json.dumps(metrics.get("forced_event_meta", []), separators=(",", ":")),
-            "avg_solve_time_ms": _safe_float(metrics.get("avg_solve_time_ms", None)),
+            "avg_compute_time_ms": avg_compute_time_ms,
+            "avg_solve_time_ms": avg_compute_time_ms,
             "avg_control_intervention_l2_sq": _safe_float(
                 metrics.get("avg_control_intervention_l2_sq", None)
             ),
@@ -1198,6 +1271,7 @@ def _run_one_idx_job(
             "min_reveal_ttc_to_nominal_ego": None,
             "reveal_steps": "[]",
                         "forced_event_meta": "[]",
+                        "avg_compute_time_ms": None,
                         "avg_solve_time_ms": None,
                         "avg_control_intervention_l2_sq": None,
                         "avg_terminal_slack_l1": None,

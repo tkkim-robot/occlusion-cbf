@@ -835,7 +835,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
 
         visible_polys = []
         for sc in scenarios:
-            poly = sc.get('poly', None)
+            poly = sc.get('visibility_poly', sc.get('poly', None))
             if poly is None:
                 continue
             pts = np.asarray(poly, dtype=float)
@@ -1142,7 +1142,20 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             occluded_speed_boost_enable = False
         occluded_speed_boost_fov_only = bool(crowd_cfg.get("occluded_speed_boost_fov_only", True))
         occluded_speed_boost_on_hys = int(crowd_cfg.get("occluded_speed_boost_on_hysteresis_steps", 1))
-        occluded_speed_boost_off_hys = int(crowd_cfg.get("occluded_speed_boost_off_hysteresis_steps", 1))
+        hold_time_s = crowd_cfg.get("occluded_speed_boost_hold_time_s", None)
+        if hold_time_s is not None:
+            try:
+                hold_time_s = float(hold_time_s)
+            except Exception:
+                hold_time_s = None
+        if hold_time_s is not None and np.isfinite(hold_time_s) and hold_time_s > 0.0:
+            # Keep the max-speed mode active for this long after the obstacle
+            # leaves the occluded set. The counter logic below deactivates when
+            # off_count reaches this threshold, so add one step to include the
+            # requested hold duration.
+            occluded_speed_boost_off_hys = int(np.ceil(hold_time_s / max(float(self.dt), 1e-9))) + 1
+        else:
+            occluded_speed_boost_off_hys = int(crowd_cfg.get("occluded_speed_boost_off_hysteresis_steps", 1))
         occluded_speed_boost_on_hys = max(1, occluded_speed_boost_on_hys)
         occluded_speed_boost_off_hys = max(1, occluded_speed_boost_off_hys)
 

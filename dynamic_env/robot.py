@@ -529,7 +529,9 @@ class BaseRobotDyn_OCC(BaseRobotDyn):
                 patch.set_visible(False)
 
         for i, sc in enumerate(occlusion_scenarios):
-            poly = sc.get('poly', None)   # U0 polygon: [t1,t2,far2,far1]
+            # Plot the exact visibility occlusion region when available.
+            # Rollout over-approximation remains in sc["poly"] / A / b0.
+            poly = sc.get('visibility_poly', sc.get('poly', None))
             A    = sc.get('A', None)
             b0   = sc.get('b0', None)
             if A is None or b0 is None:

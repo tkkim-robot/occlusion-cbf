@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 from matplotlib.path import Path
 
@@ -102,11 +104,27 @@ class OcclusionUtils:
         vals = A @ center
         return np.all(vals <= (b0 - radius + eps))
 
-    def _normalize_occ_version(self, version, default="v1"):
+    def _normalize_occ_version(self, version, default="v1", allow_u0=False):
         key = default if version is None else str(version).strip().lower()
-        if key not in {"v1", "v2"}:
+        alias = {
+            "v1": "v1",
+            "v2": "v2",
+        }
+        if allow_u0:
+            alias.update(
+                {
+                    "u0": "u0",
+                    "exact": "u0",
+                    "rounded": "u0",
+                    "rounded_cone": "u0",
+                }
+            )
+        key = alias.get(key, key)
+        valid = {"v1", "v2"} | ({"u0"} if allow_u0 else set())
+        if key not in valid:
             key = str(default).strip().lower()
-        if key not in {"v1", "v2"}:
+            key = alias.get(key, key)
+        if key not in valid:
             key = "v1"
         return key
 
@@ -114,6 +132,7 @@ class OcclusionUtils:
         return self._normalize_occ_version(
             self.robot_spec.get("occ_visibility_version", "v1"),
             default="v1",
+            allow_u0=True,
         )
 
     def _rollout_occ_version(self):
@@ -124,6 +143,25 @@ class OcclusionUtils:
             ),
             default="v1",
         )
+
+    def _arc_with_mid(self, a1, a2, amid, n):
+        def _wrap(a):
+            return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+        a1 = _wrap(a1)
+        a2 = _wrap(a2)
+        amid = _wrap(amid)
+
+        ccw = _wrap(a2 - a1)
+        if ccw <= 0.0:
+            ccw += 2.0 * math.pi
+
+        dmid = _wrap(amid - a1)
+        if 0.0 <= dmid <= ccw:
+            return np.linspace(a1, a1 + ccw, int(max(2, n)))
+
+        cw = 2.0 * math.pi - ccw
+        return np.linspace(a1, a1 - cw, int(max(2, n)))
 
     def _occlusion_polygon_v1(self, p, c, R_o, sensing_R, dir1, dir2, t1, t2):
         """
@@ -181,12 +219,184 @@ class OcclusionUtils:
             "support_point": support_pt,
             "los_unit": n,
         }
+
+    def _occlusion_polygon_u0(self, p, c, R_o, sensing_R, t1, t2):
+        """
+        Visibility-only rounded-cone occlusion polygon approximating the exact
+        initial occlusion set U0:
+          - outer arc on the sensing-range circle,
+          - inner arc on the visible obstacle boundary,
+          - two tangent segments joining those arcs.
+
+        This polygon is generally non-convex, so it is intended only for
+        visibility filtering via polygon containment, not for rollout half-space
+        propagation.
+        """
+        p = np.asarray(p, dtype=float).reshape(2,)
+        c = np.asarray(c, dtype=float).reshape(2,)
+        t1 = np.asarray(t1, dtype=float).reshape(2,)
+        t2 = np.asarray(t2, dtype=float).reshape(2,)
+
+        v1 = t1 - p
+        v2 = t2 - p
+        n1 = float(np.linalg.norm(v1))
+        n2 = float(np.linalg.norm(v2))
+        if n1 <= 1e-9 or n2 <= 1e-9:
+            return None, None
+
+        d1 = v1 / n1
+        d2 = v2 / n2
+        far1 = p + float(sensing_R) * d1
+        far2 = p + float(sensing_R) * d2
+
+        n_arc = int(self.robot_spec.get("occ_visibility_n_arc", 40))
+        n_arc = max(8, n_arc)
+
+        phi1 = math.atan2(far1[1] - p[1], far1[0] - p[0])
+        phi2 = math.atan2(far2[1] - p[1], far2[0] - p[0])
+        phi_c = math.atan2(c[1] - p[1], c[0] - p[0])
+        outer_phis = self._arc_with_mid(phi1, phi2, phi_c, n_arc)
+        outer_arc = np.vstack(
+            [
+                p[0] + float(sensing_R) * np.cos(outer_phis),
+                p[1] + float(sensing_R) * np.sin(outer_phis),
+            ]
+        ).T
+
+        theta1 = math.atan2(t1[1] - c[1], t1[0] - c[0])
+        theta2 = math.atan2(t2[1] - c[1], t2[0] - c[0])
+        theta_p = math.atan2(p[1] - c[1], p[0] - c[0])
+        arc_inc = self._arc_with_mid(theta1, theta2, theta_p, n_arc)
+        arc_exc = arc_inc[::-1]
+        inner_arc = np.vstack(
+            [
+                c[0] + float(R_o) * np.cos(arc_exc),
+                c[1] + float(R_o) * np.sin(arc_exc),
+            ]
+        ).T
+
+        if np.linalg.norm(inner_arc[0] - t2) > np.linalg.norm(inner_arc[-1] - t2):
+            inner_arc = inner_arc[::-1]
+
+        poly = []
+        poly.extend(outer_arc.tolist())
+        poly.append(t2.tolist())
+        poly.extend(inner_arc.tolist())
+        poly.append(t1.tolist())
+        poly_pts = np.asarray(poly, dtype=float)
+        return poly_pts, {
+            "far1": far1,
+            "far2": far2,
+            "outer_arc": outer_arc,
+            "inner_arc": inner_arc,
+        }
+
+    def _point_segment_distance(self, pt, a, b):
+        pt = np.asarray(pt, dtype=float).reshape(2,)
+        a = np.asarray(a, dtype=float).reshape(2,)
+        b = np.asarray(b, dtype=float).reshape(2,)
+        ab = b - a
+        denom = float(ab @ ab)
+        if denom <= 1e-12:
+            return float(np.linalg.norm(pt - a))
+        lam = float(np.clip(((pt - a) @ ab) / denom, 0.0, 1.0))
+        proj = a + lam * ab
+        return float(np.linalg.norm(pt - proj))
+
+    def _circle_fully_in_poly(self, center, radius, poly, eps=1e-9):
+        if poly is None:
+            return False
+        poly = np.asarray(poly, dtype=float).reshape(-1, 2)
+        if poly.shape[0] < 3:
+            return False
+
+        center = np.asarray(center, dtype=float).reshape(2,)
+        radius = float(radius)
+        path = Path(poly, closed=True)
+        if not path.contains_point((float(center[0]), float(center[1])), radius=1e-9):
+            return False
+
+        min_dist = float("inf")
+        for i in range(poly.shape[0]):
+            a = poly[i]
+            b = poly[(i + 1) % poly.shape[0]]
+            min_dist = min(min_dist, self._point_segment_distance(center, a, b))
+        return bool(min_dist + eps >= radius)
+
+    def _build_visibility_occlusion_scenario(self, robot_state, obs, is_static=False):
+        occ_version = self._visibility_occ_version()
+        if occ_version != "u0":
+            sc = self._build_occlusion_scenario(
+                robot_state,
+                obs,
+                is_static=is_static,
+                occ_version_override=occ_version,
+            )
+            if sc is not None:
+                sc["visibility_region_mode"] = "halfspace"
+            return sc
+
+        px = float(robot_state[0, 0])
+        py = float(robot_state[1, 0])
+        p = np.array([px, py], dtype=float)
+
+        obs = np.asarray(obs, dtype=float).flatten()
+        ox, oy, r_obs = obs[:3]
+        c = np.array([ox, oy], dtype=float)
+        R_o = float(r_obs)
+        sensing_R = float(self.sensing_range)
+
+        d = float(np.linalg.norm(c - p))
+        if d >= sensing_R:
+            return None
+
+        t1, t2 = self._circle_tangents(p, c, R_o)
+        if t1 is None or t2 is None:
+            return None
+
+        poly_pts, geom_meta = self._occlusion_polygon_u0(p, c, R_o, sensing_R, t1, t2)
+        if poly_pts is None:
+            return None
+
+        v_adv = float(self.robot_spec.get("v_adv_max_occ", 0.5))
+        p_rel = np.array([[px - ox], [py - oy]], dtype=float)
+        p_rel_mag = max(float(np.linalg.norm(p_rel)), 1e-6)
+        arc_adv = (v_adv * p_rel / p_rel_mag).flatten()
+
+        scenario = {
+            "A": None,
+            "b0": None,
+            "v_expand_vec": None,
+            "v_adv_max": v_adv,
+            "arc_adv": arc_adv,
+            "poly": poly_pts,
+            "occ_version": "u0",
+            "visibility_region_mode": "polygon",
+            "robot_pos": p,
+            "obs_center": c,
+            "obs_radius": R_o,
+            "t1": t1,
+            "t2": t2,
+        }
+        if geom_meta:
+            scenario.update(geom_meta)
+        return scenario
+
+    def _circle_fully_in_visibility_scenario(self, center, radius, scenario):
+        if scenario is None:
+            return False
+        mode = str(scenario.get("visibility_region_mode", "halfspace")).strip().lower()
+        if mode == "polygon":
+            return self._circle_fully_in_poly(center, radius, scenario.get("poly", None))
+        return self._circle_fully_in_halfspaces(center, radius, scenario.get("A"), scenario.get("b0"))
     
     def _build_occlusion_scenario(self, robot_state, obs, is_static=False, occ_version_override=None):
         """
         Build an occlusion scenario for a single circular obstacle.
 
-        The occlusion region is a wedge from the robot through the tangent points to a far range, then converted to half-spaces.
+        The rollout occlusion region is a convex polygonal over-approximation
+        from the robot through tangent directions to a far range, then converted
+        to half-spaces.
 
         scenario :
             {
@@ -368,13 +578,14 @@ class OcclusionUtils:
             r_occ = r_obs * vis_scale
 
             occluded = any(
-                self._circle_fully_in_halfspaces(c, r_occ, sc.get('A'), sc.get('b0'))
+                self._circle_fully_in_visibility_scenario(c, r_occ, sc)
                 for sc in visibility_scenarios
             )
             if occluded:
                 continue
 
             visible_obs.append(obs)
+            visible_local_idx = len(visible_obs) - 1
             if return_indices:
                 visible_indices.append(int(keep[int(idx)]))
 
@@ -390,13 +601,15 @@ class OcclusionUtils:
                 if obs_type is None or obs_type not in occ_types:
                     continue
 
-            vis_sc = self._build_occlusion_scenario(
+            vis_sc = self._build_visibility_occlusion_scenario(
                 robot_state,
                 obs,
                 is_static=is_static_obs,
-                occ_version_override=visibility_occ_version,
             )
             if vis_sc is not None and vis_sc.get('poly') is not None:
+                vis_sc['source_visible_index'] = int(visible_local_idx)
+                if return_indices:
+                    vis_sc['source_obs_index'] = int(keep[int(idx)])
                 visibility_scenarios.append(vis_sc)
 
             rollout_sc = vis_sc
@@ -407,7 +620,29 @@ class OcclusionUtils:
                     is_static=is_static_obs,
                     occ_version_override=rollout_occ_version,
                 )
+                if rollout_sc is not None and vis_sc is not None:
+                    # Keep the exact visibility geometry attached for plotting.
+                    # Controller rollout constraints still use rollout_sc["poly"]/A/b0.
+                    if "visibility_region_mode" in vis_sc:
+                        rollout_sc["visibility_region_mode"] = vis_sc["visibility_region_mode"]
+                    if "poly" in vis_sc:
+                        rollout_sc["visibility_poly"] = vis_sc["poly"]
+                    if "occ_version" in vis_sc:
+                        rollout_sc["visibility_occ_version"] = vis_sc["occ_version"]
+                    for key in (
+                        "u0_front_arc_points",
+                        "u0_cap_arc_points",
+                        "u0_far_left",
+                        "u0_far_right",
+                        "u0_front_left",
+                        "u0_front_right",
+                    ):
+                        if key in vis_sc:
+                            rollout_sc[key] = vis_sc[key]
             if rollout_sc is not None and rollout_sc.get('poly') is not None:
+                rollout_sc['source_visible_index'] = int(visible_local_idx)
+                if return_indices:
+                    rollout_sc['source_obs_index'] = int(keep[int(idx)])
                 occl_scenarios.append(rollout_sc)
 
         if return_indices:

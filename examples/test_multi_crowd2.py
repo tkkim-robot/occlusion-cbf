@@ -135,6 +135,7 @@ def _build_crowd2_scenario(args):
             forced_occluder_radius_max=args.forced_occluder_radius_max,
             forced_validate_occlusion=args.forced_validate_occlusion,
             forced_require_corridor_conflict=args.forced_require_corridor_conflict,
+            rand_obs_setting=args.rand_obs_setting,
         )
     else:
         known_obs, obs_meta, scenario_diag = crowd2._build_route_random_scenario(
@@ -142,6 +143,7 @@ def _build_crowd2_scenario(args):
             n_rand=args.n_rand,
             rand_obs=True,
             static_occluders=False,
+            rand_obs_setting=args.rand_obs_setting,
         )
     return case_seed, known_obs, obs_meta, scenario_diag
 
@@ -540,6 +542,12 @@ def _build_runtime_for_baseline(args, baseline_alias, known_obs, obs_meta, scena
         backup_cbf_overrides["T_horizon"] = float(args.occ_t_horizon)
     if args.occ_rho_T is not None:
         backup_cbf_overrides["rho_T"] = float(args.occ_rho_T)
+    if args.occ_vref_scenario_softmax_kappa is not None:
+        backup_cbf_overrides["vref_scenario_softmax_kappa"] = float(args.occ_vref_scenario_softmax_kappa)
+    if args.occ_max_active_occlusions is not None:
+        backup_cbf_overrides["max_active_occlusions"] = int(args.occ_max_active_occlusions)
+    if args.occ_selection_mode is not None:
+        backup_cbf_overrides["occ_selection_mode"] = str(args.occ_selection_mode).strip().lower()
     if args.occ_k_p is not None:
         backup_cbf_overrides["k_p_occ_di"] = float(args.occ_k_p)
     if args.occ_k_d is not None:
@@ -547,6 +555,8 @@ def _build_runtime_for_baseline(args, baseline_alias, known_obs, obs_meta, scena
     robot_spec_overrides = {}
     if args.occ_kappa is not None:
         robot_spec_overrides["occ_kappa"] = float(args.occ_kappa)
+    if args.occ_enable_visible_hocbf is not None:
+        robot_spec_overrides["enable_visible_hocbf_in_occ"] = bool(args.occ_enable_visible_hocbf)
     if algo == "oacp_mpc" and args.oacp_backend is not None:
         robot_spec_overrides["oacp_mpc"] = {"backend": str(args.oacp_backend).strip().lower()}
 
@@ -577,6 +587,7 @@ def _build_runtime_for_baseline(args, baseline_alias, known_obs, obs_meta, scena
         static_occluders=False,
         vref_front_mode_occ=args.vref,
         occ_version=args.occ_version,
+        occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
         backup_cbf_overrides=(backup_cbf_overrides or None),
         robot_spec_overrides=robot_spec_overrides,
         waypoints_override=crowd2.ROUTE_WAYPOINTS,
@@ -615,15 +626,7 @@ def run_multi_crowd2(args):
             known_obs=known_obs,
             hide_env_boundary=True,
         )
-        model_label_map = {
-            "di": "Double Integrator2D",
-            "du": "Dynamic Unicycle2D",
-            "uni": "Unicycle2D",
-        }
-        model_label = model_label_map.get(str(args.model).strip().lower(), str(args.model))
-        idx_suffix = f" | idx {int(args.idx)}" if args.idx is not None else ""
-        fig.suptitle(f"Crowd2 | Multi-Baseline Tracking | {model_label}{idx_suffix}", fontsize=15, y=0.985)
-        fig.subplots_adjust(top=0.94, left=0.05, right=0.985, bottom=0.06)
+        fig.subplots_adjust(top=0.97, left=0.05, right=0.985, bottom=0.06)
     global_status_text = None
 
     runners = []
@@ -717,7 +720,7 @@ def run_multi_crowd2(args):
         global_dyn_obs_artists = _init_global_dyn_obs(global_ax, runners[0]["controller"].obs)
 
     if bool(args.save_anim):
-        out_root = Path("output/animations/multi_crowd2")
+        out_root = Path(args.save_root) if args.save_root is not None else Path("output/animations/multi_crowd2")
         idx_dir = out_root / (f"idx{int(args.idx):03d}" if args.idx is not None else "idx000")
         frame_dir = idx_dir / "frames"
         video_path = idx_dir / "tracking.mp4"
@@ -822,6 +825,12 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--idx", type=int, default=13)
     parser.add_argument("--n-rand", type=int, default=50)
+    parser.add_argument(
+        "--rand-obs-setting",
+        type=str,
+        default=crowd1.DEFAULT_RAND_OBS_SETTING,
+        choices=[crowd1.LEGACY_RAND_OBS_SETTING, crowd1.CURRENT_RAND_OBS_SETTING],
+    )
     parser.add_argument("--disable-plot", action="store_true", help="Disable interactive plotting.")
     parser.add_argument(
         "--save_ani",
@@ -860,9 +869,14 @@ def main():
     parser.add_argument("--occ-dt-backup", type=float, default=None)
     parser.add_argument("--occ-t-horizon", type=float, default=None)
     parser.add_argument("--occ-rho-T", type=float, default=None)
+    parser.add_argument("--occ-vref-scenario-softmax-kappa", type=float, default=None)
+    parser.add_argument("--occ-max-active-occlusions", type=int, default=None)
+    parser.add_argument("--occ-selection-mode", type=str, choices=["h_tilde", "distance"], default=None)
+    parser.add_argument("--occ-enable-visible-hocbf", type=crowd1._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--occ-k-p", type=float, default=None)
     parser.add_argument("--occ-k-d", type=float, default=None)
     parser.add_argument("--occ-kappa", type=float, default=None)
+    parser.add_argument("--save-root", type=str, default=None)
     parser.add_argument("--vref", type=str, choices=["default", "los"], default=None)
     parser.add_argument("--occ-version", type=str, choices=["v1", "v2"], default=None)
     parser.add_argument("--oa-dynamic-occluders", type=crowd1._str2bool, nargs="?", const=True, default=None)

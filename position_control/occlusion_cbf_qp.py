@@ -209,11 +209,16 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_terminal_slack_l1 = 0.0
         self.last_terminal_slack_max = 0.0
         self.last_terminal_slack_active_count = 0
+        self.last_occ_candidate_count = 0
+        self.last_occ_selected_indices = []
+        self.last_occ_selected_scores = []
+        self.last_occ_selection_mode = None
+        self.last_occ_max_active = 0
         self._last_qp_constraint_count = None
 
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
         self.debug = bool(robot_spec.get("debug_backup_qp", False))
-        robot_spec.setdefault("occ_visibility_version", "v1")
+        robot_spec.setdefault("occ_visibility_version", "u0")
         if "occ_rollout_version" not in robot_spec:
             rollout_default = str(robot_spec.get("occ_version", "v2")).strip().lower()
             if rollout_default not in {"v1", "v2"}:
@@ -231,12 +236,20 @@ class OcclusionCBFQP(BackupCBFQP):
         term_slack_max_cfg = cfg.get("terminal_slack_max", None)
         self.terminal_slack_max = None if term_slack_max_cfg is None else float(term_slack_max_cfg)
         self._terminal_slack_enabled = self.terminal_slack_weight > 0.0
+        self.max_active_occlusions = int(cfg.get("max_active_occlusions", 0))
+        if self.max_active_occlusions < 0:
+            self.max_active_occlusions = 0
+        self.occ_selection_mode = str(cfg.get("occ_selection_mode", "h_tilde")).strip().lower()
+        if self.occ_selection_mode not in {"h_tilde", "distance"}:
+            self.occ_selection_mode = "h_tilde"
         cfg.update(
             {
                 "T_horizon": self.T_horizon,
                 "dt_backup": self.dt_backup,
                 "alpha": alpha,
                 "occ_rollout_mode": self.occ_rollout_mode,
+                "max_active_occlusions": self.max_active_occlusions,
+                "occ_selection_mode": self.occ_selection_mode,
             }
         )
         model_name = str(robot_spec.get("model", "")).strip()
@@ -812,6 +825,50 @@ class OcclusionCBFQP(BackupCBFQP):
             return set()
         return {int(t) for t in occ_types_cfg}
 
+    def _occ_scenario_distance(self, scenario):
+        p = np.asarray(scenario.get("robot_pos", np.zeros(2)), dtype=float).reshape(2,)
+        c = np.asarray(scenario.get("obs_center", np.zeros(2)), dtype=float).reshape(2,)
+        r = float(scenario.get("obs_radius", 0.0))
+        return float(max(0.0, np.linalg.norm(c - p) - r))
+
+    def _select_active_occlusion_scenarios(self, robot_state, occlusion_scenarios):
+        scenarios = list(occlusion_scenarios or [])
+        candidate_count = len(scenarios)
+        self.last_occ_candidate_count = int(candidate_count)
+        self.last_occ_selection_mode = self.occ_selection_mode
+        self.last_occ_max_active = int(self.max_active_occlusions)
+        if candidate_count == 0:
+            self.last_occ_selected_indices = []
+            self.last_occ_selected_scores = []
+            return scenarios
+
+        max_active = int(self.max_active_occlusions)
+        if max_active <= 0 or candidate_count <= max_active:
+            self.last_occ_selected_indices = list(range(candidate_count))
+            self.last_occ_selected_scores = [None] * candidate_count
+            return scenarios
+
+        try:
+            pos_now = np.asarray(robot_state, dtype=float).reshape(-1, 1)[0:2, 0]
+        except Exception:
+            pos_now = np.asarray(robot_state, dtype=float).reshape(-1)[:2]
+
+        scored = []
+        for idx, scenario in enumerate(scenarios):
+            dist = self._occ_scenario_distance(scenario)
+            if self.occ_selection_mode == "distance":
+                score = dist
+            else:
+                h_occ_now, _, _, _, _ = self._occ_smax(pos_now, scenario, tau=0.0)
+                score = float(h_occ_now) if h_occ_now is not None and np.isfinite(h_occ_now) else float("inf")
+            scored.append((float(score), float(dist), int(idx), scenario))
+
+        scored.sort(key=lambda x: (x[0], x[1], x[2]))
+        selected = scored[:max_active]
+        self.last_occ_selected_indices = [idx for _, _, idx, _ in selected]
+        self.last_occ_selected_scores = [score for score, _, _, _ in selected]
+        return [scenario for _, _, _, scenario in selected]
+
     def _is_dynamic_obs_for_di(self, obs):
         obs = np.asarray(obs, dtype=float).flatten()
         obs_type = self._obs_type(obs)
@@ -1138,21 +1195,32 @@ class OcclusionCBFQP(BackupCBFQP):
                     robot_state, obs_list
                 )
         if self.num_obs > 0:
-            visible_obs = visible_obs[: self.num_obs]
             occlusion_scenarios = occlusion_scenarios[: self.num_obs]
-        occ_for_qp = [] if disable_occ_constraints else occlusion_scenarios
+            if not bool(self.robot_spec.get("enable_visible_hocbf_in_occ", False)):
+                visible_obs = visible_obs[: self.num_obs]
+        occ_for_qp = [] if disable_occ_constraints else self._select_active_occlusion_scenarios(
+            robot_state, occlusion_scenarios
+        )
         self.occlusion_scenarios = occ_for_qp
 
-        # The occlusion-CBF controller should not add a second visible-obstacle
-        # HOCBF layer on top of the occlusion-aware constraints unless
-        # explicitly requested for ablation/debug runs.
         enable_visible_hocbf = bool(self.robot_spec.get("enable_visible_hocbf_in_occ", False))
+        selected_visible_idx = {
+            int(sc.get("source_visible_index"))
+            for sc in occ_for_qp
+            if isinstance(sc, dict) and sc.get("source_visible_index", None) is not None
+        }
         if disable_occ_constraints:
             hocbf_obs = list(visible_obs)
         elif enable_visible_hocbf:
-            hocbf_obs = [obs for obs in visible_obs if self._obs_type(obs) not in occ_types]
+            hocbf_obs = list(visible_obs)
         else:
-            hocbf_obs = []
+            # Keep visible-obstacle HOCBF for all visible obstacles except the
+            # selected active occluders, which are already handled by the
+            # occlusion rollout / terminal rows and occlusion-derived v_ref.
+            hocbf_obs = [
+                obs for obs_idx, obs in enumerate(visible_obs)
+                if int(obs_idx) not in selected_visible_idx
+            ]
         use_visible_hocbf_objective = len(hocbf_obs) > 0
         if use_visible_hocbf_objective != bool(getattr(self, "_qp_objective_visible_hocbf", False)):
             self._rebuild_qp_problem(
@@ -1517,6 +1585,12 @@ class OcclusionCBFQP(BackupCBFQP):
             terminal_slack_ub_val=terminal_slack_ub_val,
         )
         timings["total_ms"] = (time.perf_counter() - t_all0) * 1000.0
+        timings["occ_candidate_count"] = int(self.last_occ_candidate_count)
+        timings["occ_max_active"] = int(self.last_occ_max_active)
+        timings["occ_selection_mode"] = self.last_occ_selection_mode
+        timings["occ_selected_count"] = int(len(self.last_occ_selected_indices))
+        timings["occ_selected_indices"] = list(self.last_occ_selected_indices)
+        timings["occ_selected_scores"] = list(self.last_occ_selected_scores)
         self.last_profile = timings
 
         self.last_num_constraints = num_constraints
