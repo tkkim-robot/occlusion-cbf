@@ -38,7 +38,7 @@ class ControlTreeMPC(MPCCommonUtils):
       - receding-horizon execution where only the first shared-trunk action is
         applied each MPC cycle.
 
-    Not implemented paper-faithfully here:
+    Not implemented here:
       - the original augmented-Lagrangian / ADMM decomposition, consensus
         updates, dual updates, or distributed branch subproblem solves,
       - the paper's original discrete symbolic-state construction and belief

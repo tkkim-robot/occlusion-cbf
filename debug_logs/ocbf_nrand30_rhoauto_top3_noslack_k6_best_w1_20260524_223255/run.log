@@ -1,0 +1,159 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=di seed=42 idx=1..100 n_rand=30 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[001/100] idx=  1 -> success    (raw=success, compute_ms=7.554386914420164, intv=0.36227640111840187)
+[002/100] idx=  2 -> success    (raw=success, compute_ms=6.374809120759379, intv=0.4060289925584942)
+Infeasible detected!!
+[003/100] idx=  3 -> infeasible (raw=infeasible, compute_ms=10.659045737181136, intv=0.7405867111576231)
+[004/100] idx=  4 -> success    (raw=success, compute_ms=5.898726311306733, intv=0.40285084921484243)
+[005/100] idx=  5 -> success    (raw=success, compute_ms=6.108085749631426, intv=0.1907102186658031)
+[006/100] idx=  6 -> success    (raw=success, compute_ms=7.343363499093992, intv=0.3835688919681077)
+[007/100] idx=  7 -> success    (raw=success, compute_ms=6.531032041764211, intv=0.2734581162765217)
+[008/100] idx=  8 -> success    (raw=success, compute_ms=6.644050257696995, intv=0.28404429463088676)
+[009/100] idx=  9 -> success    (raw=success, compute_ms=7.372436813262005, intv=0.17965531726825598)
+[010/100] idx= 10 -> success    (raw=success, compute_ms=7.084713572725137, intv=0.38354035643538553)
+Infeasible detected!!
+[011/100] idx= 11 -> infeasible (raw=infeasible, compute_ms=11.508664491323911, intv=0.611939232371317)
+[012/100] idx= 12 -> success    (raw=success, compute_ms=7.08208711121202, intv=0.38879195613924505)
+[013/100] idx= 13 -> success    (raw=success, compute_ms=6.998612679419663, intv=0.31279717363079457)
+[014/100] idx= 14 -> success    (raw=success, compute_ms=8.017438979493454, intv=0.2410733823258063)
+[015/100] idx= 15 -> success    (raw=success, compute_ms=5.77399825606457, intv=0.27475383817330157)
+Infeasible detected!!
+[016/100] idx= 16 -> infeasible (raw=infeasible, compute_ms=16.297969411210985, intv=0.5751060906152228)
+[017/100] idx= 17 -> success    (raw=success, compute_ms=6.215320236737836, intv=0.17886944144241457)
+[018/100] idx= 18 -> success    (raw=success, compute_ms=8.13372090923469, intv=0.15852783534247586)
+Infeasible detected!!
+[019/100] idx= 19 -> infeasible (raw=infeasible, compute_ms=9.509422676994403, intv=0.2106361896815547)
+[020/100] idx= 20 -> success    (raw=success, compute_ms=6.5974448684844935, intv=0.1891004980999236)
+Infeasible detected!!
+[021/100] idx= 21 -> infeasible (raw=infeasible, compute_ms=13.106638497057636, intv=0.48456296651889885)
+Infeasible detected!!
+[022/100] idx= 22 -> infeasible (raw=infeasible, compute_ms=9.616442396767138, intv=0.32747942065324664)
+[023/100] idx= 23 -> success    (raw=success, compute_ms=7.22258314278737, intv=0.2643810185469351)
+[024/100] idx= 24 -> success    (raw=success, compute_ms=7.460365671605714, intv=0.34247637362015737)
+[025/100] idx= 25 -> success    (raw=success, compute_ms=7.395465737542323, intv=0.31942952678983816)
+Collision with known obstacle detected! Obs: [ 7.72572281 23.28322027  0.39999929  0.71976185 -0.60691568 -2.
+ 32.          1.        ], Robot: [ 7.94479659 22.67127456] 0.25, Distance: 0.6499775914924871, True
+Collision detected !!
+[026/100] idx= 26 -> collision  (raw=collision, compute_ms=7.686101153962111, intv=0.3623066971064978)
+Infeasible detected!!
+[027/100] idx= 27 -> infeasible (raw=infeasible, compute_ms=9.69604211473713, intv=0.4786399830640377)
+[028/100] idx= 28 -> success    (raw=success, compute_ms=7.120718788425545, intv=0.2636256186053986)
+[029/100] idx= 29 -> success    (raw=success, compute_ms=5.700741940390287, intv=0.30777496698095225)
+[030/100] idx= 30 -> success    (raw=success, compute_ms=7.358544087252438, intv=0.3272967374215818)
+[031/100] idx= 31 -> success    (raw=success, compute_ms=6.476717311175001, intv=0.36312593406459726)
+Infeasible detected!!
+[032/100] idx= 32 -> infeasible (raw=infeasible, compute_ms=11.65266198832996, intv=0.457979242078256)
+[033/100] idx= 33 -> success    (raw=success, compute_ms=6.095153451812902, intv=0.13088485584688864)
+[034/100] idx= 34 -> success    (raw=success, compute_ms=5.983332989783888, intv=0.25955366070218894)
+[035/100] idx= 35 -> success    (raw=success, compute_ms=8.046709895643453, intv=0.1901119671642307)
+[036/100] idx= 36 -> success    (raw=success, compute_ms=8.24993878846388, intv=0.32139007206463477)
+Infeasible detected!!
+[037/100] idx= 37 -> infeasible (raw=infeasible, compute_ms=10.485250448092208, intv=0.7324848804598254)
+[038/100] idx= 38 -> success    (raw=success, compute_ms=6.6801006833514345, intv=0.2649935894280433)
+[039/100] idx= 39 -> success    (raw=success, compute_ms=7.276152623331886, intv=0.3821136931229538)
+[040/100] idx= 40 -> success    (raw=success, compute_ms=7.286818918149346, intv=0.21203004028262928)
+[041/100] idx= 41 -> success    (raw=success, compute_ms=7.005206363843137, intv=0.22008486797476307)
+[042/100] idx= 42 -> success    (raw=success, compute_ms=7.17594382692615, intv=0.34909225564773616)
+[043/100] idx= 43 -> success    (raw=success, compute_ms=6.2761904331651275, intv=0.172984597277178)
+[044/100] idx= 44 -> success    (raw=success, compute_ms=6.503912331529837, intv=0.30387510293506687)
+Infeasible detected!!
+[045/100] idx= 45 -> infeasible (raw=infeasible, compute_ms=8.886779069127536, intv=0.3857631971222938)
+[046/100] idx= 46 -> success    (raw=success, compute_ms=7.506197061105106, intv=0.4101871077805662)
+[047/100] idx= 47 -> success    (raw=success, compute_ms=7.122998328197091, intv=0.2894262332208613)
+[048/100] idx= 48 -> success    (raw=success, compute_ms=6.117107406983878, intv=0.2234151452402471)
+[049/100] idx= 49 -> success    (raw=success, compute_ms=6.142207763135049, intv=0.15193099029939114)
+[050/100] idx= 50 -> success    (raw=success, compute_ms=7.439251235909512, intv=0.27897936698046877)
+Infeasible detected!!
+[051/100] idx= 51 -> infeasible (raw=infeasible, compute_ms=6.852756916505638, intv=0.2718585301013471)
+[052/100] idx= 52 -> success    (raw=success, compute_ms=7.17902630047897, intv=0.26004957664406486)
+[053/100] idx= 53 -> success    (raw=success, compute_ms=6.597678583816772, intv=0.35225077033997504)
+[054/100] idx= 54 -> success    (raw=success, compute_ms=8.019291599650762, intv=0.17096697018974255)
+[055/100] idx= 55 -> success    (raw=success, compute_ms=7.256354179856343, intv=0.20442256863211625)
+[056/100] idx= 56 -> success    (raw=success, compute_ms=6.183505388539901, intv=0.13427900691177316)
+Infeasible detected!!
+[057/100] idx= 57 -> infeasible (raw=infeasible, compute_ms=10.802852924908915, intv=0.37513182616354296)
+[058/100] idx= 58 -> success    (raw=success, compute_ms=7.600136239173183, intv=0.3074262777545481)
+[059/100] idx= 59 -> success    (raw=success, compute_ms=6.909295301394243, intv=0.2804674333427821)
+[060/100] idx= 60 -> success    (raw=success, compute_ms=6.9164229475291705, intv=0.4175829969168616)
+[061/100] idx= 61 -> success    (raw=success, compute_ms=5.9839669911018145, intv=0.25134746493261323)
+[062/100] idx= 62 -> success    (raw=success, compute_ms=5.808309035518815, intv=0.30543469431210146)
+Infeasible detected!!
+[063/100] idx= 63 -> infeasible (raw=infeasible, compute_ms=5.894964111361333, intv=0.3823705806966771)
+[064/100] idx= 64 -> success    (raw=success, compute_ms=6.347410607035638, intv=0.2761718096476526)
+Infeasible detected!!
+[065/100] idx= 65 -> infeasible (raw=infeasible, compute_ms=9.788701284938911, intv=0.4127059777047823)
+[066/100] idx= 66 -> success    (raw=success, compute_ms=5.925131430592646, intv=0.3422940919815969)
+[067/100] idx= 67 -> success    (raw=success, compute_ms=8.29968807572085, intv=0.2879701495605653)
+[068/100] idx= 68 -> success    (raw=success, compute_ms=5.5161367555141245, intv=0.19416063562488878)
+[069/100] idx= 69 -> success    (raw=success, compute_ms=5.826529001557297, intv=0.37135973714268977)
+[070/100] idx= 70 -> success    (raw=success, compute_ms=6.320561426752743, intv=0.2727134934762976)
+[071/100] idx= 71 -> success    (raw=success, compute_ms=6.492916930674988, intv=0.29550830060221245)
+Infeasible detected!!
+[072/100] idx= 72 -> infeasible (raw=infeasible, compute_ms=8.710097592005408, intv=0.7341588029987346)
+[073/100] idx= 73 -> success    (raw=success, compute_ms=7.034312490012544, intv=0.3290534825492484)
+[074/100] idx= 74 -> success    (raw=success, compute_ms=5.734573194058612, intv=0.23218978925815995)
+[075/100] idx= 75 -> success    (raw=success, compute_ms=6.461765097341782, intv=0.22454050602416115)
+Infeasible detected!!
+[076/100] idx= 76 -> infeasible (raw=infeasible, compute_ms=8.918623088621992, intv=0.5602854072369386)
+[077/100] idx= 77 -> success    (raw=success, compute_ms=6.790657432320355, intv=0.30793681054672845)
+Infeasible detected!!
+[078/100] idx= 78 -> infeasible (raw=infeasible, compute_ms=9.257782825046558, intv=0.49646943010182304)
+[079/100] idx= 79 -> success    (raw=success, compute_ms=6.659709072924212, intv=0.2542629679114097)
+[080/100] idx= 80 -> success    (raw=success, compute_ms=6.1234216966029065, intv=0.1687512845133206)
+[081/100] idx= 81 -> success    (raw=success, compute_ms=6.438109032369525, intv=0.2767331012236209)
+[082/100] idx= 82 -> success    (raw=success, compute_ms=6.334272734124056, intv=0.33391777056385585)
+Infeasible detected!!
+[083/100] idx= 83 -> infeasible (raw=infeasible, compute_ms=10.217875168799397, intv=0.32001466009040397)
+[084/100] idx= 84 -> success    (raw=success, compute_ms=5.90980966928336, intv=0.26418920701810455)
+[085/100] idx= 85 -> success    (raw=success, compute_ms=6.153858292941726, intv=0.32211640417984866)
+[086/100] idx= 86 -> success    (raw=success, compute_ms=6.370902659018809, intv=0.2591344334942497)
+[087/100] idx= 87 -> success    (raw=success, compute_ms=6.19394203802613, intv=0.3833075777597911)
+[088/100] idx= 88 -> success    (raw=success, compute_ms=5.797901511933579, intv=0.2417447499222396)
+[089/100] idx= 89 -> success    (raw=success, compute_ms=6.441621629473356, intv=0.2594188059547106)
+[090/100] idx= 90 -> success    (raw=success, compute_ms=5.718749893987123, intv=0.24149613016872923)
+[091/100] idx= 91 -> success    (raw=success, compute_ms=6.784894912627921, intv=0.3333155922946561)
+Infeasible detected!!
+[092/100] idx= 92 -> infeasible (raw=infeasible, compute_ms=7.210441001747338, intv=0.37258203246149074)
+Infeasible detected!!
+[093/100] idx= 93 -> infeasible (raw=infeasible, compute_ms=7.342838450191831, intv=0.4775581994749608)
+Infeasible detected!!
+[094/100] idx= 94 -> infeasible (raw=infeasible, compute_ms=9.331775856844615, intv=0.5847234599963584)
+[095/100] idx= 95 -> success    (raw=success, compute_ms=7.128023513516541, intv=0.24433071068038253)
+Infeasible detected!!
+[096/100] idx= 96 -> infeasible (raw=infeasible, compute_ms=7.902991874178759, intv=0.3489251549476178)
+[097/100] idx= 97 -> success    (raw=success, compute_ms=6.506566941340138, intv=0.22053319477570155)
+[098/100] idx= 98 -> success    (raw=success, compute_ms=4.500459884698301, intv=0.32237273708876013)
+[099/100] idx= 99 -> success    (raw=success, compute_ms=7.11592742765715, intv=0.38106159303699755)
+[100/100] idx=100 -> success    (raw=success, compute_ms=6.086793662465972, intv=0.23123693302221174)
+
+=== Crowd Trial Summary (3-way) ===
+success=77 | collision=1 | infeasible=22 | total=100
+success idx   : [1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 18, 20, 23, 24, 25, 28, 29, 30, 31, 33, 34, 35, 36, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 52, 53, 54, 55, 56, 58, 59, 60, 61, 62, 64, 66, 67, 68, 69, 70, 71, 73, 74, 75, 77, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90, 91, 95, 97, 98, 99, 100]
+collision idx : [26]
+infeasible idx: [3, 11, 16, 19, 21, 22, 27, 32, 37, 45, 51, 57, 63, 65, 72, 76, 78, 83, 92, 93, 94, 96]
+avg controller compute time over idx [ms]: 7.361779387633844
+avg control intervention over idx: 0.32219529718090784
+avg terminal slack L1 over idx: 0.0
+avg terminal slack max over idx: 0.0
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 115.75800000000001
+avg wall time per idx [s]: 27.34045775999315
+avg forced initially occluded over idx: 5.86
+avg forced revealed over idx: 4.85
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/ocbf_nrand30_rhoauto_top3_noslack_k6_best_w1_20260524_223255/crowd_trials_occlusion_cbf_42_1_100_20260524_223255.csv
+saved summary : debug_logs/ocbf_nrand30_rhoauto_top3_noslack_k6_best_w1_20260524_223255/crowd_trials_occlusion_cbf_42_1_100_20260524_223255.json
+

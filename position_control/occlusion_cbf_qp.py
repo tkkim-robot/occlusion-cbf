@@ -82,27 +82,38 @@ if _JAX_AVAILABLE:
 
         h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)[:, None]) / kappa
         grad_pos = jnp.einsum("snk,skd->snd", lam, A_pad)                  # (S,N,2)
-        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)               # (S,N)
+
+        # Eq. (24b): partial h_C / partial s
+        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
+
+        # Eq. (24c)/(25): partial h_C / partial t
+        # Pure facet propagation: a_dot=0, nu_dot=0, b_dot=nu => dh_dt = dh_ds
+        dh_dt = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
+
+        # Eq. (32)/(35b): explicit-time residual (= 0 under pure propagation)
+        time_residual = dh_dt - dh_ds                                      # (S,N)
 
         zeros2 = jnp.zeros((grad_pos.shape[0], grad_pos.shape[1], 2), dtype=grad_pos.dtype)
-        grad_h_phi = jnp.concatenate([grad_pos, zeros2], axis=2)           # (S,N,4)
+        grad_h_phi = jnp.concatenate([grad_pos, zeros2], axis=2)          # (S,N,4)
 
-        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                      # (N,4)
+        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                     # (N,4)
         delta_f = Phi_f - fcl                                              # (N,4)
-        Lfh = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + (-dh_ds)    # (S,N)
 
-        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                    # (N,4,2)
-        Lgh = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)                # (S,N,2)
+        # Eq. (35b): c_occ = grad_h @ (Phi @ f(x) - f_b(y)) + dh_dt - dh_ds
+        c_occ = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + time_residual  # (S,N)
 
-        rhs = Lfh + alpha * h_tilde
-        norm_lgh = jnp.linalg.norm(Lgh, axis=2)
+        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                   # (N,4,2)
+        A_occ = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)             # (S,N,2)
 
-        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(Lgh), axis=2)
+        rhs = c_occ + alpha * h_tilde
+        norm_A_occ = jnp.linalg.norm(A_occ, axis=2)
+
+        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(A_occ), axis=2)
         active_mask = sc_present[:, None] & finite_mask
-        degenerate = (norm_lgh < 1e-9) & (rhs < 0.0)
+        degenerate = (norm_A_occ < 1e-9) & (rhs < 0.0)
         keep = active_mask & (~degenerate)
 
-        return -Lgh, rhs, keep
+        return -A_occ, rhs, keep
 
     @partial(jax.jit, static_argnums=(14,))
     def _jax_occ_constraints_kernel_uni(
@@ -156,27 +167,38 @@ if _JAX_AVAILABLE:
 
         h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)[:, None]) / kappa
         grad_pos = jnp.einsum("snk,skd->snd", lam, A_pad)                  # (S,N,2)
-        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)               # (S,N)
+
+        # Eq. (24b): partial h_C / partial s
+        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
+
+        # Eq. (24c)/(25): partial h_C / partial t
+        # Pure facet propagation: a_dot=0, nu_dot=0, b_dot=nu => dh_dt = dh_ds
+        dh_dt = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
+
+        # Eq. (32)/(35b): explicit-time residual (= 0 under pure propagation)
+        time_residual = dh_dt - dh_ds                                      # (S,N)
 
         zeros1 = jnp.zeros((grad_pos.shape[0], grad_pos.shape[1], 1), dtype=grad_pos.dtype)
-        grad_h_phi = jnp.concatenate([grad_pos, zeros1], axis=2)           # (S,N,3)
+        grad_h_phi = jnp.concatenate([grad_pos, zeros1], axis=2)          # (S,N,3)
 
-        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                      # (N,3)
+        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                     # (N,3)
         delta_f = Phi_f - fcl                                              # (N,3)
-        Lfh = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + (-dh_ds)    # (S,N)
 
-        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                    # (N,3,2)
-        Lgh = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)                # (S,N,2)
+        # Eq. (35b): c_occ = grad_h @ (Phi @ f(x) - f_b(y)) + dh_dt - dh_ds
+        c_occ = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + time_residual  # (S,N)
 
-        rhs = Lfh + alpha * h_tilde
-        norm_lgh = jnp.linalg.norm(Lgh, axis=2)
+        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                   # (N,3,2)
+        A_occ = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)             # (S,N,2)
 
-        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(Lgh), axis=2)
+        rhs = c_occ + alpha * h_tilde
+        norm_A_occ = jnp.linalg.norm(A_occ, axis=2)
+
+        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(A_occ), axis=2)
         active_mask = sc_present[:, None] & finite_mask
-        degenerate = (norm_lgh < 1e-9) & (rhs < 0.0)
+        degenerate = (norm_A_occ < 1e-9) & (rhs < 0.0)
         keep = active_mask & (~degenerate)
 
-        return -Lgh, rhs, keep
+        return -A_occ, rhs, keep
 
 class OcclusionCBFQP(BackupCBFQP):
 
@@ -214,16 +236,14 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_occ_selected_scores = []
         self.last_occ_selection_mode = None
         self.last_occ_max_active = 0
+        self.last_terminal_mode = None
+        self.last_terminal_candidate_count = 0
+        self.last_terminal_selected_indices = []
+        self.last_terminal_residual_mode = None
         self._last_qp_constraint_count = None
 
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
         self.debug = bool(robot_spec.get("debug_backup_qp", False))
-        robot_spec.setdefault("occ_visibility_version", "u0")
-        if "occ_rollout_version" not in robot_spec:
-            rollout_default = str(robot_spec.get("occ_version", "v2")).strip().lower()
-            if rollout_default not in {"v1", "v2"}:
-                rollout_default = "v2"
-            robot_spec["occ_rollout_version"] = rollout_default
 
         cfg = robot_spec.setdefault("backup_cbf", {})
         self.T_horizon = float(cfg.get("T_horizon", 2.0))
@@ -235,6 +255,10 @@ class OcclusionCBFQP(BackupCBFQP):
         self.terminal_slack_weight = float(cfg.get("terminal_slack_weight", 0.0))
         term_slack_max_cfg = cfg.get("terminal_slack_max", None)
         self.terminal_slack_max = None if term_slack_max_cfg is None else float(term_slack_max_cfg)
+        obs_slack_max_cfg = cfg.get("obs_hocbf_slack_max", None)
+        occ_slack_max_cfg = cfg.get("occ_rollout_slack_max", None)
+        self.obs_hocbf_slack_max = None if obs_slack_max_cfg is None else float(obs_slack_max_cfg)
+        self.occ_rollout_slack_max = None if occ_slack_max_cfg is None else float(occ_slack_max_cfg)
         self._terminal_slack_enabled = self.terminal_slack_weight > 0.0
         self.max_active_occlusions = int(cfg.get("max_active_occlusions", 0))
         if self.max_active_occlusions < 0:
@@ -242,6 +266,23 @@ class OcclusionCBFQP(BackupCBFQP):
         self.occ_selection_mode = str(cfg.get("occ_selection_mode", "h_tilde")).strip().lower()
         if self.occ_selection_mode not in {"h_tilde", "distance"}:
             self.occ_selection_mode = "h_tilde"
+        self.terminal_mode = str(cfg.get("terminal_mode", "all")).strip().lower()
+        if self.terminal_mode not in {"all", "topm", "dominant", "none"}:
+            self.terminal_mode = "all"
+        self.terminal_active_count = int(cfg.get("terminal_active_count", 0))
+        if self.terminal_active_count < 0:
+            self.terminal_active_count = 0
+        self.terminal_residual_mode = str(cfg.get("terminal_residual_mode", "off")).strip().lower()
+        if self.terminal_residual_mode not in {"off", "visibility_intersection", "visibility_only"}:
+            self.terminal_residual_mode = "off"
+        self.terminal_visibility_reaction_margin = float(
+            cfg.get("terminal_visibility_reaction_margin", 0.0)
+        )
+        if not np.isfinite(self.terminal_visibility_reaction_margin):
+            self.terminal_visibility_reaction_margin = 0.0
+        self.qp_failure_fallback_mode = str(cfg.get("qp_failure_fallback_mode", "state_safe")).strip().lower()
+        if self.qp_failure_fallback_mode not in {"strict", "state_safe", "always"}:
+            self.qp_failure_fallback_mode = "state_safe"
         cfg.update(
             {
                 "T_horizon": self.T_horizon,
@@ -250,6 +291,15 @@ class OcclusionCBFQP(BackupCBFQP):
                 "occ_rollout_mode": self.occ_rollout_mode,
                 "max_active_occlusions": self.max_active_occlusions,
                 "occ_selection_mode": self.occ_selection_mode,
+                "terminal_mode": self.terminal_mode,
+                "terminal_active_count": self.terminal_active_count,
+                "terminal_residual_mode": self.terminal_residual_mode,
+                "terminal_visibility_reaction_margin": self.terminal_visibility_reaction_margin,
+                "terminal_slack_weight": self.terminal_slack_weight,
+                "terminal_slack_max": self.terminal_slack_max,
+                "obs_hocbf_slack_max": self.obs_hocbf_slack_max,
+                "occ_rollout_slack_max": self.occ_rollout_slack_max,
+                "qp_failure_fallback_mode": self.qp_failure_fallback_mode,
             }
         )
         model_name = str(robot_spec.get("model", "")).strip()
@@ -525,6 +575,43 @@ class OcclusionCBFQP(BackupCBFQP):
         risk_normal_vec = A[active] if np.any(active) else np.empty((0, 2))
         return float(h_tilde), grad_pos, lam, dh_ds, risk_normal_vec
 
+    def _occ_explicit_time_derivatives_pure_propagation(self, lam, scenario):
+        """
+        Compute partial h_C/partial t and partial h_C/partial s under the
+        pure facet propagation model (a_dot=0, nu_dot=0, b_dot=nu).
+
+        Eq. (24b):  dh_ds = -sum_l lambda_l * nu_l
+        Eq. (24c):  dh_dt = -sum_l lambda_l * nu_l   (same, since b_dot=nu)
+        Eq. (32):   time_residual = dh_dt - dh_ds = 0
+
+        Returns:
+            dh_dt (float), dh_ds (float)
+        """
+        A = scenario.get("A", None)
+        K = int(A.shape[0]) if A is not None else 0
+        v_expand = scenario.get("v_expand_vec", None)
+        if v_expand is None:
+            v_adv = float(scenario.get("v_adv_max", 0.0))
+            v_expand = np.full((K,), v_adv, dtype=float)
+        else:
+            v_expand = np.asarray(v_expand, float).reshape(-1,)
+            if v_expand.size != K:
+                if v_expand.size == 1:
+                    v_expand = np.full((K,), float(v_expand.item()), dtype=float)
+                else:
+                    raise ValueError(
+                        f"v_expand size {v_expand.size} does not match K={K}"
+                    )
+
+        lam = np.asarray(lam, dtype=float).reshape(-1,)
+        assert lam.shape[0] == K, f"lam length {lam.shape[0]} != K={K}"
+        assert np.all(np.isfinite(lam)), "lam contains non-finite values"
+
+        weighted_nu = float(lam @ v_expand)
+        dh_ds = -weighted_nu
+        dh_dt = -weighted_nu   # pure propagation: b_dot = nu => same as dh_ds
+        return dh_dt, dh_ds
+
     def _occlusion_barrier_smax_curved(self, pos, scenario, tau=0.0):
         h_tilde, grad_pos, _, _, risk_normal_vec = self._occ_smax(pos, scenario, tau)
         if h_tilde is None:
@@ -622,9 +709,14 @@ class OcclusionCBFQP(BackupCBFQP):
         else:
             model_name = str(self.robot_spec.get("model", "")).strip()
             if model_name == "Unicycle2D" and u_dim == 2:
+                v_max = float(self.robot_spec.get("v_max", 1.0))
+                v_min = float(self.robot_spec.get("v_min", -v_max))
+                if (not np.isfinite(v_min)) or v_min > v_max:
+                    v_min = -v_max
                 constraints.extend(
                     [
-                        cp.abs(self.u[0]) <= float(self.robot_spec.get("v_max", 1.0)),
+                        self.u[0] >= v_min,
+                        self.u[0] <= v_max,
                         cp.abs(self.u[1]) <= float(self.robot_spec.get("w_max", 0.5)),
                     ]
                 )
@@ -667,14 +759,28 @@ class OcclusionCBFQP(BackupCBFQP):
             return 1e6
         return max(float(self.terminal_slack_max), 0.0)
 
+    def _row_slack_cap(self, cap_cfg):
+        if cap_cfg is None:
+            return 0.0
+        return max(float(cap_cfg), 0.0)
+
     def _build_terminal_slack_ub(self, meta_list):
         if not self._terminal_slack_enabled:
             return None
         slack_ub = np.zeros((len(meta_list), 1), dtype=float)
-        cap = self._terminal_slack_cap()
+        term_cap = self._terminal_slack_cap()
+        obs_cap = self._row_slack_cap(self.obs_hocbf_slack_max)
+        occ_cap = self._row_slack_cap(self.occ_rollout_slack_max)
         for i, meta in enumerate(meta_list):
-            if isinstance(meta, dict) and meta.get("kind") == "terminal":
-                slack_ub[i, 0] = cap
+            if not isinstance(meta, dict):
+                continue
+            kind = meta.get("kind")
+            if kind == "terminal":
+                slack_ub[i, 0] = term_cap
+            elif kind == "obs_hocbf":
+                slack_ub[i, 0] = obs_cap
+            elif kind == "occ":
+                slack_ub[i, 0] = occ_cap
         return slack_ub
 
     def _effective_constraint_violation(self, A_cbf_val, b_cbf_val, u_cmd, slack_val=None):
@@ -868,6 +974,168 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_occ_selected_indices = [idx for _, _, idx, _ in selected]
         self.last_occ_selected_scores = [score for score, _, _, _ in selected]
         return [scenario for _, _, _, scenario in selected]
+
+    def _rank_terminal_scenarios(self, robot_state, scenarios):
+        try:
+            pos_now = np.asarray(robot_state, dtype=float).reshape(-1, 1)[0:2, 0]
+        except Exception:
+            pos_now = np.asarray(robot_state, dtype=float).reshape(-1)[:2]
+
+        ranked = []
+        for idx, scenario in enumerate(list(scenarios or [])):
+            dist = self._occ_scenario_distance(scenario) if isinstance(scenario, dict) else float("inf")
+            h_occ_now, _, _, _, _ = self._occ_smax(pos_now, scenario, tau=0.0)
+            score = float(h_occ_now) if h_occ_now is not None and np.isfinite(h_occ_now) else float("inf")
+            ranked.append((score, dist, int(idx), scenario))
+        ranked.sort(key=lambda x: (x[0], x[1], x[2]))
+        return ranked
+
+    def _select_terminal_scenarios(self, robot_state, scenarios):
+        scenarios = list(scenarios or [])
+        self.last_terminal_mode = self.terminal_mode
+        self.last_terminal_residual_mode = self.terminal_residual_mode
+        self.last_terminal_candidate_count = int(len(scenarios))
+        self.last_terminal_selected_indices = []
+        if not scenarios or self.terminal_mode == "none":
+            return []
+
+        if self.terminal_mode == "all":
+            self.last_terminal_selected_indices = list(range(len(scenarios)))
+            return [(idx, scenario) for idx, scenario in enumerate(scenarios)]
+
+        if self.terminal_mode == "dominant":
+            count = 1
+        else:
+            count = int(self.terminal_active_count)
+            if count <= 0:
+                count = len(scenarios)
+        count = int(np.clip(count, 0, len(scenarios)))
+        ranked = self._rank_terminal_scenarios(robot_state, scenarios)
+        selected = ranked[:count]
+        self.last_terminal_selected_indices = [idx for _, _, idx, _ in selected]
+        return [(idx, scenario) for _, _, idx, scenario in selected]
+
+    def _build_visibility_terminal_scenario(self, term_scn, phi_T):
+        if not isinstance(term_scn, dict):
+            return None
+        obs_state = term_scn.get("source_obs_state", None)
+        obs_vel = term_scn.get("source_obs_vel", None)
+        if obs_state is None or obs_vel is None:
+            return None
+        try:
+            obs_pred = np.asarray(obs_state, dtype=float).reshape(-1).copy()
+            vel = np.asarray(obs_vel, dtype=float).reshape(2,)
+        except Exception:
+            return None
+        if obs_pred.size < 3 or not np.all(np.isfinite(obs_pred[:3])) or not np.all(np.isfinite(vel)):
+            return None
+        obs_pred[0:2] = obs_pred[0:2] + vel * float(self.T_horizon)
+
+        robot_pred = np.asarray(phi_T, dtype=float).reshape(-1, 1).copy()
+        if robot_pred.shape[0] < 2:
+            return None
+        obs_type = int(obs_pred[7]) if obs_pred.size >= 8 else None
+        try:
+            pred_scn = self._occ_utils._build_occlusion_scenario(
+                robot_pred,
+                obs_pred,
+                is_static=(obs_type == 0),
+            )
+        except Exception:
+            return None
+        if pred_scn is None:
+            return None
+
+        dyn_A = np.asarray(pred_scn.get("A", []), dtype=float)
+        dyn_b0 = np.asarray(pred_scn.get("b0", []), dtype=float).reshape(-1)
+        if dyn_A.ndim != 2 or dyn_A.shape[1] != 2 or dyn_A.shape[0] < 2 or dyn_b0.size < 2:
+            return None
+
+        dyn_m = min(int(dyn_A.shape[0]), int(dyn_b0.size))
+        dyn_A = dyn_A[:dyn_m, :]
+        dyn_b0 = dyn_b0[:dyn_m].copy()
+        if self.terminal_visibility_reaction_margin > 0.0:
+            dyn_b0 = dyn_b0 + float(self.terminal_visibility_reaction_margin)
+        dyn_v = np.zeros((dyn_m,), dtype=float)
+
+        out = dict(pred_scn)
+        out["A"] = dyn_A
+        out["b0"] = dyn_b0
+        out["v_expand_vec"] = dyn_v
+        out["v_adv_max"] = float(term_scn.get("v_adv_max", pred_scn.get("v_adv_max", 0.0)))
+        out["terminal_residual_mode"] = self.terminal_residual_mode
+        out["source_visible_index"] = term_scn.get("source_visible_index", None)
+        out["source_obs_state"] = obs_pred
+        out["source_obs_vel"] = vel
+        return out
+
+    def _build_terminal_constraint_scenario(self, term_scn, phi_T):
+        if self.terminal_residual_mode == "off":
+            return term_scn
+
+        dyn_scn = self._build_visibility_terminal_scenario(term_scn, phi_T)
+        if dyn_scn is None:
+            return None
+        if self.terminal_residual_mode == "visibility_only":
+            return dyn_scn
+
+        try:
+            A0 = np.asarray(term_scn.get("A", []), dtype=float)
+            b0 = np.asarray(term_scn.get("b0", []), dtype=float).reshape(-1)
+            A1 = np.asarray(dyn_scn.get("A", []), dtype=float)
+            b1 = np.asarray(dyn_scn.get("b0", []), dtype=float).reshape(-1)
+        except Exception:
+            return dyn_scn
+        if A0.ndim != 2 or A0.shape[1] != 2 or A0.shape[0] < 2 or b0.size < 2:
+            return dyn_scn
+        if A1.ndim != 2 or A1.shape[1] != 2 or A1.shape[0] < 2 or b1.size < 2:
+            return term_scn
+
+        m0 = min(int(A0.shape[0]), int(b0.size))
+        m1 = min(int(A1.shape[0]), int(b1.size))
+        v0 = term_scn.get("v_expand_vec", None)
+        if v0 is None:
+            v0_arr = np.full((m0,), float(term_scn.get("v_adv_max", 0.0)), dtype=float)
+        else:
+            v0_arr = np.asarray(v0, dtype=float).reshape(-1)
+            if v0_arr.size == 1:
+                v0_arr = np.full((m0,), float(v0_arr.item()), dtype=float)
+            elif v0_arr.size != m0:
+                v0_arr = np.full((m0,), float(term_scn.get("v_adv_max", 0.0)), dtype=float)
+        residual_v_expand = np.zeros((m1,), dtype=float)
+
+        residual = dict(term_scn)
+        residual["A"] = np.vstack([A0[:m0, :], A1[:m1, :]])
+        residual["b0"] = np.concatenate([b0[:m0], b1[:m1]])
+        residual["v_expand_vec"] = np.concatenate([v0_arr[:m0], residual_v_expand])
+        residual["terminal_residual_mode"] = self.terminal_residual_mode
+        residual["terminal_visibility_scenario"] = dyn_scn
+        return residual
+
+    def _attach_occlusion_score_context(self, robot_state, scenarios, visible_obs):
+        del robot_state
+        visible = list(visible_obs or [])
+        enriched = []
+        for scenario in list(scenarios or []):
+            if not isinstance(scenario, dict):
+                enriched.append(scenario)
+                continue
+            sc = dict(scenario)
+            src_idx = sc.get("source_visible_index", None)
+            obs_vel = None
+            if src_idx is not None:
+                try:
+                    obs = np.asarray(visible[int(src_idx)], dtype=float).reshape(-1)
+                    sc["source_obs_state"] = obs.copy()
+                    if obs.size >= 5 and np.all(np.isfinite(obs[3:5])):
+                        obs_vel = obs[3:5].astype(float)
+                except Exception:
+                    obs_vel = None
+            if obs_vel is None:
+                obs_vel = np.zeros(2, dtype=float)
+            sc["source_obs_vel"] = np.asarray(obs_vel, dtype=float).reshape(2,)
+            enriched.append(sc)
+        return enriched
 
     def _is_dynamic_obs_for_di(self, obs):
         obs = np.asarray(obs, dtype=float).flatten()
@@ -1201,6 +1469,7 @@ class OcclusionCBFQP(BackupCBFQP):
         occ_for_qp = [] if disable_occ_constraints else self._select_active_occlusion_scenarios(
             robot_state, occlusion_scenarios
         )
+        occ_for_qp = self._attach_occlusion_score_context(robot_state, occ_for_qp, visible_obs)
         self.occlusion_scenarios = occ_for_qp
 
         enable_visible_hocbf = bool(self.robot_spec.get("enable_visible_hocbf_in_occ", False))
@@ -1250,6 +1519,17 @@ class OcclusionCBFQP(BackupCBFQP):
                 if np.isfinite(h_occ_now):
                     min_barrier_now = min(min_barrier_now, h_occ_now)
                     has_barrier_value = True
+            try:
+                vref_debug = self.occlusion_backup.occ_vref_scenario_weight_debug(
+                    robot_state, occ_for_qp, t=0.0
+                )
+            except Exception:
+                vref_debug = None
+            if isinstance(vref_debug, dict):
+                timings["occ_vref_weight_mode"] = vref_debug.get("weight_mode")
+                timings["occ_vref_avg_unexpanded_margin"] = vref_debug.get("avg_unexpanded_margin")
+                timings["occ_vref_max_softmax_weight"] = vref_debug.get("max_softmax_weight")
+                timings["occ_vref_scenario_debug"] = vref_debug.get("scenarios", [])
         timings["filter_occ_ms"] = (time.perf_counter() - t0) * 1000.0
 
         if no_obs and no_occ and no_corridor:
@@ -1415,9 +1695,32 @@ class OcclusionCBFQP(BackupCBFQP):
                         Phi_i = Phi_sc[i]
                         pos_i = phi_i[0:2]
 
-                        h_tilde, grad_pos, _, dh_ds, _ = self._occ_smax(pos_i.flatten(), scenario, tau)
+                        h_tilde, grad_pos, lam, dh_ds_from_barrier, _ = self._occ_smax(
+                            pos_i.flatten(), scenario, tau
+                        )
                         if h_tilde is None or grad_pos is None:
                             continue
+
+                        # Eq. (24b)/(24c): compute dh_dt and dh_ds explicitly
+                        dh_dt, dh_ds = self._occ_explicit_time_derivatives_pure_propagation(
+                            lam, scenario
+                        )
+
+                        if self.debug:
+                            if not np.isclose(
+                                dh_ds,
+                                float(dh_ds_from_barrier),
+                                rtol=1e-7,
+                                atol=1e-9,
+                            ):
+                                raise RuntimeError(
+                                    "Inconsistent occlusion derivative: "
+                                    f"dh_ds from helper ({dh_ds:.6g}) does not match "
+                                    f"dh_ds_from_barrier ({float(dh_ds_from_barrier):.6g})."
+                                )
+
+                        # Eq. (32)/(35b): explicit-time residual (= 0 under pure propagation)
+                        time_residual = float(dh_dt - dh_ds)
 
                         state_dim = Phi_i.shape[0]
                         pad_cols = max(0, state_dim - grad_pos.shape[1])
@@ -1437,18 +1740,18 @@ class OcclusionCBFQP(BackupCBFQP):
                         else:
                             g_x_pad = g_x
 
-                        time_term = -float(dh_ds)
-                        Lfh = grad_h_phi @ (Phi_i @ f_x_pad - f_pi_pad) + time_term
-                        Lgh = grad_h_phi @ Phi_i @ g_x_pad
+                        # Eq. (35b): c_occ = grad_h @ (Phi @ f(x) - f_b(y)) + dh_dt - dh_ds
+                        c_occ = grad_h_phi @ (Phi_i @ f_x_pad - f_pi_pad) + time_residual
+                        A_occ = grad_h_phi @ Phi_i @ g_x_pad
 
-                        if not (np.all(np.isfinite(Lgh)) and np.all(np.isfinite(Lfh))):
+                        if not (np.all(np.isfinite(A_occ)) and np.all(np.isfinite(c_occ))):
                             continue
 
-                        rhs = float(Lfh + self._alpha(h_tilde))
-                        if np.linalg.norm(Lgh) < 1e-9 and rhs < 0.0:
+                        rhs = float(c_occ + self._alpha(h_tilde))
+                        if np.linalg.norm(A_occ) < 1e-9 and rhs < 0.0:
                             continue
 
-                        A_list.append(-Lgh)
+                        A_list.append(-A_occ)
                         b_list.append(np.array([[rhs]]))
                         meta_list.append({"kind": "occ", "sc_idx": sc_idx, "tau": float(tau)})
         timings["build_occ_constraints_ms"] = (time.perf_counter() - t0) * 1000.0
@@ -1456,6 +1759,7 @@ class OcclusionCBFQP(BackupCBFQP):
         # terminal backup-set constraints
         t0 = time.perf_counter()
         term_scenarios = list(occ_for_qp) if not no_occ else []
+        term_scenarios = self._select_terminal_scenarios(robot_state, term_scenarios)
         try:
             f_term = self.robot.f(robot_state)
         except TypeError:
@@ -1465,13 +1769,16 @@ class OcclusionCBFQP(BackupCBFQP):
         except TypeError:
             g_term = self.robot.g()
 
-        for sc_idx, term_scn in enumerate(term_scenarios):
+        for term_pos, (sc_idx, term_scn_raw) in enumerate(term_scenarios):
             if per_scenario_rollouts is not None:
                 phi_T = per_scenario_rollouts[sc_idx][0][-1].reshape(-1, 1)
                 Phi_T = per_scenario_rollouts[sc_idx][1][-1]
             else:
                 phi_T = phi_b[-1].reshape(-1, 1)
                 Phi_T = Phi_b[-1]
+            term_scn = self._build_terminal_constraint_scenario(term_scn_raw, phi_T)
+            if term_scn is None:
+                continue
             state_dim_T = Phi_T.shape[0]
             f_term_use = f_term
             g_term_use = g_term
@@ -1495,7 +1802,16 @@ class OcclusionCBFQP(BackupCBFQP):
 
             A_list.append(-Lgh_b_T)
             b_list.append([[rhs_b]])
-            meta_list.append({"kind": "terminal", "tau": float(self.T_horizon), "sc_idx": sc_idx})
+            meta_list.append(
+                {
+                    "kind": "terminal",
+                    "tau": float(self.T_horizon),
+                    "sc_idx": int(sc_idx),
+                    "term_pos": int(term_pos),
+                    "terminal_mode": self.terminal_mode,
+                    "terminal_residual_mode": self.terminal_residual_mode,
+                }
+            )
         timings["build_terminal_ms"] = (time.perf_counter() - t0) * 1000.0
 
         if len(A_list) == 0:
@@ -1538,8 +1854,11 @@ class OcclusionCBFQP(BackupCBFQP):
             u_flat = np.asarray(u_ref, dtype=float).reshape(-1)
             if model_name == "Unicycle2D" and u_flat.size >= 2:
                 v_max = float(self.robot_spec.get("v_max", np.inf))
+                v_min = float(self.robot_spec.get("v_min", -v_max))
+                if (not np.isfinite(v_min)) or v_min > v_max:
+                    v_min = -v_max
                 w_max = float(self.robot_spec.get("w_max", np.inf))
-                input_ok = bool(abs(u_flat[0]) <= v_max + tol and abs(u_flat[1]) <= w_max + tol)
+                input_ok = bool((v_min - tol) <= float(u_flat[0]) <= (v_max + tol) and abs(u_flat[1]) <= w_max + tol)
             elif model_name == "DynamicUnicycle2D" and u_flat.size >= 2:
                 a_max = float(self.robot_spec.get("a_max", np.inf))
                 w_max = float(self.robot_spec.get("w_max", np.inf))
@@ -1673,8 +1992,13 @@ class OcclusionCBFQP(BackupCBFQP):
         self.last_fallback_cmd_feasible = bool(fallback_cmd_feasible)
         fallback_safe = bool(fallback_state_safe and fallback_cmd_feasible)
         self.last_fallback_allowed = bool(fallback_safe)
-        if fallback_safe:
-            self.last_intervention = "backup_fallback"
+        relaxed_fallback = False
+        if self.qp_failure_fallback_mode == "state_safe":
+            relaxed_fallback = bool(fallback_state_safe)
+        elif self.qp_failure_fallback_mode == "always":
+            relaxed_fallback = True
+        if fallback_safe or relaxed_fallback:
+            self.last_intervention = "backup_fallback" if fallback_safe else "backup_fallback_relaxed"
             self.status = "optimal"
         else:
             self.last_intervention = "infeasible"

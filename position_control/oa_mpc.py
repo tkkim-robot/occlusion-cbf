@@ -34,7 +34,7 @@ class OAMPC:
         benchmark adaptation because the paper experiments mostly use static
         occluders and treat pedestrian-induced occlusion as negligible,
 
-    Not implemented paper-faithfully here:
+    Not implemented here:
       - theorem-exact recursive feasibility is not claimed in dense dynamic
         crowd scenes; full complementarity handling for every collision row is
         solver-fragile, so visible/static circle rows are hard constraints by

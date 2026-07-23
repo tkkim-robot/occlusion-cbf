@@ -1,0 +1,81 @@
+[CMD] uv run python tools/benchmark_crowd_trials.py --scenario crowd2 --baseline occlusion_cbf --model di --seed 42 --n-rand 50 --tf 500 --crowd-mode forced_emergence --forced-events 6 --forced-hidden-speed 1.0 --forced-occluder-radius-min 0.8 --forced-occluder-radius-max 1.0 --forced-validate-occlusion true --forced-require-corridor-conflict true --workers 10 --occ-t-horizon 0.5 --occ-version v2 --occ-enable-visible-hocbf true --occ-selection-mode h_tilde --occ-vref-scenario-weight-mode barrier_predicted_margin --occ-vref-scenario-prediction-dt 0.05 --vref los --out-dir /Users/parkcart/workspace/occlusion-cbf/debug_logs/ocbf_pred_margin_slack_search_fast_20260507_104642 --idx-start 1 --idx-end 20 --occ-rho-T 0.1 --occ-vref-scenario-softmax-kappa 8.0 --occ-max-active-occlusions 3 --occ-terminal-slack-weight 1.0 --occ-terminal-slack-max 2.0
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=di seed=42 idx=1..20 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+Restricted license - for non-production use only - expires 2027-11-29
+[001/020] idx=  6 -> infeasible (raw=infeasible, compute_ms=11.922797591749488, intv=0.4029095516416964)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[002/020] idx=  8 -> infeasible (raw=infeasible, compute_ms=10.185818629481403, intv=0.4354431112626946)
+[003/020] idx=  7 -> collision  (raw=collision, compute_ms=11.017572113329486, intv=0.40763821978401477)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[004/020] idx=  3 -> infeasible (raw=infeasible, compute_ms=11.753446671258038, intv=0.3824224967405166)
+[005/020] idx= 11 -> infeasible (raw=infeasible, compute_ms=12.380770522281807, intv=0.36451488887851796)
+[006/020] idx= 14 -> infeasible (raw=infeasible, compute_ms=14.594562837687434, intv=0.47480345059111784)
+[007/020] idx= 15 -> infeasible (raw=infeasible, compute_ms=11.099829361751768, intv=0.2390448373262612)
+Restricted license - for non-production use only - expires 2027-11-29
+[008/020] idx=  5 -> infeasible (raw=infeasible, compute_ms=11.628660693988776, intv=0.4049370861477662)
+[009/020] idx=  2 -> success    (raw=success, compute_ms=10.53905992378673, intv=0.10445475838230714)
+[010/020] idx=  9 -> success    (raw=success, compute_ms=9.179167589198716, intv=0.2614797195726226)
+[011/020] idx=  4 -> success    (raw=success, compute_ms=8.759410546666459, intv=0.2662561661606516)
+[012/020] idx= 12 -> success    (raw=success, compute_ms=10.541305847967504, intv=0.19106530315533837)
+[013/020] idx= 10 -> success    (raw=success, compute_ms=12.026203377744478, intv=0.16634374415382547)
+[014/020] idx=  1 -> success    (raw=success, compute_ms=9.719917886493327, intv=0.2972223265549106)
+[015/020] idx= 13 -> success    (raw=success, compute_ms=9.69779446535563, intv=0.18148198582388728)
+[016/020] idx= 16 -> success    (raw=success, compute_ms=9.842366994819889, intv=0.15718056599115768)
+[017/020] idx= 17 -> success    (raw=success, compute_ms=9.798312667656532, intv=0.1864565917855761)
+[018/020] idx= 19 -> success    (raw=success, compute_ms=9.183008881914246, intv=0.25390254242823757)
+[019/020] idx= 18 -> success    (raw=success, compute_ms=10.086847001610519, intv=0.2539310626941619)
+[020/020] idx= 20 -> success    (raw=success, compute_ms=9.084720453123285, intv=0.2277613042331272)
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 0.5        11.37421779  0.8         0.06578004 -0.18744303 10.88143589
+ 12.1908052   1.        ], Robot: [-0.48603594 11.01852106] 0.25, Distance: 1.048230429846433, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+
+=== Crowd Trial Summary (3-way) ===
+success=12 | collision=1 | infeasible=7 | total=20
+success idx   : [1, 2, 4, 9, 10, 12, 13, 16, 17, 18, 19, 20]
+collision idx : [7]
+infeasible idx: [3, 5, 6, 8, 11, 14, 15]
+avg controller compute time over idx [ms]: 10.652078702893274
+avg control intervention over idx: 0.28296248566541937
+avg terminal slack L1 over idx: 0.1709049662442285
+avg terminal slack max over idx: 0.15678179274572562
+avg terminal slack active ratio over idx: 0.6967541888931119
+avg sim time over idx [s]: 87.205
+avg wall time per idx [s]: 35.61157034576463
+avg forced initially occluded over idx: 5.9
+avg forced revealed over idx: 4.3
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : /Users/parkcart/workspace/occlusion-cbf/debug_logs/ocbf_pred_margin_slack_search_fast_20260507_104642/crowd_trials_occlusion_cbf_42_1_20_20260507_124305.csv
+saved summary : /Users/parkcart/workspace/occlusion-cbf/debug_logs/ocbf_pred_margin_slack_search_fast_20260507_104642/crowd_trials_occlusion_cbf_42_1_20_20260507_124305.json
+

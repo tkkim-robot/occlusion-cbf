@@ -107,6 +107,7 @@ def _apply_single_risk_defaults(robot_spec):
     sr_cfg.setdefault("dt_plan", 0.05)
     sr_cfg.setdefault("Th", 1.0)
     sr_cfg.setdefault("N", 20)
+    sr_cfg.setdefault("forward_only", False)
     sr_cfg.setdefault("max_active_occlusions", 2)
     sr_cfg.setdefault("max_occ_regions", 2)
     sr_cfg.setdefault("hypothesis_model", "direct_hidden_obstacle")
@@ -132,8 +133,8 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("dt_plan", 0.05)
     ct_cfg.setdefault("Th", 1.0)
     ct_cfg.setdefault("N", 20)
-    ct_cfg.setdefault("forward_only", True)
-    ct_cfg.setdefault("v_plan_min", 0.05)
+    ct_cfg.setdefault("forward_only", False)
+    ct_cfg.setdefault("v_plan_min", 0.0)
     ct_cfg.setdefault("n_split", 3)
     ct_cfg.setdefault("max_active_occlusions", 2)
     ct_cfg.setdefault("n_occ_hypotheses", 2)
@@ -205,7 +206,7 @@ def _apply_oacp_defaults(robot_spec):
     oacp_cfg.setdefault("allow_solver_fallback", False)
     oacp_cfg.setdefault("dynamic_occluders", True)
     oacp_cfg.setdefault("visible_reach_mode", "constant_velocity")
-    oacp_cfg.setdefault("forward_only", True)
+    oacp_cfg.setdefault("forward_only", False)
     oacp_cfg.setdefault("du_nonnegative_speed", True)
     oacp_cfg.setdefault("max_visible_obs", 30)
     oacp_cfg.setdefault("max_occ_scenarios", 30)
@@ -983,7 +984,6 @@ def _prepare_crowd_runtime(
     du_reverse_min_scale=None,
     vref_mode_occ=None,
     vref_front_mode_occ=None,
-    occ_version=None,
     occ_visible_scale=None,
     occ_enable_visible_hocbf=False,
     oa_dynamic_occluders=None,
@@ -1095,16 +1095,15 @@ def _prepare_crowd_runtime(
         backup_cbf_overrides = {}
     else:
         backup_cbf_overrides = dict(backup_cbf_overrides)
-    if model == "DoubleIntegrator2D" and vref_front_mode_occ is None:
-        # Keep the DI crowd default aligned with the benchmarked occlusion-CBF
-        # configuration unless the caller explicitly overrides it.
-        vref_front_mode_occ = "los"
     if vref_front_mode_occ is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(vref_front_mode_occ).strip().lower()
     if robot_spec_overrides is None:
         robot_spec_overrides = {}
     else:
         robot_spec_overrides = dict(robot_spec_overrides)
+    allow_reverse_uni_raw = robot_spec_overrides.pop("_uni_allow_reverse", None)
+    forward_only_uni = bool(robot_spec_overrides.pop("_uni_forward_only", False))
+    explicit_uni_v_min = "v_min" in robot_spec_overrides
     if model == "DoubleIntegrator2D":
         di_backup_cfg = {
             "T_horizon": 0.5,
@@ -1180,6 +1179,7 @@ def _prepare_crowd_runtime(
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": uni_vmax,
+            "v_min": -uni_vmax,
             "w_max": uni_wmax,
             "radius": 0.25,
             "debug_backup_qp": False,
@@ -1196,6 +1196,11 @@ def _prepare_crowd_runtime(
 
     if robot_spec_overrides:
         robot_spec.update(robot_spec_overrides)
+    if model == "Unicycle2D" and not explicit_uni_v_min:
+        if forward_only_uni or allow_reverse_uni_raw is False:
+            robot_spec["v_min"] = 0.0
+        elif allow_reverse_uni_raw is True:
+            robot_spec["v_min"] = -abs(float(robot_spec.get("v_max", 1.0)))
 
     _apply_crowd_dynamic_obstacle_defaults(robot_spec)
     if crowd_mode == "forced_emergence":
@@ -1216,20 +1221,6 @@ def _prepare_crowd_runtime(
                 f"Invalid --occ-visible-scale: {occ_visible_scale}. It must be a positive finite value."
             )
         robot_spec["occ_visible_scale"] = float(vis_scale)
-    # Use the rounded-cone initial occlusion geometry for visibility filtering.
-    # Keep rollout geometry separate via `occ_rollout_version`.
-    robot_spec.setdefault("occ_visibility_version", "u0")
-    if occ_version is not None:
-        occ_version_str = str(occ_version).strip().lower()
-        if occ_version_str not in {"v1", "v2"}:
-            raise ValueError(f"Invalid --occ-version: {occ_version}. Use one of: v1, v2.")
-        robot_spec["occ_rollout_version"] = occ_version_str
-    else:
-        pos_name = str(controller_type.get("pos", "")).strip().lower()
-        robot_spec.setdefault(
-            "occ_rollout_version",
-            "v2" if pos_name == "occlusion_cbf_qp" else "v1",
-        )
     if occ_enable_visible_hocbf is not None:
         robot_spec["enable_visible_hocbf_in_occ"] = bool(occ_enable_visible_hocbf)
 
@@ -1268,6 +1259,15 @@ def _prepare_crowd_runtime(
         _apply_control_tree_defaults(robot_spec)
     elif pos_name == "oacp_mpc":
         _apply_oacp_defaults(robot_spec)
+
+    if model == "Unicycle2D" and (forward_only_uni or allow_reverse_uni_raw is False):
+        for cfg_name in ("single_risk_mpc", "control_tree_mpc", "oacp_mpc"):
+            if cfg_name in robot_spec:
+                robot_spec[cfg_name]["forward_only"] = True
+        if "control_tree_mpc" in robot_spec:
+            robot_spec["control_tree_mpc"]["v_plan_min"] = max(
+                0.0, float(robot_spec["control_tree_mpc"].get("v_plan_min", 0.0))
+            )
 
     planner_label_map = dict(CROWD_PLANNER_LABELS)
     if model == "Unicycle2D":
@@ -1325,7 +1325,6 @@ def run_crowd_scenario(
     du_reverse_min_scale=None,
     vref_mode_occ=None,
     vref_front_mode_occ=None,
-    occ_version=None,
     occ_visible_scale=None,
     occ_enable_visible_hocbf=False,
     oa_dynamic_occluders=None,
@@ -1378,7 +1377,6 @@ def run_crowd_scenario(
         du_reverse_min_scale=du_reverse_min_scale,
         vref_mode_occ=vref_mode_occ,
         vref_front_mode_occ=vref_front_mode_occ,
-        occ_version=occ_version,
         occ_visible_scale=occ_visible_scale,
         occ_enable_visible_hocbf=occ_enable_visible_hocbf,
         oa_dynamic_occluders=oa_dynamic_occluders,
@@ -1500,6 +1498,8 @@ def run_crowd_scenario(
     terminal_slack_l1_vals = []
     terminal_slack_max_vals = []
     terminal_slack_active_steps = 0
+    occ_vref_unexpanded_margin_vals = []
+    occ_vref_max_weight_vals = []
     total_steps = 0
     nominal_speed = 0.8
     final_controller_profile = None
@@ -1599,6 +1599,12 @@ def run_crowd_scenario(
                 solve_ms_branch_sum_vals.append(float(sbs))
             if sb is not None:
                 selected_branch_vals.append(str(sb))
+            occ_pm = profile.get("occ_vref_avg_unexpanded_margin", None)
+            occ_mw = profile.get("occ_vref_max_softmax_weight", None)
+            if occ_pm is not None:
+                occ_vref_unexpanded_margin_vals.append(float(occ_pm))
+            if occ_mw is not None:
+                occ_vref_max_weight_vals.append(float(occ_mw))
         if pos_controller is not None:
             u_cmd = getattr(pos_controller, "last_u", None)
             u_nom = getattr(pos_controller, "last_u_ref", None)
@@ -1780,6 +1786,12 @@ def run_crowd_scenario(
         ),
         "terminal_slack_active_steps": int(terminal_slack_active_steps),
         "terminal_slack_active_ratio": float(terminal_slack_active_steps) / float(max(1, steps_executed)),
+        "avg_occ_vref_unexpanded_margin": (
+            None if len(occ_vref_unexpanded_margin_vals) == 0 else float(np.mean(occ_vref_unexpanded_margin_vals))
+        ),
+        "avg_occ_vref_max_softmax_weight": (
+            None if len(occ_vref_max_weight_vals) == 0 else float(np.mean(occ_vref_max_weight_vals))
+        ),
         "intervention_active_steps": int(intervention_active_steps),
         "intervention_active_ratio": float(intervention_active_ratio),
         "selected_branch_counts": selected_branch_counts,
@@ -1923,9 +1935,22 @@ def main():
     parser.add_argument("--uni-reverse-gate-angle", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_angle_occ_uni.")
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_power_occ_uni.")
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None, help="Override backup_cbf.v_min_cmd_rev_occ_uni.")
+    parser.add_argument("--uni-allow-reverse", type=_str2bool, nargs="?", const=True, default=None, help="Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. Default is true for Unicycle2D.")
+    parser.add_argument("--uni-forward-only", type=_str2bool, nargs="?", const=True, default=False, help="Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given.")
+    parser.add_argument("--uni-v-min", type=float, default=None, help="Override Unicycle2D input lower speed bound.")
+    parser.add_argument("--uni-vref-tracking-mode", type=str, choices=["gated", "projected"], default=None)
+    parser.add_argument("--uni-k-theta-p", type=float, default=None, help="Override backup_cbf.k_theta_occ_uni_p.")
+    parser.add_argument("--uni-k-theta-d", type=float, default=None, help="Override backup_cbf.k_theta_occ_uni_d.")
+    parser.add_argument("--uni-k-v-p", type=float, default=None, help="Override backup_cbf.k_v_occ_uni_p.")
+    parser.add_argument("--uni-k-v-d", type=float, default=None, help="Override backup_cbf.k_v_occ_uni_d.")
+    parser.add_argument("--uni-turn-boost", type=float, default=None, help="Override backup_cbf.k_turn_boost_occ_uni.")
+    parser.add_argument("--uni-turn-boost-angle", type=float, default=None, help="Override backup_cbf.turn_boost_angle_occ_uni.")
+    parser.add_argument("--uni-v-min-cmd", type=float, default=None, help="Override backup_cbf.v_min_occ_uni.")
+    parser.add_argument("--uni-turn-crawl-speed", type=float, default=None, help="Minimum forward crawl speed while turning toward OCBF v_ref.")
+    parser.add_argument("--uni-turn-crawl-angle", type=float, default=None, help="Max heading error [rad] where OCBF turn-crawl is allowed.")
     parser.add_argument("--occ-dt-backup", type=float, default=None, help="Override backup_cbf.dt_backup for occlusion backup rollout.")
     parser.add_argument("--occ-t-horizon", type=float, default=None, help="Override backup_cbf.T_horizon for occlusion backup rollout.")
-    parser.add_argument("--occ-rho-T", type=float, default=None, help="Override backup_cbf.rho_T for terminal occlusion backup constraint.")
+    parser.add_argument("--occ-rho-T", type=str, default=None, help="Override backup_cbf.rho_T for terminal occlusion backup constraint. Accepts a float or 'auto'.")
     parser.add_argument("--occ-k-p", type=float, default=None, help="Override backup_cbf.k_p_occ_di for DI occlusion backup controller.")
     parser.add_argument("--occ-k-d", type=float, default=None, help="Override backup_cbf.k_d_occ_di for DI occlusion backup controller.")
     parser.add_argument("--occ-kappa", type=float, default=None, help="Override occlusion CBF scenario softmax kappa.")
@@ -1934,6 +1959,17 @@ def main():
         type=float,
         default=None,
         help="Override backup_cbf.vref_scenario_softmax_kappa for occlusion-CBF front-speed scenario weighting.",
+    )
+    parser.add_argument(
+        "--occ-vref-scenario-weight-mode",
+        type=str,
+        choices=["barrier_expand", "barrier_unexpand"],
+        default=None,
+        help=(
+            "Override backup_cbf.vref_scenario_weight_mode for OCBF scenario blending. "
+            "barrier_expand scores scenarios with rollout-expanded margins; "
+            "barrier_unexpand scores them with unexpanded current geometry margins."
+        ),
     )
     parser.add_argument(
         "--occ-max-active-occlusions",
@@ -1967,6 +2003,23 @@ def main():
         default=None,
         help="Override backup_cbf.terminal_slack_max for terminal-set rows only.",
     )
+    parser.add_argument("--occ-obs-hocbf-slack-max", type=float, default=None)
+    parser.add_argument("--occ-rollout-slack-max", type=float, default=None)
+    parser.add_argument("--occ-terminal-mode", type=str, choices=["all", "topm", "dominant", "none"], default=None)
+    parser.add_argument("--occ-terminal-active-count", type=int, default=None)
+    parser.add_argument(
+        "--occ-terminal-residual-mode",
+        type=str,
+        choices=["off", "visibility_intersection", "visibility_only"],
+        default=None,
+    )
+    parser.add_argument("--occ-terminal-visibility-reaction-margin", type=float, default=None)
+    parser.add_argument(
+        "--occ-qp-failure-fallback-mode",
+        type=str,
+        choices=["strict", "state_safe", "always"],
+        default=None,
+    )
     parser.add_argument(
         "--vref-mode-occ",
         type=str,
@@ -1979,7 +2032,10 @@ def main():
         type=str,
         choices=["default", "los"],
         default=None,
-        help="Front-facet direction mode used when building occlusion backup v_target.",
+        help=(
+            "Front-facet direction mode for occlusion backup v_target. "
+            "Internal default is `los`; `default` keeps the fixed polygon normal."
+        ),
     )
     parser.add_argument(
         "--occ-visible-scale",
@@ -1989,17 +2045,6 @@ def main():
             "Visibility fraction threshold for occlusion filtering. "
             "Example: 0.5 keeps an obstacle occluded until roughly half of its disc is exposed; "
             "1.0 matches the current slightest-visible-is-visible behavior."
-        ),
-    )
-    parser.add_argument(
-        "--occ-version",
-        type=str,
-        choices=["v1", "v2"],
-        default=None,
-        help=(
-            "Occlusion polygon construction. "
-            "`v1` uses the tangent-chord front facet; "
-            "`v2` moves the front facet toward the robot so the visible obstacle body is included."
         ),
     )
     parser.add_argument(
@@ -2161,18 +2206,41 @@ def main():
         backup_cbf_overrides["reverse_speed_gate_power_occ_uni"] = float(args.uni_reverse_gate_power)
     if args.uni_v_min_cmd_rev is not None:
         backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
+    if args.uni_vref_tracking_mode is not None:
+        backup_cbf_overrides["vref_tracking_mode_occ_uni"] = str(args.uni_vref_tracking_mode).strip().lower()
+    if args.uni_k_theta_p is not None:
+        backup_cbf_overrides["k_theta_occ_uni_p"] = float(args.uni_k_theta_p)
+    if args.uni_k_theta_d is not None:
+        backup_cbf_overrides["k_theta_occ_uni_d"] = float(args.uni_k_theta_d)
+    if args.uni_k_v_p is not None:
+        backup_cbf_overrides["k_v_occ_uni_p"] = float(args.uni_k_v_p)
+    if args.uni_k_v_d is not None:
+        backup_cbf_overrides["k_v_occ_uni_d"] = float(args.uni_k_v_d)
+    if args.uni_turn_boost is not None:
+        backup_cbf_overrides["k_turn_boost_occ_uni"] = float(args.uni_turn_boost)
+    if args.uni_turn_boost_angle is not None:
+        backup_cbf_overrides["turn_boost_angle_occ_uni"] = float(args.uni_turn_boost_angle)
+    if args.uni_v_min_cmd is not None:
+        backup_cbf_overrides["v_min_occ_uni"] = float(args.uni_v_min_cmd)
+    if args.uni_turn_crawl_speed is not None:
+        backup_cbf_overrides["turn_crawl_speed_occ_uni"] = float(args.uni_turn_crawl_speed)
+    if args.uni_turn_crawl_angle is not None:
+        backup_cbf_overrides["turn_crawl_angle_occ_uni"] = float(args.uni_turn_crawl_angle)
     if args.occ_dt_backup is not None:
         backup_cbf_overrides["dt_backup"] = float(args.occ_dt_backup)
     if args.occ_t_horizon is not None:
         backup_cbf_overrides["T_horizon"] = float(args.occ_t_horizon)
     if args.occ_rho_T is not None:
-        backup_cbf_overrides["rho_T"] = float(args.occ_rho_T)
+        rho_raw = str(args.occ_rho_T).strip()
+        backup_cbf_overrides["rho_T"] = "auto" if rho_raw.lower() == "auto" else float(rho_raw)
     if args.occ_k_p is not None:
         backup_cbf_overrides["k_p_occ_di"] = float(args.occ_k_p)
     if args.occ_k_d is not None:
         backup_cbf_overrides["k_d_occ_di"] = float(args.occ_k_d)
     if args.occ_vref_scenario_softmax_kappa is not None:
         backup_cbf_overrides["vref_scenario_softmax_kappa"] = float(args.occ_vref_scenario_softmax_kappa)
+    if args.occ_vref_scenario_weight_mode is not None:
+        backup_cbf_overrides["vref_scenario_weight_mode"] = str(args.occ_vref_scenario_weight_mode).strip().lower()
     if args.occ_max_active_occlusions is not None:
         backup_cbf_overrides["max_active_occlusions"] = int(args.occ_max_active_occlusions)
     if args.occ_selection_mode is not None:
@@ -2183,9 +2251,31 @@ def main():
         backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
     if args.occ_terminal_slack_max is not None:
         backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
+    if args.occ_obs_hocbf_slack_max is not None:
+        backup_cbf_overrides["obs_hocbf_slack_max"] = float(args.occ_obs_hocbf_slack_max)
+    if args.occ_rollout_slack_max is not None:
+        backup_cbf_overrides["occ_rollout_slack_max"] = float(args.occ_rollout_slack_max)
+    if args.occ_terminal_mode is not None:
+        backup_cbf_overrides["terminal_mode"] = str(args.occ_terminal_mode).strip().lower()
+    if args.occ_terminal_active_count is not None:
+        backup_cbf_overrides["terminal_active_count"] = int(args.occ_terminal_active_count)
+    if args.occ_terminal_residual_mode is not None:
+        backup_cbf_overrides["terminal_residual_mode"] = str(args.occ_terminal_residual_mode).strip().lower()
+    if args.occ_terminal_visibility_reaction_margin is not None:
+        backup_cbf_overrides["terminal_visibility_reaction_margin"] = float(
+            args.occ_terminal_visibility_reaction_margin
+        )
+    if args.occ_qp_failure_fallback_mode is not None:
+        backup_cbf_overrides["qp_failure_fallback_mode"] = str(args.occ_qp_failure_fallback_mode).strip().lower()
     if args.vref is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(args.vref).strip().lower()
     robot_spec_overrides = {}
+    if args.uni_allow_reverse is not None:
+        robot_spec_overrides["_uni_allow_reverse"] = bool(args.uni_allow_reverse)
+    if args.uni_forward_only:
+        robot_spec_overrides["_uni_forward_only"] = True
+    if args.uni_v_min is not None:
+        robot_spec_overrides["v_min"] = float(args.uni_v_min)
     if args.occ_kappa is not None:
         robot_spec_overrides["occ_kappa"] = float(args.occ_kappa)
     oacp_cfg = {}
@@ -2278,7 +2368,6 @@ def main():
         du_reverse_min_scale=args.du_reverse_min_scale,
         vref_mode_occ=args.vref_mode_occ,
         vref_front_mode_occ=args.vref,
-        occ_version=args.occ_version,
         occ_visible_scale=args.occ_visible_scale,
         occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
         oa_dynamic_occluders=args.oa_dynamic_occluders,

@@ -48,7 +48,7 @@ class OACPMPC(MPCCommonUtils):
       - route-tracking references shared across the branches, with an optional
         Bezier-smoothed reference scaffold used only for reference generation.
 
-    Still not paper-exact here:
+    Not implemented here:
       - the SRQ model and dynamic velocity-boundary equations are adapted
         surrogates for the test_crowd2 benchmark rather than an exact reproduction of
         the paper's road-structured formulation,
@@ -102,6 +102,10 @@ class OACPMPC(MPCCommonUtils):
         self.visible_reach_mode = str(cfg.get("visible_reach_mode", "constant_velocity")).strip().lower()
         if self.visible_reach_mode not in {"constant_velocity", "worst_case"}:
             self.visible_reach_mode = "constant_velocity"
+        self.branch_safety_gate = bool(cfg.get("branch_safety_gate", False))
+        self.branch_gate_reject_all = bool(cfg.get("branch_gate_reject_all", False))
+        self.branch_slack_gate_tol = float(cfg.get("branch_slack_gate_tol", 0.25))
+        self.branch_clearance_gate_tol = float(cfg.get("branch_clearance_gate_tol", 0.02))
 
         # Keep anticipated obstacle counts close to the structured-road paper regime.
         self.max_visible_obs = max(1, int(cfg.get("max_visible_obs", min(self.num_obs, 30))))
@@ -1450,6 +1454,59 @@ class OACPMPC(MPCCommonUtils):
             "score": float(score),
         }
 
+    def _oacp_segment_safety(self, slack, min_visible_clearance, min_hidden_clearance):
+        clearances = [
+            min_visible_clearance,
+            min_hidden_clearance,
+        ]
+        finite_clearances = [
+            float(v) for v in clearances
+            if v is not None and np.isfinite(float(v))
+        ]
+        min_clearance = min(finite_clearances) if finite_clearances else float("inf")
+        slack = float(slack)
+        unsafe_by_slack = (not np.isfinite(slack)) or slack > float(self.branch_slack_gate_tol)
+        unsafe_by_clearance = min_clearance < -float(self.branch_clearance_gate_tol)
+        return {
+            "safe": bool(not (unsafe_by_slack or unsafe_by_clearance)),
+            "slack": float(slack),
+            "min_clearance": None if not np.isfinite(min_clearance) else float(min_clearance),
+            "unsafe_by_slack": bool(unsafe_by_slack),
+            "unsafe_by_clearance": bool(unsafe_by_clearance),
+        }
+
+    def _oacp_branch_safety_gate(
+        self,
+        shared_min_visible,
+        shared_min_hidden,
+        explore_diag,
+        fallback_diag,
+    ):
+        shared = self._oacp_segment_safety(
+            self.shared_risk_slack,
+            shared_min_visible,
+            shared_min_hidden,
+        )
+        explore_tail = self._oacp_segment_safety(
+            self.explore_risk_slack,
+            explore_diag.get("min_visible_clearance"),
+            explore_diag.get("min_hidden_clearance"),
+        )
+        fallback_tail = self._oacp_segment_safety(
+            self.fallback_risk_slack,
+            fallback_diag.get("min_visible_clearance"),
+            fallback_diag.get("min_hidden_clearance"),
+        )
+        explore_safe = bool(shared["safe"] and explore_tail["safe"])
+        fallback_safe = bool(shared["safe"] and fallback_tail["safe"])
+        return {
+            "shared": shared,
+            "explore_tail": explore_tail,
+            "fallback_tail": fallback_tail,
+            "explore_safe": explore_safe,
+            "fallback_safe": fallback_safe,
+        }
+
     def _select_branch(self, explore_diag, fallback_diag, feasible):
         if not feasible:
             return None
@@ -1642,15 +1699,45 @@ class OACPMPC(MPCCommonUtils):
             )
             self.explore_cost = float(explore_diag["score"])
             self.fallback_cost = float(fallback_diag["score"])
-            selected_branch = self._select_branch(explore_diag, fallback_diag, True)
+
+            shared_min_visible = self._trajectory_min_clearance(Xs_val, visible_obs, 0)
+            shared_min_hidden = self._trajectory_min_clearance(Xs_val, phantom_obs, 0)
+            branch_gate_diag = self._oacp_branch_safety_gate(
+                shared_min_visible,
+                shared_min_hidden,
+                explore_diag,
+                fallback_diag,
+            )
+            score_selected_branch = self._select_branch(explore_diag, fallback_diag, True)
+            selected_branch = score_selected_branch
+            branch_gate_action = "disabled"
+            branch_gate_rejected = False
+            if self.branch_safety_gate:
+                explore_safe = bool(branch_gate_diag["explore_safe"])
+                fallback_safe = bool(branch_gate_diag["fallback_safe"])
+                if selected_branch == "explore" and (not explore_safe) and fallback_safe:
+                    selected_branch = "fallback"
+                    branch_gate_action = "switched_to_fallback"
+                elif selected_branch == "fallback" and (not fallback_safe) and explore_safe:
+                    selected_branch = "explore"
+                    branch_gate_action = "switched_to_explore"
+                elif (not explore_safe) and (not fallback_safe):
+                    if self.branch_gate_reject_all:
+                        selected_branch = None
+                        branch_gate_action = "rejected_all_branches"
+                        branch_gate_rejected = True
+                    else:
+                        branch_gate_action = "both_unsafe_kept_selected"
+                else:
+                    branch_gate_action = "kept_selected"
+
             self.selected_branch = selected_branch
+            self.explore_feasible = bool(branch_gate_diag["explore_safe"]) if self.branch_safety_gate else True
+            self.fallback_feasible = bool(branch_gate_diag["fallback_safe"]) if self.branch_safety_gate else True
             if selected_branch is not None and selected_branch != self._last_selected_branch:
                 self.branch_switch_count += 1
             if selected_branch is not None:
                 self._last_selected_branch = str(selected_branch)
-
-            shared_min_visible = self._trajectory_min_clearance(Xs_val, visible_obs, 0)
-            shared_min_hidden = self._trajectory_min_clearance(Xs_val, phantom_obs, 0)
 
             self.last_profile = {
                 "backend": str(self.backend),
@@ -1658,11 +1745,12 @@ class OACPMPC(MPCCommonUtils):
                 "total_ms": 0.0,  # filled below
                 "solver_ms": float(self.last_qp_solve_time_ms),
                 "selected_branch": self.selected_branch,
+                "score_selected_branch": score_selected_branch,
                 "shared_prefix_length": int(self.n_shared),
                 "explore_cost": float(self.explore_cost),
                 "fallback_cost": float(self.fallback_cost),
-                "explore_feasible": True,
-                "fallback_feasible": True,
+                "explore_feasible": bool(self.explore_feasible),
+                "fallback_feasible": bool(self.fallback_feasible),
                 "occlusion_risk_score": float(self.occlusion_risk_score),
                 "visible_pressure_score": float(self.visible_pressure_score),
                 "occlusion_risk_raw_max": float(np.max(risk_raw_vec)) if risk_raw_vec.size else 0.0,
@@ -1680,7 +1768,9 @@ class OACPMPC(MPCCommonUtils):
                 "num_occ_scenarios": int(min(len(occ_candidates), self.max_occ_scenarios)),
                 "num_active_occlusions": int(len(active_entries)),
                 "num_phantom_obs": int(min(len(phantom_obs), self.max_phantom_obs)),
-                "shared_prefix_feasible": True,
+                "shared_prefix_feasible": (
+                    bool(branch_gate_diag["shared"]["safe"]) if self.branch_safety_gate else True
+                ),
                 "shared_prefix_cost": float(np.sum((Xs_val[:2, -1] - pos_s[:, -1]) ** 2)),
                 "shared_min_visible_clearance": shared_min_visible,
                 "shared_min_hidden_clearance": shared_min_hidden,
@@ -1693,12 +1783,48 @@ class OACPMPC(MPCCommonUtils):
                 "shared_risk_slack": float(self.shared_risk_slack),
                 "explore_risk_slack": float(self.explore_risk_slack),
                 "fallback_risk_slack": float(self.fallback_risk_slack),
+                "branch_safety_gate": bool(self.branch_safety_gate),
+                "branch_gate_reject_all": bool(self.branch_gate_reject_all),
+                "branch_slack_gate_tol": float(self.branch_slack_gate_tol),
+                "branch_clearance_gate_tol": float(self.branch_clearance_gate_tol),
+                "branch_gate_action": branch_gate_action,
+                "branch_gate_rejected": bool(branch_gate_rejected),
+                "shared_gate_safe": bool(branch_gate_diag["shared"]["safe"]),
+                "shared_gate_slack": float(branch_gate_diag["shared"]["slack"]),
+                "shared_gate_min_clearance": branch_gate_diag["shared"]["min_clearance"],
+                "shared_gate_unsafe_by_slack": bool(branch_gate_diag["shared"]["unsafe_by_slack"]),
+                "shared_gate_unsafe_by_clearance": bool(branch_gate_diag["shared"]["unsafe_by_clearance"]),
+                "explore_gate_safe": bool(branch_gate_diag["explore_safe"]),
+                "explore_tail_gate_safe": bool(branch_gate_diag["explore_tail"]["safe"]),
+                "explore_tail_gate_slack": float(branch_gate_diag["explore_tail"]["slack"]),
+                "explore_tail_gate_min_clearance": branch_gate_diag["explore_tail"]["min_clearance"],
+                "explore_tail_gate_unsafe_by_slack": bool(branch_gate_diag["explore_tail"]["unsafe_by_slack"]),
+                "explore_tail_gate_unsafe_by_clearance": bool(branch_gate_diag["explore_tail"]["unsafe_by_clearance"]),
+                "fallback_gate_safe": bool(branch_gate_diag["fallback_safe"]),
+                "fallback_tail_gate_safe": bool(branch_gate_diag["fallback_tail"]["safe"]),
+                "fallback_tail_gate_slack": float(branch_gate_diag["fallback_tail"]["slack"]),
+                "fallback_tail_gate_min_clearance": branch_gate_diag["fallback_tail"]["min_clearance"],
+                "fallback_tail_gate_unsafe_by_slack": bool(branch_gate_diag["fallback_tail"]["unsafe_by_slack"]),
+                "fallback_tail_gate_unsafe_by_clearance": bool(branch_gate_diag["fallback_tail"]["unsafe_by_clearance"]),
                 "explore_goal_err": float(explore_diag["goal_err"]),
                 "fallback_goal_err": float(fallback_diag["goal_err"]),
                 "explore_progress": float(explore_diag["progress"]),
                 "fallback_progress": float(fallback_diag["progress"]),
                 "status_raw": str(self.last_qp_status_raw),
             }
+            if branch_gate_rejected:
+                self._sol_prev = None
+                u_cmd = self._stop_input()
+                self.last_u = u_cmd
+                self._u_prev_applied = u_cmd
+                self.status = "infeasible"
+                self.last_intervention = "infeasible"
+                self.last_qp_status_raw = "branch_gate_rejected"
+                self.selected_branch = None
+                self.last_profile["selected_branch"] = None
+                self.last_profile["explore_feasible"] = bool(self.explore_feasible)
+                self.last_profile["fallback_feasible"] = bool(self.fallback_feasible)
+                self.last_profile["status_raw"] = str(self.last_qp_status_raw)
         else:
             self._sol_prev = None
             u_cmd = self._stop_input()

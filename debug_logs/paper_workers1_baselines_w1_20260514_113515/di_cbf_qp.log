@@ -1,0 +1,245 @@
+[RUN] scenario=crowd2 label=cbf_qp baseline=cbf_qp pos=cbf_qp model=di seed=42 idx=1..100 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+Restricted license - for non-production use only - expires 2027-11-29
+[001/100] idx=  1 -> success    (raw=success, compute_ms=1.0752535142609965, intv=0.06882486413052333)
+[002/100] idx=  2 -> success    (raw=success, compute_ms=1.0640172250430973, intv=0.15142415962920674)
+Infeasible detected!!
+[003/100] idx=  3 -> infeasible (raw=infeasible, compute_ms=1.108611135771922, intv=0.14056371060587197)
+Infeasible detected!!
+[004/100] idx=  4 -> infeasible (raw=infeasible, compute_ms=1.0504717758312756, intv=0.23928765494460902)
+[005/100] idx=  5 -> success    (raw=success, compute_ms=1.0813424007213661, intv=0.1635917307015804)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+Infeasible detected!!
+[006/100] idx=  6 -> infeasible (raw=infeasible, compute_ms=1.0930820313340217, intv=0.18873049726355204)
+Infeasible detected!!
+[007/100] idx=  7 -> infeasible (raw=infeasible, compute_ms=1.066533550452362, intv=0.25089692609442593)
+Infeasible detected!!
+[008/100] idx=  8 -> infeasible (raw=infeasible, compute_ms=1.0590786250944877, intv=0.27235091971349273)
+Infeasible detected!!
+[009/100] idx=  9 -> infeasible (raw=infeasible, compute_ms=1.115647762009267, intv=0.11218045270251877)
+Infeasible detected!!
+[010/100] idx= 10 -> infeasible (raw=infeasible, compute_ms=1.1254799646496836, intv=0.3364058533212006)
+[011/100] idx= 11 -> success    (raw=success, compute_ms=1.0687875479316087, intv=0.15178408940640706)
+Infeasible detected!!
+[012/100] idx= 12 -> infeasible (raw=infeasible, compute_ms=1.1313725543819508, intv=0.49992145086693646)
+[013/100] idx= 13 -> success    (raw=success, compute_ms=1.0731442902769237, intv=0.10479351222346774)
+Infeasible detected!!
+[014/100] idx= 14 -> infeasible (raw=infeasible, compute_ms=1.125298104083273, intv=0.3167786843633813)
+Collision with known obstacle detected! Obs: [ 0.5        10.39826455  0.8         0.07841891 -0.2244314   9.58194386
+ 10.43194386  1.        ], Robot: [1.00407257 9.47895605] 0.25, Distance: 1.048435634504116, True
+Collision detected !!
+[015/100] idx= 15 -> collision  (raw=collision, compute_ms=1.112286705017415, intv=0.3440934842328468)
+Infeasible detected!!
+[016/100] idx= 16 -> infeasible (raw=infeasible, compute_ms=1.1379050952679932, intv=0.39110527833117015)
+Collision with known obstacle detected! Obs: [ 1.87700082 17.74408876  0.3978919  -0.44005691  0.89303846 -2.
+ 32.          1.        ], Robot: [ 1.29289168 18.02301724] 0.25, Distance: 0.6472901930044065, True
+Collision detected !!
+[017/100] idx= 17 -> collision  (raw=collision, compute_ms=1.1110484368691687, intv=0.13560518807737484)
+Infeasible detected!!
+[018/100] idx= 18 -> infeasible (raw=infeasible, compute_ms=1.0803814723142944, intv=0.2030276089457907)
+Infeasible detected!!
+[019/100] idx= 19 -> infeasible (raw=infeasible, compute_ms=1.1134928087243339, intv=0.38489285477100293)
+Collision with known obstacle detected! Obs: [ 0.5        10.1525311   0.8         0.07118884 -0.20540313 10.07275544
+ 11.45689593  1.        ], Robot: [0.03710154 9.21241451] 0.25, Distance: 1.0478998917188123, True
+Collision detected !!
+[020/100] idx= 20 -> collision  (raw=collision, compute_ms=1.0440180787541085, intv=0.5062625838183112)
+Infeasible detected!!
+[021/100] idx= 21 -> infeasible (raw=infeasible, compute_ms=1.1340307693412046, intv=0.27654430164635607)
+Infeasible detected!!
+[022/100] idx= 22 -> infeasible (raw=infeasible, compute_ms=1.1204579985675307, intv=0.07664382691370673)
+Infeasible detected!!
+[023/100] idx= 23 -> infeasible (raw=infeasible, compute_ms=1.092269153634562, intv=0.3126058618050102)
+[024/100] idx= 24 -> success    (raw=success, compute_ms=1.0748095189875813, intv=0.17827893468466338)
+Infeasible detected!!
+[025/100] idx= 25 -> infeasible (raw=infeasible, compute_ms=1.1252323270782252, intv=0.32565644380072883)
+Infeasible detected!!
+[026/100] idx= 26 -> infeasible (raw=infeasible, compute_ms=1.0587714773090953, intv=0.24817873948978508)
+[027/100] idx= 27 -> success    (raw=success, compute_ms=1.1091431959041793, intv=0.16390856869857162)
+Collision with known obstacle detected! Obs: [ 0.5        10.22681681  0.8         0.06191875  0.17958939  9.06878968
+ 10.43322788  1.        ], Robot: [-0.46319186  9.81540292] 0.25, Distance: 1.047377652278921, True
+Collision detected !!
+[028/100] idx= 28 -> collision  (raw=collision, compute_ms=1.124931607643492, intv=0.32083225611796873)
+Collision with known obstacle detected! Obs: [ 0.5        12.05562286  0.8         0.06424752  0.18535558 11.58286267
+ 12.64778178  1.        ], Robot: [-4.54405225e-03  1.11360033e+01] 0.25, Distance: 1.0489351052972762, True
+Collision detected !!
+[029/100] idx= 29 -> collision  (raw=collision, compute_ms=1.1042249059992963, intv=0.3843281970442372)
+[030/100] idx= 30 -> success    (raw=success, compute_ms=1.110175852967963, intv=0.14074582460972146)
+[031/100] idx= 31 -> success    (raw=success, compute_ms=1.0659252718291938, intv=0.049583209845411834)
+Infeasible detected!!
+[032/100] idx= 32 -> infeasible (raw=infeasible, compute_ms=1.131181712913075, intv=0.1878580978872998)
+Infeasible detected!!
+[033/100] idx= 33 -> infeasible (raw=infeasible, compute_ms=1.0694856360871512, intv=0.12504088448908113)
+Infeasible detected!!
+[034/100] idx= 34 -> infeasible (raw=infeasible, compute_ms=1.073623970094275, intv=0.1863016160424235)
+[035/100] idx= 35 -> success    (raw=success, compute_ms=1.0741394728785183, intv=0.043951974789799654)
+[036/100] idx= 36 -> success    (raw=success, compute_ms=1.07902517730491, intv=0.22315282969523)
+[037/100] idx= 37 -> success    (raw=success, compute_ms=1.0729790508450616, intv=0.23975924233768073)
+[038/100] idx= 38 -> success    (raw=success, compute_ms=1.0998129453417294, intv=0.14317464875373587)
+Collision with known obstacle detected! Obs: [22.30857335  9.68437465  0.8         0.0772967   0.22029445  8.70266649
+ 10.07260827  1.        ], Robot: [21.26197932  9.6458539 ] 0.25, Distance: 1.0473026898106226, True
+Collision detected !!
+[039/100] idx= 39 -> collision  (raw=collision, compute_ms=1.1656484108955132, intv=0.126643601706571)
+[040/100] idx= 40 -> success    (raw=success, compute_ms=1.0817065528744454, intv=0.14917828146629486)
+Infeasible detected!!
+[041/100] idx= 41 -> infeasible (raw=infeasible, compute_ms=1.1087152298124794, intv=0.12014745458116992)
+Infeasible detected!!
+[042/100] idx= 42 -> infeasible (raw=infeasible, compute_ms=1.1213864937529248, intv=0.1609559824929754)
+Collision with known obstacle detected! Obs: [ 0.5        10.20761098  0.8         0.08671963 -0.25163458  9.31827932
+ 10.27049634  1.        ], Robot: [-0.51441933  9.95800232] 0.25, Distance: 1.0446774911339642, True
+Collision detected !!
+[043/100] idx= 43 -> collision  (raw=collision, compute_ms=0.9967424964296621, intv=0.3472527804999185)
+Infeasible detected!!
+[044/100] idx= 44 -> infeasible (raw=infeasible, compute_ms=1.0483634330078282, intv=0.11814321741057655)
+[045/100] idx= 45 -> success    (raw=success, compute_ms=1.0608685468142607, intv=0.13561797772366244)
+Infeasible detected!!
+[046/100] idx= 46 -> infeasible (raw=infeasible, compute_ms=1.1185402692529094, intv=0.3401756474387969)
+[047/100] idx= 47 -> success    (raw=success, compute_ms=1.1144815605462421, intv=0.11031346058858536)
+Infeasible detected!!
+[048/100] idx= 48 -> infeasible (raw=infeasible, compute_ms=1.1079999854581746, intv=0.12000328038989107)
+[049/100] idx= 49 -> success    (raw=success, compute_ms=1.064730625041514, intv=0.08240007970263223)
+Infeasible detected!!
+[050/100] idx= 50 -> infeasible (raw=infeasible, compute_ms=1.1821620087218834, intv=0.07968046460796789)
+Collision with known obstacle detected! Obs: [21.98271094 10.876836    0.8         0.08723408  0.25233536 10.09481804
+ 11.30250126  1.        ], Robot: [21.13407977 11.49335567] 0.25, Distance: 1.0489382144858772, True
+Collision detected !!
+[051/100] idx= 51 -> collision  (raw=collision, compute_ms=1.1538842576638006, intv=0.2612928260493038)
+[052/100] idx= 52 -> success    (raw=success, compute_ms=1.075765092831221, intv=0.05393129055463729)
+Collision with known obstacle detected! Obs: [ 1.50542407 14.36614894  0.30276305  0.84298587 -0.5379357  -2.
+ 32.          1.        ], Robot: [ 2.02853308 14.36779331] 0.25, Distance: 0.5231116000057926, True
+Collision detected !!
+[053/100] idx= 53 -> collision  (raw=collision, compute_ms=1.0820339049643337, intv=0.18135124560275137)
+Infeasible detected!!
+[054/100] idx= 54 -> infeasible (raw=infeasible, compute_ms=1.1095112254598032, intv=0.14654888785177825)
+Collision with known obstacle detected! Obs: [22.09406457 10.83766527  0.8         0.07782528 -0.22638224 10.60401194
+ 11.99143934  1.        ], Robot: [21.0782315  10.58123154] 0.25, Distance: 1.047699901898348, True
+Collision detected !!
+[055/100] idx= 55 -> collision  (raw=collision, compute_ms=1.131300597940605, intv=0.19470889237083017)
+[056/100] idx= 56 -> success    (raw=success, compute_ms=1.0514939822786296, intv=0.06559098207298371)
+[057/100] idx= 57 -> success    (raw=success, compute_ms=1.0591888140857777, intv=0.09846055072469526)
+[058/100] idx= 58 -> success    (raw=success, compute_ms=1.0876082084689653, intv=0.00925583160014335)
+Collision with known obstacle detected! Obs: [-0.33502056 11.79834451  0.3695007  -0.86840442  0.24814256 -2.
+ 32.          1.        ], Robot: [-0.95425283 11.79047696] 0.25, Distance: 0.6192822515424102, True
+Collision detected !!
+[059/100] idx= 59 -> collision  (raw=collision, compute_ms=1.1420201352167123, intv=0.36397538173774013)
+Infeasible detected!!
+[060/100] idx= 60 -> infeasible (raw=infeasible, compute_ms=1.1858648413181072, intv=0.17735026192698333)
+Infeasible detected!!
+[061/100] idx= 61 -> infeasible (raw=infeasible, compute_ms=1.0452312344187842, intv=0.08857694521535464)
+Collision with known obstacle detected! Obs: [ 0.5        11.08395027  0.8         0.06742526 -0.19519496  9.66809637
+ 11.08395027  1.        ], Robot: [ 0.26453928 10.06771374] 0.25, Distance: 1.043157910607736, True
+Collision detected !!
+[062/100] idx= 62 -> collision  (raw=collision, compute_ms=1.1139643838420448, intv=0.29544416461841655)
+Collision with known obstacle detected! Obs: [ 2.77202412 19.86071979  0.39764085 -0.99748376 -0.07089529 -2.
+ 32.          1.        ], Robot: [ 2.26403456 19.47902918] 0.25, Distance: 0.6354062558847015, True
+Collision detected !!
+[063/100] idx= 63 -> collision  (raw=collision, compute_ms=1.1360514048906876, intv=0.27101566572914726)
+Collision with known obstacle detected! Obs: [-0.09368571  8.15614915  0.30136711 -0.31612826 -0.63840046 -2.
+ 32.          1.        ], Robot: [2.94664732e-03 7.61349871e+00] 0.25, Distance: 0.5511871828629976, True
+Collision detected !!
+[064/100] idx= 64 -> collision  (raw=collision, compute_ms=1.0871237891062704, intv=0.5707945442058161)
+[065/100] idx= 65 -> success    (raw=success, compute_ms=1.0647320907729132, intv=0.07511583307956964)
+Infeasible detected!!
+[066/100] idx= 66 -> infeasible (raw=infeasible, compute_ms=1.0823976603603003, intv=0.11676133768042565)
+Collision with known obstacle detected! Obs: [ 1.03866322 25.19250272  0.36807166  0.99203326  0.12597621 -2.
+ 32.          1.        ], Robot: [ 1.63319592 25.26768328] 0.25, Distance: 0.5992672548620995, True
+Collision detected !!
+[067/100] idx= 67 -> collision  (raw=collision, compute_ms=1.1012747418135405, intv=0.15352478808896142)
+[068/100] idx= 68 -> success    (raw=success, compute_ms=1.044370811860085, intv=0.06996656551411352)
+Collision with known obstacle detected! Obs: [ 0.5        12.28238956  0.8         0.061413   -0.17932467 11.25028199
+ 12.79297973  1.        ], Robot: [-0.26878796 11.56941744] 0.25, Distance: 1.0485056874557277, True
+Collision detected !!
+[069/100] idx= 69 -> collision  (raw=collision, compute_ms=1.1191809945808895, intv=0.45312562606799967)
+Infeasible detected!!
+[070/100] idx= 70 -> infeasible (raw=infeasible, compute_ms=1.1089937899898934, intv=0.5379189458753301)
+Collision with known obstacle detected! Obs: [ 0.5        12.00770843  0.8         0.08699902  0.25538441 11.56147286
+ 13.15095176  1.        ], Robot: [-0.54742923 12.02910089] 0.25, Distance: 1.0476476667358752, True
+Collision detected !!
+[071/100] idx= 71 -> collision  (raw=collision, compute_ms=1.0873767516673787, intv=0.30482829751142687)
+[072/100] idx= 72 -> success    (raw=success, compute_ms=1.0812043879004376, intv=0.20875718511544272)
+Infeasible detected!!
+[073/100] idx= 73 -> infeasible (raw=infeasible, compute_ms=1.1639549584022395, intv=0.18267505974046314)
+[074/100] idx= 74 -> success    (raw=success, compute_ms=1.1211537504225686, intv=0.15132136675409213)
+Collision with known obstacle detected! Obs: [29.5        21.53806508  0.8        -0.06894784 -0.19803706 20.28247964
+ 21.81555182  1.        ], Robot: [29.62697411 20.49678802] 0.25, Distance: 1.0489901592697861, True
+Collision detected !!
+[075/100] idx= 75 -> collision  (raw=collision, compute_ms=1.1264403055823622, intv=0.16985907817053963)
+[076/100] idx= 76 -> success    (raw=success, compute_ms=1.1116767761692414, intv=0.177227406895662)
+[077/100] idx= 77 -> success    (raw=success, compute_ms=1.155891859177872, intv=0.11119272557265926)
+[078/100] idx= 78 -> success    (raw=success, compute_ms=1.1319743927773012, intv=0.14395856657840658)
+Infeasible detected!!
+[079/100] idx= 79 -> infeasible (raw=infeasible, compute_ms=1.1696676261144112, intv=0.15944812670068834)
+Collision with known obstacle detected! Obs: [ 0.5        11.02064684  0.8         0.07042279  0.20376989 10.09356906
+ 11.08220832  1.        ], Robot: [-0.48523143 10.66806209] 0.25, Distance: 1.0464210287481606, True
+Collision detected !!
+[080/100] idx= 80 -> collision  (raw=collision, compute_ms=1.1571868633614737, intv=0.38453342583007183)
+[081/100] idx= 81 -> success    (raw=success, compute_ms=1.1218231272694, intv=0.14863686950595403)
+[082/100] idx= 82 -> success    (raw=success, compute_ms=1.1279079384711517, intv=0.24316194020737986)
+[083/100] idx= 83 -> success    (raw=success, compute_ms=1.1633064995919271, intv=0.11115808258003695)
+[084/100] idx= 84 -> success    (raw=success, compute_ms=1.1210868389022257, intv=0.06693279948195781)
+Infeasible detected!!
+[085/100] idx= 85 -> infeasible (raw=infeasible, compute_ms=1.138005501025931, intv=0.31313359184697676)
+Infeasible detected!!
+[086/100] idx= 86 -> infeasible (raw=infeasible, compute_ms=1.1472810141034036, intv=0.10552593637865451)
+[087/100] idx= 87 -> success    (raw=success, compute_ms=1.1506120478447242, intv=0.19159148577997182)
+[088/100] idx= 88 -> success    (raw=success, compute_ms=1.1096035359006937, intv=0.10727632456276297)
+Collision with known obstacle detected! Obs: [ 1.78700696 24.78352238  0.3890104  -0.71866623  0.57279906 -2.
+ 32.          1.        ], Robot: [ 1.24777006 25.1236009 ] 0.25, Distance: 0.6375184942101184, True
+Collision detected !!
+[089/100] idx= 89 -> collision  (raw=collision, compute_ms=1.195391555602723, intv=0.15494348468639366)
+Collision with known obstacle detected! Obs: [28.58206425 13.56633414  0.31485564  0.42290518  0.68736723 -2.
+ 32.          1.        ], Robot: [29.13438441 13.68153618] 0.25, Distance: 0.5642065885932136, True
+Collision detected !!
+[090/100] idx= 90 -> collision  (raw=collision, compute_ms=1.1460006069376354, intv=0.23279743965694447)
+[091/100] idx= 91 -> success    (raw=success, compute_ms=1.1147188332120062, intv=0.052499144890179)
+Collision with known obstacle detected! Obs: [ 0.5        12.36827434  0.8         0.09063207 -0.26127309 11.10239035
+ 12.43362508  1.        ], Robot: [ 1.19775643 11.59425092] 0.25, Distance: 1.0421018597236784, True
+Collision detected !!
+[092/100] idx= 92 -> collision  (raw=collision, compute_ms=1.152755773577792, intv=0.33883886435710486)
+Infeasible detected!!
+[093/100] idx= 93 -> infeasible (raw=infeasible, compute_ms=1.22941742698789, intv=0.10855617980041958)
+Collision with known obstacle detected! Obs: [ 1.35918613 10.27046757  0.30055944 -0.96174386  0.27395026 -2.
+ 32.          1.        ], Robot: [ 0.81515813 10.33813602] 0.25, Distance: 0.5482202927680214, True
+Collision detected !!
+[094/100] idx= 94 -> collision  (raw=collision, compute_ms=1.2013167804681173, intv=0.35275059476012965)
+Collision with known obstacle detected! Obs: [ 2.64892346 25.82843106  0.38910765 -0.17403085 -0.66190282 -2.
+ 32.          1.        ], Robot: [ 2.0990324  25.50296761] 0.25, Distance: 0.6389887533185654, True
+Collision detected !!
+[095/100] idx= 95 -> collision  (raw=collision, compute_ms=1.1733207019799463, intv=0.24355115654814719)
+Infeasible detected!!
+[096/100] idx= 96 -> infeasible (raw=infeasible, compute_ms=1.1376003416519633, intv=0.21343738811889004)
+[097/100] idx= 97 -> success    (raw=success, compute_ms=1.1242461687230134, intv=0.14160387741039565)
+Collision with known obstacle detected! Obs: [ 0.5         9.78487225  0.8         0.08269149  0.23714841  9.25077216
+ 10.21904963  1.        ], Robot: [-0.45373147  9.3550532 ] 0.25, Distance: 1.0461109561165949, True
+Collision detected !!
+[098/100] idx= 98 -> collision  (raw=collision, compute_ms=1.1170462085018782, intv=0.4314759448584652)
+Infeasible detected!!
+[099/100] idx= 99 -> infeasible (raw=infeasible, compute_ms=1.233635022910175, intv=0.3361428224645201)
+[100/100] idx=100 -> success    (raw=success, compute_ms=1.1251016517001788, intv=0.12217559781410739)
+
+=== Crowd Trial Summary (3-way) ===
+success=37 | collision=25 | infeasible=38 | total=100
+success idx   : [1, 2, 5, 11, 13, 24, 27, 30, 31, 35, 36, 37, 38, 40, 45, 47, 49, 52, 56, 57, 58, 65, 68, 72, 74, 76, 77, 78, 81, 82, 83, 84, 87, 88, 91, 97, 100]
+collision idx : [15, 17, 20, 28, 29, 39, 43, 51, 53, 55, 59, 62, 63, 64, 67, 69, 71, 75, 80, 89, 90, 92, 94, 95, 98]
+infeasible idx: [3, 4, 6, 7, 8, 9, 10, 12, 14, 16, 18, 19, 21, 22, 23, 25, 26, 32, 33, 34, 41, 42, 44, 46, 48, 50, 54, 60, 61, 66, 70, 73, 79, 85, 86, 93, 96, 99]
+avg controller compute time over idx [ms]: 1.1104751594492588
+avg control intervention over idx: 0.20674280522549948
+avg terminal slack L1 over idx: None
+avg terminal slack max over idx: None
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 60.771
+avg wall time per idx [s]: 17.193932699579165
+avg forced initially occluded over idx: 5.86
+avg forced revealed over idx: 3.65
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/paper_workers1_baselines_w1_20260514_113515/crowd_trials_cbf_qp_42_1_100_20260514_121223.csv
+saved summary : debug_logs/paper_workers1_baselines_w1_20260514_113515/crowd_trials_cbf_qp_42_1_100_20260514_121223.json
+

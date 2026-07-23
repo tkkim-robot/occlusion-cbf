@@ -1,0 +1,4 @@
+[RUN] scenario=crowd2 label=oacp_mpc baseline=oacp_mpc pos=oacp_mpc model=di seed=42 idx=1..100 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/100] idx=  6 -> infeasible (raw=infeasible, compute_ms=1717.7469947090933, intv=0.08314857344615822)
+[002/100] idx= 12 -> infeasible (raw=infeasible, compute_ms=1639.5330546103366, intv=0.03325189655084754)

@@ -1,0 +1,384 @@
+{
+  "ret": -1,
+  "terminal_event": "success",
+  "steps": 2687,
+  "sim_time": 134.35,
+  "final_state": [
+    27.953383664203372,
+    27.709178477267425,
+    1.4118585869184166
+  ],
+  "final_progress": 88.4787310989679,
+  "final_goal_dist": 0.29453393836296266,
+  "scenario_diag": {
+    "crowd_mode": "forced_emergence",
+    "rand_obs_setting": "v2",
+    "n_forced_events": 6,
+    "n_forced_hidden_total": 6,
+    "n_forced_extra_hidden": 0,
+    "n_background_rand": 44,
+    "n_forced_initially_occluded": 6,
+    "n_forced_revealed": 0,
+    "n_forced_corridor_conflict": 1,
+    "min_reveal_distance_to_ego_path": 0.267589136772445,
+    "min_reveal_ttc_to_nominal_ego": 4.011175866302596,
+    "reveal_steps": [],
+    "forced_event_meta": [
+      {
+        "event_id": 0,
+        "segment_index": 0,
+        "occluder_index": 0,
+        "hidden_index": 1,
+        "hidden_indices": [
+          1
+        ],
+        "occluder_center": [
+          1.0,
+          10.043981293613053
+        ],
+        "occluder_radius": 0.8,
+        "occluder_velocity": [
+          -0.2441732078970267,
+          -0.0342496880144925
+        ],
+        "occluder_speed": 0.24656357513593669,
+        "occluder_roam_x_bounds": [
+          0.5,
+          1.5034165847015397
+        ],
+        "occluder_roam_y_bounds": [
+          9.793981293613053,
+          10.643981293613052
+        ],
+        "event_xy": [
+          2.0,
+          10.043981293613053
+        ],
+        "observer_xy": [
+          2.0,
+          8.043981293613053
+        ],
+        "hidden_initial_position": [
+          0.8,
+          11.20294497140985
+        ],
+        "hidden_velocity": [
+          0.5102930674269586,
+          -0.7267714232794609
+        ],
+        "hidden_speed": 0.8880291190944516,
+        "initially_occluded_geom": true,
+        "corridor_conflict": true,
+        "predicted_reveal_step": 16,
+        "predicted_reveal_time_s": 1.6,
+        "predicted_reveal_distance_to_path": 0.3835310921168662,
+        "predicted_reveal_ttc_nominal_s": 4.011175866302596,
+        "min_predicted_distance_to_path": 0.024703361824700565,
+        "min_predicted_ttc_nominal_s": 1.054734225673537,
+        "extra_hidden_count": 0,
+        "initially_occluded_actual": null,
+        "revealed_actual": false,
+        "reveal_step_actual": null,
+        "reveal_time_actual_s": null,
+        "reveal_distance_to_path_actual": null,
+        "reveal_ttc_nominal_actual_s": null
+      },
+      {
+        "event_id": 1,
+        "segment_index": 0,
+        "occluder_index": 2,
+        "hidden_index": 3,
+        "hidden_indices": [
+          3
+        ],
+        "occluder_center": [
+          3.15,
+          18.91041251767056
+        ],
+        "occluder_radius": 0.8,
+        "occluder_velocity": [
+          0.26411451090004456,
+          -0.04036499889161863
+        ],
+        "occluder_speed": 0.2671812268919546,
+        "occluder_roam_x_bounds": [
+          2.3766700865777297,
+          6.748370443555313
+        ],
+        "occluder_roam_y_bounds": [
+          18.544753145089544,
+          19.722988901183932
+        ],
+        "event_xy": [
+          2.0,
+          18.91041251767056
+        ],
+        "observer_xy": [
+          2.0,
+          16.910412517670565
+        ],
+        "hidden_initial_position": [
+          3.71529621376379,
+          20.130751936865998
+        ],
+        "hidden_velocity": [
+          -0.4136305934260986,
+          -0.3098394852138088
+        ],
+        "hidden_speed": 0.5168082569150618,
+        "initially_occluded_geom": true,
+        "corridor_conflict": false,
+        "predicted_reveal_step": 35,
+        "predicted_reveal_time_s": 3.5,
+        "predicted_reveal_distance_to_path": 0.267589136772445,
+        "predicted_reveal_ttc_nominal_s": 10.820729982084874,
+        "min_predicted_distance_to_path": 0.019410780716786036,
+        "min_predicted_ttc_nominal_s": 4.40937490064935,
+        "extra_hidden_count": 0,
+        "initially_occluded_actual": null,
+        "revealed_actual": false,
+        "reveal_step_actual": null,
+        "reveal_time_actual_s": null,
+        "reveal_distance_to_path_actual": null,
+        "reveal_ttc_nominal_actual_s": null
+      },
+      {
+        "event_id": 2,
+        "segment_index": 1,
+        "occluder_index": 4,
+        "hidden_index": 5,
+        "hidden_indices": [
+          5
+        ],
+        "occluder_center": [
+          11.045167505115447,
+          17.328486898155493
+        ],
+        "occluder_radius": 0.8,
+        "occluder_velocity": [
+          -0.20087717564990498,
+          -0.20351926819871657
+        ],
+        "occluder_speed": 0.2859575706730352,
+        "occluder_roam_x_bounds": [
+          8.435247000562555,
+          11.608182074293058
+        ],
+        "occluder_roam_y_bounds": [
+          14.7185663936026,
+          17.891501467333104
+        ],
+        "event_xy": [
+          11.858340303479977,
+          18.141659696520023
+        ],
+        "observer_xy": [
+          10.444126741106885,
+          19.555873258893115
+        ],
+        "hidden_initial_position": [
+          11.431828189522946,
+          16.05289344656754
+        ],
+        "hidden_velocity": [
+          0.11426833568178367,
+          0.8476396119829596
+        ],
+        "hidden_speed": 0.8553070585129687,
+        "initially_occluded_geom": true,
+        "corridor_conflict": false,
+        "predicted_reveal_step": 0,
+        "predicted_reveal_time_s": 0.0,
+        "predicted_reveal_distance_to_path": 1.7785703876922196,
+        "predicted_reveal_ttc_nominal_s": 10.224467277057748,
+        "min_predicted_distance_to_path": 0.010124142747687383,
+        "min_predicted_ttc_nominal_s": 10.224467277057748,
+        "extra_hidden_count": 0,
+        "initially_occluded_actual": null,
+        "revealed_actual": false,
+        "reveal_step_actual": null,
+        "reveal_time_actual_s": null,
+        "reveal_distance_to_path_actual": null,
+        "reveal_ttc_nominal_actual_s": null
+      },
+      {
+        "event_id": 3,
+        "segment_index": 1,
+        "occluder_index": 6,
+        "hidden_index": 7,
+        "hidden_indices": [
+          7
+        ],
+        "occluder_center": [
+          19.63162966057502,
+          11.99471593615404
+        ],
+        "occluder_radius": 0.8,
+        "occluder_velocity": [
+          0.17355424204837228,
+          0.15186255834778195
+        ],
+        "occluder_speed": 0.23061507227611658,
+        "occluder_roam_x_bounds": [
+          18.953633939557047,
+          23.37176391070388
+        ],
+        "occluder_roam_y_bounds": [
+          11.316720215136069,
+          15.734850186282902
+        ],
+        "event_xy": [
+          18.81845686221049,
+          11.181543137789511
+        ],
+        "observer_xy": [
+          17.404243299837397,
+          12.595756700162603
+        ],
+        "hidden_initial_position": [
+          20.82434049874475,
+          11.55793899059372
+        ],
+        "hidden_velocity": [
+          -0.9042809800067212,
+          0.03797446617631623
+        ],
+        "hidden_speed": 0.905077980553771,
+        "initially_occluded_geom": true,
+        "corridor_conflict": false,
+        "predicted_reveal_step": 0,
+        "predicted_reveal_time_s": 0.0,
+        "predicted_reveal_distance_to_path": 1.6845259815928582,
+        "predicted_reveal_ttc_nominal_s": 12.3817473983855,
+        "min_predicted_distance_to_path": 0.030583713200853416,
+        "min_predicted_ttc_nominal_s": 4.682302580040143,
+        "extra_hidden_count": 0,
+        "initially_occluded_actual": null,
+        "revealed_actual": false,
+        "reveal_step_actual": null,
+        "reveal_time_actual_s": null,
+        "reveal_distance_to_path_actual": null,
+        "reveal_ttc_nominal_actual_s": null
+      },
+      {
+        "event_id": 4,
+        "segment_index": 2,
+        "occluder_index": 8,
+        "hidden_index": 9,
+        "hidden_indices": [
+          9
+        ],
+        "occluder_center": [
+          26.85,
+          9.64771999897744
+        ],
+        "occluder_radius": 0.8,
+        "occluder_velocity": [
+          -0.22140965785478872,
+          0.028662619790372934
+        ],
+        "occluder_speed": 0.2232572112264732,
+        "occluder_roam_x_bounds": [
+          23.644219485872863,
+          27.277041229141414
+        ],
+        "occluder_roam_y_bounds": [
+          9.197120806408682,
+          10.649051538019124
+        ],
+        "event_xy": [
+          28.0,
+          9.64771999897744
+        ],
+        "observer_xy": [
+          28.0,
+          7.647719998977436
+        ],
+        "hidden_initial_position": [
+          26.044180185285203,
+          10.851904848377213
+        ],
+        "hidden_velocity": [
+          0.2697987458175131,
+          -0.20297121371244922
+        ],
+        "hidden_speed": 0.33762209175438707,
+        "initially_occluded_geom": true,
+        "corridor_conflict": false,
+        "predicted_reveal_step": 0,
+        "predicted_reveal_time_s": 0.0,
+        "predicted_reveal_distance_to_path": 1.955819814714797,
+        "predicted_reveal_ttc_nominal_s": 22.522279432594996,
+        "min_predicted_distance_to_path": 0.013268844828701276,
+        "min_predicted_ttc_nominal_s": 22.431183284994688,
+        "extra_hidden_count": 0,
+        "initially_occluded_actual": null,
+        "revealed_actual": false,
+        "reveal_step_actual": null,
+        "reveal_time_actual_s": null,
+        "reveal_distance_to_path_actual": null,
+        "reveal_ttc_nominal_actual_s": null
+      },
+      {
+        "event_id": 5,
+        "segment_index": 2,
+        "occluder_index": 10,
+        "hidden_index": 11,
+        "hidden_indices": [
+          11
+        ],
+        "occluder_center": [
+          29.0,
+          17.77741814887088
+        ],
+        "occluder_radius": 0.8,
+        "occluder_velocity": [
+          0.2778196206685837,
+          0.08780121545080523
+        ],
+        "occluder_speed": 0.2913636817845945,
+        "occluder_roam_x_bounds": [
+          28.59365781831005,
+          29.5
+        ],
+        "occluder_roam_y_bounds": [
+          17.367285475999775,
+          18.68882408858444
+        ],
+        "event_xy": [
+          28.0,
+          17.77741814887088
+        ],
+        "observer_xy": [
+          28.0,
+          15.77741814887088
+        ],
+        "hidden_initial_position": [
+          29.2,
+          18.995866540898177
+        ],
+        "hidden_velocity": [
+          -0.17663322417298769,
+          -0.3088977769058347
+        ],
+        "hidden_speed": 0.35583301204232265,
+        "initially_occluded_geom": true,
+        "corridor_conflict": false,
+        "predicted_reveal_step": 0,
+        "predicted_reveal_time_s": 0.0,
+        "predicted_reveal_distance_to_path": 1.1999999999999993,
+        "predicted_reveal_ttc_nominal_s": 27.74911685115311,
+        "min_predicted_distance_to_path": 0.0011059243763185123,
+        "min_predicted_ttc_nominal_s": 21.93246325065372,
+        "extra_hidden_count": 0,
+        "initially_occluded_actual": null,
+        "revealed_actual": false,
+        "reveal_step_actual": null,
+        "reveal_time_actual_s": null,
+        "reveal_distance_to_path_actual": null,
+        "reveal_ttc_nominal_actual_s": null
+      }
+    ]
+  },
+  "csv": "debug_logs/uni_idx2_best_fwd_top2_k20_diagnostic_20260618/idx2_step_log.csv"
+}

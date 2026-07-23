@@ -1,0 +1,121 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=di seed=42 idx=1..20 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[001/020] idx=  4 -> infeasible (raw=infeasible, compute_ms=16.72533810293923, intv=0.5211142609507036)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[002/020] idx=  3 -> infeasible (raw=infeasible, compute_ms=18.685340602719993, intv=0.5783502650193202)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[003/020] idx=  5 -> infeasible (raw=infeasible, compute_ms=19.025398084192606, intv=0.6152236419892793)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[004/020] idx=  2 -> infeasible (raw=infeasible, compute_ms=20.04780274203745, intv=0.11018250087899596)
+[005/020] idx=  8 -> infeasible (raw=infeasible, compute_ms=17.444041059834177, intv=0.6231956104648081)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[006/020] idx=  1 -> infeasible (raw=infeasible, compute_ms=19.426849853682697, intv=0.8529391493857674)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[007/020] idx= 10 -> infeasible (raw=infeasible, compute_ms=20.298301639501005, intv=0.40293259942755266)
+[008/020] idx= 12 -> infeasible (raw=infeasible, compute_ms=18.928150080942682, intv=0.37823931831592905)
+[009/020] idx= 14 -> infeasible (raw=infeasible, compute_ms=21.02955823159713, intv=0.3971294082687493)
+[010/020] idx= 11 -> infeasible (raw=infeasible, compute_ms=20.66108127296871, intv=0.4995229826451346)
+[011/020] idx= 13 -> infeasible (raw=infeasible, compute_ms=18.36369913253815, intv=0.2649902706575598)
+[012/020] idx=  9 -> infeasible (raw=infeasible, compute_ms=17.236745502270736, intv=0.2952074459457917)
+[013/020] idx=  6 -> success    (raw=success, compute_ms=16.903666092759963, intv=0.30056665166773305)
+[014/020] idx=  7 -> success    (raw=success, compute_ms=17.068170908623497, intv=0.2943864021989312)
+[015/020] idx= 16 -> infeasible (raw=infeasible, compute_ms=18.075778733097955, intv=0.24016816018539636)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[016/020] idx= 19 -> infeasible (raw=infeasible, compute_ms=18.687739823801902, intv=0.4134405386064587)
+[017/020] idx= 18 -> infeasible (raw=infeasible, compute_ms=19.355008713086754, intv=0.35320194289438933)
+[018/020] idx= 17 -> infeasible (raw=infeasible, compute_ms=17.48879180154183, intv=0.32331747694055585)
+[019/020] idx= 15 -> success    (raw=success, compute_ms=17.338139155108188, intv=0.32050458996996434)
+[020/020] idx= 20 -> success    (raw=success, compute_ms=15.683019586673163, intv=0.30914721295571845)
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+
+=== Crowd Trial Summary (3-way) ===
+success=4 | collision=0 | infeasible=16 | total=20
+success idx   : [6, 7, 15, 20]
+collision idx : []
+infeasible idx: [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19]
+avg controller compute time over idx [ms]: 18.42363105599589
+avg control intervention over idx: 0.40468802146843696
+avg terminal slack L1 over idx: 0.0
+avg terminal slack max over idx: 0.0
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 59.817499999999995
+avg wall time per idx [s]: 34.464211100005194
+avg forced initially occluded over idx: 5.9
+avg forced revealed over idx: 3.8
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/ocbf_softmin_margin_screen_20260512_143442/soft_g10_b10_n0p05/crowd_trials_occlusion_cbf_42_1_20_20260512_145544.csv
+saved summary : debug_logs/ocbf_softmin_margin_screen_20260512_143442/soft_g10_b10_n0p05/crowd_trials_occlusion_cbf_42_1_20_20260512_145544.json
+

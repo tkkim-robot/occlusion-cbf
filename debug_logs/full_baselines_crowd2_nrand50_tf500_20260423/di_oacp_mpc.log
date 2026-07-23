@@ -1,0 +1,5 @@
+[CMD] /Users/parkcart/workspace/occlusion-cbf/.venv/bin/python3 tools/benchmark_crowd_trials.py --scenario crowd2 --baseline oacp_mpc --model di --seed 42 --idx-start 1 --idx-end 100 --n-rand 50 --tf 500.0 --crowd-mode forced_emergence --forced-events 6 --forced-hidden-speed 1.0 --workers 10
+[RUN] scenario=crowd2 label=oacp_mpc baseline=oacp_mpc pos=oacp_mpc model=di seed=42 idx=1..100 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+/opt/homebrew/Caskroom/miniforge/base/envs/myenv/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 5 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

@@ -1,0 +1,587 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=uni seed=42 idx=1..100 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/100] idx=  5 -> collision  (raw=collision, compute_ms=13.592187583876344, intv=0.15614974171553547)
+[002/100] idx= 12 -> collision  (raw=collision, compute_ms=14.646986662905585, intv=0.8932259759608044)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+Restricted license - for non-production use only - expires 2027-11-29
+Restricted license - for non-production use only - expires 2027-11-29
+[003/100] idx=  8 -> collision  (raw=collision, compute_ms=16.42102218825186, intv=0.5738735620453572)
+[004/100] idx= 13 -> collision  (raw=collision, compute_ms=16.217748251640135, intv=0.2776631148909768)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[005/100] idx= 11 -> collision  (raw=collision, compute_ms=17.366520667669747, intv=0.9552598626465568)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[006/100] idx=  4 -> collision  (raw=collision, compute_ms=14.384085899948067, intv=0.8303603015546824)
+[007/100] idx=  1 -> collision  (raw=collision, compute_ms=17.268510397084416, intv=0.8609171366966043)
+[008/100] idx= 14 -> collision  (raw=collision, compute_ms=20.58473184135639, intv=1.1671965672442823)
+Restricted license - for non-production use only - expires 2027-11-29
+[009/100] idx=  3 -> infeasible (raw=infeasible, compute_ms=17.432298573754345, intv=1.196879872202578)
+Collision with known obstacle detected! Obs: [ 2.3926367   6.57852003  0.32995676 -0.4063861  -0.69142931 -2.
+ 32.          1.        ], Robot: [1.81875258 6.51566966] 0.25, Distance: 0.5773154666469114, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+Collision with known obstacle detected! Obs: [ 2.424152    7.20278816  0.35729199 -0.44983207 -0.78564548 -2.
+ 32.          1.        ], Robot: [2.09887015 6.7326403 ] 0.25, Distance: 0.5717055955661015, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+[010/100] idx= 15 -> infeasible (raw=infeasible, compute_ms=18.287006435263105, intv=1.4329948611307668)
+[011/100] idx= 20 -> collision  (raw=collision, compute_ms=11.501703715314054, intv=1.8238795213223693)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[012/100] idx= 21 -> infeasible (raw=infeasible, compute_ms=18.321074830400274, intv=0.3496791103162342)
+[013/100] idx=  6 -> infeasible (raw=infeasible, compute_ms=27.107951843725022, intv=0.8049122628922634)
+Restricted license - for non-production use only - expires 2027-11-29
+Collision with known obstacle detected! Obs: [ 2.06793394  5.70587841  0.37063721 -0.62500914 -0.68991733 -2.
+ 32.          1.        ], Robot: [2.04306997 5.09888001] 0.25, Distance: 0.6075074206683906, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.04877704  6.42804506  0.39548836 -0.68999739 -0.22485241 -2.
+ 32.          1.        ], Robot: [2.10210679 5.79891547] 0.25, Distance: 0.6313858578911633, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[014/100] idx= 23 -> collision  (raw=collision, compute_ms=15.523684177331734, intv=0.6057375033042735)
+Collision with known obstacle detected! Obs: [ 1.66057719  8.99906798  0.31332698  0.55138962 -0.5048381  -2.
+ 32.          1.        ], Robot: [1.86064065 8.48567268] 0.25, Distance: 0.5509992055657428, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[015/100] idx= 24 -> collision  (raw=collision, compute_ms=15.57564316802503, intv=1.2339301015240196)
+[016/100] idx=  9 -> infeasible (raw=infeasible, compute_ms=24.737230765408484, intv=1.092376761769816)
+[017/100] idx= 17 -> infeasible (raw=infeasible, compute_ms=26.790165339101968, intv=0.6867281089964731)
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.1763204   4.95759832  0.35038614 -0.87279472 -0.03898505 -2.
+ 32.          1.        ], Robot: [1.89594803 4.4348868 ] 0.25, Distance: 0.5931576581113367, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.9855821   6.18001539  0.37302402 -0.85598983  0.21433669 -2.
+ 32.          1.        ], Robot: [1.39320824 6.16290294] 0.25, Distance: 0.592620977379555, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.18338301  2.41736772  0.3961936  -0.50178756 -0.54937563 -2.
+ 32.          1.        ], Robot: [1.53919942 2.44376108] 0.25, Distance: 0.6447240541178142, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.12575094  4.9140796   0.32229848 -0.64997372 -0.20124732 -2.
+ 32.          1.        ], Robot: [1.96525825 4.38331442] 0.25, Distance: 0.5544994040724377, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[018/100] idx= 26 -> collision  (raw=collision, compute_ms=15.724072698503733, intv=1.1574484067783861)
+Collision with known obstacle detected! Obs: [ 1.33201526  9.40026214  0.37512729  0.64563895 -0.17472816 -2.
+ 32.          1.        ], Robot: [1.88304414 9.14430203] 0.25, Distance: 0.6075758458307169, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[019/100] idx= 29 -> collision  (raw=collision, compute_ms=17.167601321654562, intv=0.36109308902104154)
+[020/100] idx= 19 -> collision  (raw=collision, compute_ms=19.498478882259835, intv=1.3815853128850535)
+[021/100] idx= 30 -> collision  (raw=collision, compute_ms=18.35985798791143, intv=0.7013227821625487)
+[022/100] idx=  7 -> infeasible (raw=infeasible, compute_ms=23.66179373155391, intv=1.2643002047478669)
+[023/100] idx= 22 -> collision  (raw=collision, compute_ms=22.09279270526428, intv=0.8699807282918253)
+[024/100] idx= 28 -> infeasible (raw=infeasible, compute_ms=21.28533387089494, intv=0.9719414980805658)
+[025/100] idx= 35 -> collision  (raw=collision, compute_ms=17.509346753128884, intv=1.1960680121469753)
+[026/100] idx= 16 -> collision  (raw=collision, compute_ms=23.02128247587165, intv=1.4622275606128647)
+[027/100] idx= 38 -> collision  (raw=collision, compute_ms=14.724888539473925, intv=1.3049376835258064)
+[028/100] idx= 18 -> collision  (raw=collision, compute_ms=25.52115466140872, intv=1.4321163666621735)
+[029/100] idx= 32 -> collision  (raw=collision, compute_ms=23.040517568862175, intv=0.896225381529155)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[030/100] idx= 25 -> collision  (raw=collision, compute_ms=20.2916430586571, intv=1.071498696892034)
+[031/100] idx= 31 -> collision  (raw=collision, compute_ms=17.623792166191645, intv=1.271332551013368)
+[032/100] idx= 33 -> infeasible (raw=infeasible, compute_ms=21.155831789901335, intv=1.0440480181261833)
+[033/100] idx= 10 -> collision  (raw=collision, compute_ms=26.660084017845534, intv=1.5729824646009893)
+[034/100] idx=  2 -> collision  (raw=collision, compute_ms=24.65593191332066, intv=1.2162984259383711)
+[035/100] idx= 34 -> infeasible (raw=infeasible, compute_ms=19.90643472290262, intv=1.0014501870363848)
+[036/100] idx= 42 -> collision  (raw=collision, compute_ms=15.052425376779865, intv=1.0162678360434232)
+[037/100] idx= 40 -> collision  (raw=collision, compute_ms=16.711296789192904, intv=0.8654082997765953)
+[038/100] idx= 37 -> collision  (raw=collision, compute_ms=18.008769141637128, intv=0.9535112755681083)
+[039/100] idx= 36 -> collision  (raw=collision, compute_ms=20.66553024307767, intv=1.2439681551143627)
+[040/100] idx= 47 -> collision  (raw=collision, compute_ms=17.143386049428955, intv=1.2983108454757186)
+[041/100] idx= 39 -> collision  (raw=collision, compute_ms=18.792339076753706, intv=0.8421730999138648)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[042/100] idx= 44 -> infeasible (raw=infeasible, compute_ms=17.80125018591166, intv=0.7491092221519899)
+[043/100] idx= 43 -> collision  (raw=collision, compute_ms=15.315455559005759, intv=0.9810410629460546)
+[044/100] idx= 53 -> collision  (raw=collision, compute_ms=17.958150887861848, intv=1.0983724852540326)
+[045/100] idx= 48 -> collision  (raw=collision, compute_ms=16.0524566247324, intv=1.1089378633577707)
+[046/100] idx= 45 -> collision  (raw=collision, compute_ms=17.04942002756922, intv=1.1568560275851576)
+[047/100] idx= 41 -> infeasible (raw=infeasible, compute_ms=22.55933283085392, intv=1.088565964585354)
+[048/100] idx= 55 -> collision  (raw=collision, compute_ms=16.085397430847827, intv=0.9868597784106307)
+[049/100] idx= 54 -> collision  (raw=collision, compute_ms=14.589095545548565, intv=2.1685135985160087)
+[050/100] idx= 52 -> collision  (raw=collision, compute_ms=17.93572183987496, intv=0.9421047648411582)
+[051/100] idx= 51 -> collision  (raw=collision, compute_ms=15.29951145289937, intv=1.1012864080866964)
+[052/100] idx= 61 -> collision  (raw=collision, compute_ms=16.518855389274126, intv=0.6244607550388155)
+[053/100] idx= 50 -> infeasible (raw=infeasible, compute_ms=24.265389107388806, intv=1.092414956348291)
+[054/100] idx= 49 -> collision  (raw=collision, compute_ms=30.341637396848533, intv=1.0108454059942429)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[055/100] idx= 27 -> collision  (raw=collision, compute_ms=26.37656807617138, intv=1.361430500331428)
+[056/100] idx= 46 -> collision  (raw=collision, compute_ms=18.964713875630817, intv=1.3068162220711024)
+[057/100] idx= 64 -> collision  (raw=collision, compute_ms=18.492530186420247, intv=0.1878075620262435)
+[058/100] idx= 57 -> infeasible (raw=infeasible, compute_ms=23.43414118817535, intv=0.8307772544695371)
+[059/100] idx= 67 -> collision  (raw=collision, compute_ms=13.03510861362156, intv=1.2449289436058473)
+[060/100] idx= 63 -> collision  (raw=collision, compute_ms=15.868488240784128, intv=1.2240366889420482)
+[061/100] idx= 59 -> infeasible (raw=infeasible, compute_ms=19.613602856997453, intv=0.8991656290440802)
+[062/100] idx= 69 -> collision  (raw=collision, compute_ms=17.861336548812687, intv=0.09959952442680615)
+[063/100] idx= 65 -> collision  (raw=collision, compute_ms=16.817921486448583, intv=0.6871309476860881)
+[064/100] idx= 66 -> collision  (raw=collision, compute_ms=16.896462434079446, intv=1.1125521197519384)
+[065/100] idx= 62 -> collision  (raw=collision, compute_ms=19.091961345671173, intv=1.1688882839892578)
+[066/100] idx= 71 -> collision  (raw=collision, compute_ms=24.482827020907088, intv=0.7257820628083715)
+[067/100] idx= 56 -> collision  (raw=collision, compute_ms=18.712994809741847, intv=0.8069873250499451)
+[068/100] idx= 75 -> collision  (raw=collision, compute_ms=21.305584866637126, intv=0.9006338998710958)
+[069/100] idx= 77 -> collision  (raw=collision, compute_ms=16.318241737150988, intv=0.9215676044763201)
+[070/100] idx= 60 -> collision  (raw=collision, compute_ms=23.79776741319699, intv=1.374416832148574)
+[071/100] idx= 80 -> infeasible (raw=infeasible, compute_ms=24.77374754027661, intv=0.5340870834090765)
+[072/100] idx= 74 -> collision  (raw=collision, compute_ms=27.45924961711258, intv=1.581687293489863)
+[073/100] idx= 79 -> collision  (raw=collision, compute_ms=15.846778925355357, intv=0.8519818591672782)
+[074/100] idx= 68 -> collision  (raw=collision, compute_ms=18.00002518077072, intv=1.2077598382678418)
+[075/100] idx= 73 -> collision  (raw=collision, compute_ms=24.874410177411917, intv=1.2303940533964264)
+[076/100] idx= 82 -> collision  (raw=collision, compute_ms=16.293194423067487, intv=0.3114533887618841)
+[077/100] idx= 78 -> infeasible (raw=infeasible, compute_ms=18.95993048320829, intv=0.936905276669196)
+[078/100] idx= 86 -> collision  (raw=collision, compute_ms=14.36376172553181, intv=0.5579970205521242)
+[079/100] idx= 72 -> collision  (raw=collision, compute_ms=18.679116047522832, intv=1.1750525418522675)
+[080/100] idx= 58 -> collision  (raw=collision, compute_ms=23.07525674744278, intv=1.0363413930393852)
+[081/100] idx= 81 -> collision  (raw=collision, compute_ms=17.62651741699331, intv=0.6171579816609781)
+[082/100] idx= 85 -> infeasible (raw=infeasible, compute_ms=25.079674002696372, intv=0.6464658616732286)
+[083/100] idx= 84 -> collision  (raw=collision, compute_ms=16.19931794885619, intv=1.1419905102520893)
+[084/100] idx= 83 -> collision  (raw=collision, compute_ms=18.692964829692684, intv=0.7657090650683641)
+[085/100] idx= 90 -> collision  (raw=collision, compute_ms=14.902993647006546, intv=0.55006478868223)
+[086/100] idx= 88 -> collision  (raw=collision, compute_ms=17.528253217636973, intv=0.5260193321950665)
+[087/100] idx= 92 -> collision  (raw=collision, compute_ms=14.003101953819982, intv=0.44384486952382896)
+[088/100] idx= 96 -> collision  (raw=collision, compute_ms=11.69128587611744, intv=0.9993192385460498)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[089/100] idx= 91 -> collision  (raw=collision, compute_ms=15.582197106529126, intv=1.0399414702948835)
+[090/100] idx= 89 -> collision  (raw=collision, compute_ms=18.41972931753844, intv=1.0728328973635752)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[091/100] idx= 94 -> collision  (raw=collision, compute_ms=20.900860596086506, intv=1.2828175611660344)
+[092/100] idx= 76 -> collision  (raw=collision, compute_ms=16.302338159575413, intv=1.5231193041564108)
+[093/100] idx= 97 -> infeasible (raw=infeasible, compute_ms=17.315340034261062, intv=1.5720085576883007)
+[094/100] idx= 93 -> infeasible (raw=infeasible, compute_ms=23.056762529969483, intv=1.346479214642512)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[095/100] idx= 99 -> collision  (raw=collision, compute_ms=19.08269961227608, intv=1.1097546143354633)
+[096/100] idx=100 -> infeasible (raw=infeasible, compute_ms=18.466396717121825, intv=1.1814594766868092)
+[097/100] idx= 95 -> collision  (raw=collision, compute_ms=21.2417640179311, intv=1.3247823173886137)
+[098/100] idx= 98 -> infeasible (raw=infeasible, compute_ms=24.27915376267194, intv=1.4859390508183166)
+[099/100] idx= 87 -> infeasible (raw=infeasible, compute_ms=19.310782028232865, intv=1.3828976944349876)
+[100/100] idx= 70 -> collision  (raw=collision, compute_ms=20.64466220407719, intv=1.3748694890711404)
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 1.67370289 10.18743503  0.34807824 -0.68473516 -0.69873354 -2.
+ 32.          1.        ], Robot: [1.47345766 9.65435539] 0.25, Distance: 0.5694489080951142, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5        10.67580469  0.8         0.0628534  -0.18286026 10.01770977
+ 10.86770977  1.        ], Robot: [1.12739116 9.8411036 ] 0.25, Distance: 1.044196136299676, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.87672662  8.02026394  0.34348679  0.63419041 -0.51672982 -2.
+ 32.          1.        ], Robot: [1.99029534 7.43888115] 0.25, Distance: 0.5923713337477964, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.16335496 10.59912103  0.31399278  0.78046457 -0.36167196 -2.
+ 32.          1.        ], Robot: [ 1.60728803 10.27074159] 0.25, Distance: 0.5521862217559932, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.27578368  8.92106805  0.38290487  0.31010501 -0.40307405 -2.
+ 32.          1.        ], Robot: [1.32582521 8.30850083] 0.25, Distance: 0.6146078074730094, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 2.24791589  3.27974378  0.38130666 -0.8621671  -0.13094404 -2.
+ 32.          1.        ], Robot: [1.98240903 2.72391897] 0.25, Distance: 0.6159830409626634, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.50823634 16.21894161  0.31814179  0.12568998 -0.76447039 -2.
+ 32.          1.        ], Robot: [ 2.57446128 15.67776379] 0.25, Distance: 0.5452147933753771, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.14246472e+00  3.43521021e+00  3.38024480e-01 -6.79380274e-01
+ -8.37509469e-03 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [1.96866255 2.88324553] 0.25, Distance: 0.578681432334168, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.96853577  9.04059598  0.36634048 -0.74799274 -0.37909102 -2.
+ 32.          1.        ], Robot: [1.85527496 8.44668474] 0.25, Distance: 0.6046143909219133, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 0.5        10.39659495  0.8         0.08163773 -0.23522298  9.402224
+ 10.79663857  1.        ], Robot: [1.45465858 9.96001564] 0.25, Distance: 1.0497497350074225, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5        11.53426542  0.8         0.09974341 -0.29130218 11.37156648
+ 12.87271193  1.        ], Robot: [ 0.23490881 10.52758745] 0.25, Distance: 1.0409965788060378, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.25192152  3.55767457  0.32915734 -0.85333984 -0.46052502 -2.
+ 32.          1.        ], Robot: [1.70839689 3.45839202] 0.25, Distance: 0.5525179116307525, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.94050934  9.60194629  0.36568603  0.83647924 -0.24491999 -2.
+ 32.          1.        ], Robot: [2.53314404 9.62793187] 0.25, Distance: 0.5932041317673687, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.25438816  4.89961156  0.30825201 -0.80611751  0.24506041 -2.
+ 32.          1.        ], Robot: [1.84452056 4.53533725] 0.25, Distance: 0.5483495408132055, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.63985653 23.66929218  0.3801105  -0.56425028 -0.47798862 -2.
+ 32.          1.        ], Robot: [ 2.17071384 23.26436214] 0.25, Distance: 0.6197283308945063, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.53667972  7.372711    0.3070767  -0.58120277 -0.39147521 -2.
+ 32.          1.        ], Robot: [2.15166698 6.98515691] 0.25, Distance: 0.546290203517012, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 1.66290818  8.71466194  0.33522974  0.65332214 -0.47003859 -2.
+ 32.          1.        ], Robot: [2.02241633 8.27657918] 0.25, Distance: 0.5667121042695946, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5         9.94490528  0.8         0.06250723 -0.18040065  9.67583847
+ 11.10866136  1.        ], Robot: [0.91284079 8.98608193] 0.25, Distance: 1.043925149863321, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.39934954  7.39986383  0.35532548 -0.26355309 -0.56953721 -2.
+ 32.          1.        ], Robot: [1.89607458 7.06942121] 0.25, Distance: 0.6020614698776015, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 3.46784508 14.05871812  0.31228461 -0.44350229 -0.89099505 -2.
+ 32.          1.        ], Robot: [ 2.99360499 13.76110174] 0.25, Distance: 0.5598921083470397, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.42005859  7.71171545  0.34996895 -0.74953428  0.10357255 -2.
+ 32.          1.        ], Robot: [1.83384024 7.71016822] 0.25, Distance: 0.5862203933272989, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [-0.37598335  9.21179467  0.35251378 -0.32386864 -0.37131946 -2.
+ 32.          1.        ], Robot: [-0.47408607  8.63079756] 0.25, Distance: 0.5892213417680161, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 3.3884126  16.14744654  0.32978949 -0.11960701  0.80702582 -2.
+ 32.          1.        ], Robot: [ 3.47481518 16.71884876] 0.25, Distance: 0.5778978303208396, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.08929319 11.03836655  0.31848506 -0.57427479 -0.81054256 -2.
+ 32.          1.        ], Robot: [ 2.29148287 10.51335203] 0.25, Distance: 0.5626019107957316, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5        12.19814173  0.8         0.09757785 -0.28632804 11.56259671
+ 12.41259671  1.        ], Robot: [ 1.45020695 11.75423474] 0.25, Distance: 1.0487834203175035, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.40344879  6.07070956  0.35737039 -0.65579651 -0.4111066  -2.
+ 32.          1.        ], Robot: [1.98703661 5.64385979] 0.25, Distance: 0.5963219166572067, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.26107122  7.77692621  0.33777034 -0.94336224 -0.06540399 -2.
+ 32.          1.        ], Robot: [2.07005131 7.22470338] 0.25, Distance: 0.5843275312148776, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 2.06115364  4.28382468  0.37638883 -0.78354379 -0.56201607 -2.
+ 32.          1.        ], Robot: [1.44968897 4.39558036] 0.25, Distance: 0.6215934179569644, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5        11.62089221  0.8         0.10495598 -0.30104624 10.97472027
+ 11.89208186  1.        ], Robot: [ 1.30784856 10.96359376] 0.25, Distance: 1.041470376531485, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.87619210e+00  1.08432090e+01  3.82160273e-01  7.95859504e-01
+ -8.11104918e-03 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [ 3.15871322 10.28773783] 0.25, Distance: 0.6231904653751815, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.38277681  4.41001276  0.39576062 -0.50403764 -0.30751515 -2.
+ 32.          1.        ], Robot: [1.99398354 3.91055271] 0.25, Distance: 0.632945930915645, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.15157265 12.04769663  0.30576566  0.41337748 -0.53877964 -2.
+ 32.          1.        ], Robot: [ 2.22567337 11.50351882] 0.25, Distance: 0.5491997909870077, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 0.5         9.93989427  0.8         0.06292049 -0.1815929   9.87076773
+ 10.72076773  1.        ], Robot: [1.44159975 9.49010771] 0.25, Distance: 1.0435123585083161, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 0.97234823  9.13866207  0.36433707  0.68349847  0.14558148 -2.
+ 32.          1.        ], Robot: [1.47023701 8.79761304] 0.25, Distance: 0.6034962157472066, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.56174311 19.4602694   0.37871555 -0.61417992  0.66302929 -2.
+ 32.          1.        ], Robot: [ 2.01461806 19.76478156] 0.25, Distance: 0.6261577084436755, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.42107057  7.0686665   0.3704452  -0.74483823 -0.45662542 -2.
+ 32.          1.        ], Robot: [1.97440537 6.66637002] 0.25, Distance: 0.6011258233596543, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.78882803 11.25556587  0.35998028  0.16780884 -0.41389013 -2.
+ 32.          1.        ], Robot: [ 1.88147652 10.67132805] 0.25, Distance: 0.5915383046084721, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 0.5        11.72078801  0.8         0.07913149 -0.22599935 10.84034969
+ 12.09417021  1.        ], Robot: [-0.24622258 10.98412866] 0.25, Distance: 1.0485776750581122, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.03160882  5.07316389  0.36877272 -0.5205099  -0.47287376 -2.
+ 32.          1.        ], Robot: [1.41680923 5.1261137 ] 0.25, Distance: 0.6170755379707556, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.24218847  8.66981437  0.38357899 -0.20966215 -0.37063189 -2.
+ 32.          1.        ], Robot: [1.88560799 8.14910795] 0.25, Distance: 0.6310980984715104, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.1189076  11.66526186  0.35059881  0.82523463 -0.05769691 -2.
+ 32.          1.        ], Robot: [ 2.01484857 11.08127062] 0.25, Distance: 0.5931897182177899, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.23383911  6.34564854  0.31241191 -0.49700036 -0.29199471 -2.
+ 32.          1.        ], Robot: [1.70561499 6.15320336] 0.25, Distance: 0.5621884700256646, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 2.24755018 10.08387957  0.39173717 -0.31060908 -0.1827851  -2.
+ 32.          1.        ], Robot: [1.98036166 9.50846944] 0.25, Distance: 0.63441825669866, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.27079012  4.90244643  0.35403984 -0.56701326 -0.0568478  -2.
+ 32.          1.        ], Robot: [1.93222754 4.41300814] 0.25, Distance: 0.5951255833833513, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.06168187  4.12215906  0.39905499 -0.94370037  0.09925136 -2.
+ 32.          1.        ], Robot: [1.8899435  3.50197287] 0.25, Distance: 0.6435254294489007, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.10675600e+00  7.18460558e+00  3.27513710e-01 -7.23251474e-01
+  4.84461917e-04 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [1.94479285 6.64576379] 0.25, Distance: 0.5626566747083254, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [-1.00827690e-02  3.70027952e+00  3.77904103e-01 -7.86306922e-01
+ -3.34264744e-01 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [-0.59791686  3.51532058] 0.25, Distance: 0.6162456708293436, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.11002162  8.83206256  0.34488561 -0.6257001   0.19170224 -2.
+ 32.          1.        ], Robot: [1.95962563 8.2737194 ] 0.25, Distance: 0.5782439262485073, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.7226536  11.10108361  0.30136711 -0.41602744 -0.57828487 -2.
+ 32.          1.        ], Robot: [ 1.88681133 10.59022485] 0.25, Distance: 0.5365859108236619, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.46875256  7.28691164  0.39995774 -0.68856539  0.61453861 -2.
+ 32.          1.        ], Robot: [1.9975176  7.70188793] 0.25, Distance: 0.6279074007186175, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [-2.87277487e-02  5.23028824e+00  3.95317058e-01  8.53757480e-01
+ -1.65467487e-01 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [0.51695786 5.54447194] 0.25, Distance: 0.6296698978129633, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 1.64771071e+00  5.84957133e+00  3.00382783e-01  7.39983687e-01
+  2.88798843e-02 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [1.73098708 5.30866484] 0.25, Distance: 0.5472794449509863, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 1.83060165 10.62471215  0.35713607  0.74075612 -0.507642   -2.
+ 32.          1.        ], Robot: [ 2.43754687 10.63544618] 0.25, Distance: 0.6070401287465096, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 2.27179313  8.04794401  0.3771468  -0.77142107 -0.24689318 -2.
+ 32.          1.        ], Robot: [2.0309277  7.47066887] 0.25, Distance: 0.6255099818786991, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 1.56746578  9.71542426  0.34753468 -0.45170563 -0.65187944 -2.
+ 32.          1.        ], Robot: [1.06886749 9.40322868] 0.25, Distance: 0.5882740241765825, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5        10.03153015  0.8         0.08621931 -0.25180645  9.31827932
+ 10.27049634  1.        ], Robot: [1.31679867 9.38108074] 0.25, Distance: 1.0441477446857867, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.40768236  5.98210167  0.35385171 -0.52356618 -0.38261608 -2.
+ 32.          1.        ], Robot: [1.80924409 5.91815497] 0.25, Distance: 0.6018451107458076, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 1.2633409  10.12672201  0.35188416  0.5486823   0.44239291 -2.
+ 32.          1.        ], Robot: [1.80523796 9.87440301] 0.25, Distance: 0.5977602298833133, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.57496296  7.52380032  0.35968955 -0.63335983  0.10750591 -2.
+ 32.          1.        ], Robot: [2.00161598 7.66366764] 0.25, Distance: 0.5901606764775355, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.45575151  9.60147356  0.3373056  -0.43413518 -0.14715525 -2.
+ 32.          1.        ], Robot: [2.03617572 9.21737074] 0.25, Distance: 0.5688398836118542, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 1.12959009e+00  7.11502613e+00  3.29973269e-01  7.26057083e-01
+ -1.22950843e-02 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [1.1152584  6.55463384] 0.25, Distance: 0.5605755179754851, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 2.60677694e+00  9.68659412e+00  3.32673334e-01 -2.14958928e-02
+ -4.74838688e-01 -2.00000000e+00  3.20000000e+01  1.00000000e+00], Robot: [2.75554615 9.12599187] 0.25, Distance: 0.5800061754219159, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 2.23789037  9.55835227  0.39908162 -0.2543063   0.28260477 -2.
+ 32.          1.        ], Robot: [1.97453116 8.96963605] 0.25, Distance: 0.6449378703681783, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 3.26822718 13.30118784  0.32018637 -0.59378177 -0.45501865 -2.
+ 32.          1.        ], Robot: [ 2.70142826 13.24088974] 0.25, Distance: 0.5699972536874344, True
+Collision detected !!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [ 2.37401274  4.58945151  0.38194748 -0.78915598 -0.47974859 -2.
+ 32.          1.        ], Robot: [1.75256488 4.48628376] 0.25, Distance: 0.6299531962312616, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.5        10.06884302  0.8         0.0688949  -0.19907036  9.00691315
+ 10.33757742  1.        ], Robot: [0.71782588 9.04631128] 0.25, Distance: 1.0454756139444268, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 2.57713862 23.9985551   0.34014234 -0.3838375  -0.1141164  -2.
+ 32.          1.        ], Robot: [ 2.72957865 23.43474485] 0.25, Distance: 0.5840547555813091, True
+Collision detected !!
+
+=== Crowd Trial Summary (3-way) ===
+success=0 | collision=77 | infeasible=23 | total=100
+success idx   : []
+collision idx : [1, 2, 4, 5, 8, 10, 11, 12, 13, 14, 16, 18, 19, 20, 22, 23, 24, 25, 26, 27, 29, 30, 31, 32, 35, 36, 37, 38, 39, 40, 42, 43, 45, 46, 47, 48, 49, 51, 52, 53, 54, 55, 56, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 79, 81, 82, 83, 84, 86, 88, 89, 90, 91, 92, 94, 95, 96, 99]
+infeasible idx: [3, 6, 7, 9, 15, 17, 21, 28, 33, 34, 41, 44, 50, 57, 59, 78, 80, 85, 87, 93, 97, 98, 100]
+avg controller compute time over idx [ms]: 19.09527328709388
+avg control intervention over idx: 1.0111128398622637
+avg terminal slack L1 over idx: 0.0
+avg terminal slack max over idx: 0.0
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 18.674500000000002
+avg wall time per idx [s]: 13.714517712086671
+avg forced initially occluded over idx: 5.86
+avg forced revealed over idx: 2.14
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : /Users/parkcart/workspace/occlusion-cbf/debug_logs/uni_ocbf_fwd_fullrev_T_topk_kappa_full100_20260623_023934/T1p25_fullrev_top2_k20/crowd_trials_occlusion_cbf_42_1_100_20260623_071256.csv
+saved summary : /Users/parkcart/workspace/occlusion-cbf/debug_logs/uni_ocbf_fwd_fullrev_T_topk_kappa_full100_20260623_023934/T1p25_fullrev_top2_k20/crowd_trials_occlusion_cbf_42_1_100_20260623_071256.json
+

@@ -1007,7 +1007,6 @@ def run_crowd_scenario(
     du_reverse_min_scale=None,
     vref_mode_occ=None,
     vref_front_mode_occ=None,
-    occ_version=None,
     occ_visible_scale=None,
     occ_enable_visible_hocbf=False,
     oa_dynamic_occluders=None,
@@ -1088,7 +1087,6 @@ def run_crowd_scenario(
         du_reverse_min_scale=du_reverse_min_scale,
         vref_mode_occ=vref_mode_occ,
         vref_front_mode_occ=vref_front_mode_occ,
-        occ_version=occ_version,
         occ_visible_scale=occ_visible_scale,
         occ_enable_visible_hocbf=occ_enable_visible_hocbf,
         oa_dynamic_occluders=oa_dynamic_occluders,
@@ -1158,7 +1156,6 @@ def main():
     parser.add_argument("--forced-require-corridor-conflict", type=crowd1._str2bool, nargs="?", const=True, default=True)
     parser.add_argument("--static-occluders", type=crowd1._str2bool, nargs="?", const=True, default=True)
     parser.add_argument("--occ-visible-scale", type=float, default=None)
-    parser.add_argument("--occ-version", type=str, choices=["v1", "v2"], default=None)
     parser.add_argument("--occ-enable-visible-hocbf", type=crowd1._str2bool, nargs="?", const=True, default=False)
     parser.add_argument("--oa-dynamic-occluders", type=crowd1._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oa-allow-solver-fallback", type=crowd1._str2bool, nargs="?", const=True, default=None)
@@ -1167,13 +1164,41 @@ def main():
     parser.add_argument("--oa-use-nominal-tracking-cost", type=crowd1._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oa-dt", type=float, default=None)
     parser.add_argument("--wmax", type=str, choices=["default", "pi"], default="default")
-    parser.add_argument("--vref", type=str, choices=["default", "los"], default=None)
+    parser.add_argument(
+        "--vref",
+        type=str,
+        choices=["default", "los"],
+        default=None,
+        help="OCBF front-facet direction mode. Internal default is `los`; `default` keeps the fixed polygon normal.",
+    )
     parser.add_argument("--occ-t-horizon", type=float, default=None)
     parser.add_argument("--occ-rho-T", type=str, default=None)
     parser.add_argument("--occ-dt-backup", type=float, default=None)
     parser.add_argument("--occ-terminal-slack-weight", type=float, default=None)
     parser.add_argument("--occ-terminal-slack-max", type=float, default=None)
+    parser.add_argument("--occ-obs-hocbf-slack-max", type=float, default=None)
+    parser.add_argument("--occ-rollout-slack-max", type=float, default=None)
+    parser.add_argument("--occ-terminal-mode", type=str, choices=["all", "topm", "dominant", "none"], default=None)
+    parser.add_argument("--occ-terminal-active-count", type=int, default=None)
+    parser.add_argument(
+        "--occ-terminal-residual-mode",
+        type=str,
+        choices=["off", "visibility_intersection", "visibility_only"],
+        default=None,
+    )
+    parser.add_argument("--occ-terminal-visibility-reaction-margin", type=float, default=None)
+    parser.add_argument("--occ-qp-failure-fallback-mode", type=str, choices=["strict", "state_safe", "always"], default=None)
     parser.add_argument("--occ-vref-scenario-softmax-kappa", type=float, default=None)
+    parser.add_argument(
+        "--occ-vref-scenario-weight-mode",
+        type=str,
+        choices=["barrier_expand", "barrier_unexpand"],
+        default=None,
+        help=(
+            "Override OCBF scenario blending score. barrier_expand uses rollout-expanded "
+            "margins; barrier_unexpand uses unexpanded current-geometry margins."
+        ),
+    )
     parser.add_argument("--occ-max-active-occlusions", type=int, default=None)
     parser.add_argument("--occ-selection-mode", type=str, choices=["h_tilde", "distance"], default=None)
     parser.add_argument("--occ-kappa", type=float, default=None)
@@ -1198,8 +1223,26 @@ def main():
         backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
     if args.occ_terminal_slack_max is not None:
         backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
+    if args.occ_obs_hocbf_slack_max is not None:
+        backup_cbf_overrides["obs_hocbf_slack_max"] = float(args.occ_obs_hocbf_slack_max)
+    if args.occ_rollout_slack_max is not None:
+        backup_cbf_overrides["occ_rollout_slack_max"] = float(args.occ_rollout_slack_max)
+    if args.occ_terminal_mode is not None:
+        backup_cbf_overrides["terminal_mode"] = str(args.occ_terminal_mode).strip().lower()
+    if args.occ_terminal_active_count is not None:
+        backup_cbf_overrides["terminal_active_count"] = int(args.occ_terminal_active_count)
+    if args.occ_terminal_residual_mode is not None:
+        backup_cbf_overrides["terminal_residual_mode"] = str(args.occ_terminal_residual_mode).strip().lower()
+    if args.occ_terminal_visibility_reaction_margin is not None:
+        backup_cbf_overrides["terminal_visibility_reaction_margin"] = float(
+            args.occ_terminal_visibility_reaction_margin
+        )
+    if args.occ_qp_failure_fallback_mode is not None:
+        backup_cbf_overrides["qp_failure_fallback_mode"] = str(args.occ_qp_failure_fallback_mode).strip().lower()
     if args.occ_vref_scenario_softmax_kappa is not None:
         backup_cbf_overrides["vref_scenario_softmax_kappa"] = float(args.occ_vref_scenario_softmax_kappa)
+    if args.occ_vref_scenario_weight_mode is not None:
+        backup_cbf_overrides["vref_scenario_weight_mode"] = str(args.occ_vref_scenario_weight_mode).strip().lower()
     if args.occ_max_active_occlusions is not None:
         backup_cbf_overrides["max_active_occlusions"] = int(args.occ_max_active_occlusions)
     if args.occ_selection_mode is not None:
@@ -1225,7 +1268,6 @@ def main():
         case_idx=args.case_idx,
         rand_obs=(not args.no_rand_obs),
         n_rand=args.n_rand,
-        occ_version=args.occ_version,
         occ_visible_scale=args.occ_visible_scale,
         occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
         oa_dynamic_occluders=args.oa_dynamic_occluders,

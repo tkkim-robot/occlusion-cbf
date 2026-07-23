@@ -361,7 +361,6 @@ def run_campus_scenario(
     vref_front_mode_occ=None,
     occ_visible_scale=DEFAULT_OCC_VISIBLE_SCALE,
     hidden_obs_velocity=DEFAULT_HIDDEN_OBS_VELOCITY,
-    occ_version=None,
     occ_enable_visible_hocbf=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
@@ -421,7 +420,6 @@ def run_campus_scenario(
             n_rand=int(n_rand),
             vref_mode_occ=vref_mode_occ,
             vref_front_mode_occ=vref_front_mode_occ,
-            occ_version=occ_version,
             occ_visible_scale=occ_visible_scale,
             occ_enable_visible_hocbf=occ_enable_visible_hocbf,
             oa_dynamic_occluders=oa_dynamic_occluders,
@@ -500,7 +498,13 @@ def main():
     parser.add_argument("--occ-terminal-slack-weight", type=float, default=None, help="Override backup_cbf.terminal_slack_weight for terminal-set rows only.")
     parser.add_argument("--occ-terminal-slack-max", type=float, default=None, help="Override backup_cbf.terminal_slack_max for terminal-set rows only.")
     parser.add_argument("--vref-mode-occ", type=str, choices=["soft", "strict"], default=None)
-    parser.add_argument("--vref", type=str, choices=["default", "los"], default=None)
+    parser.add_argument(
+        "--vref",
+        type=str,
+        choices=["default", "los"],
+        default=None,
+        help="OCBF front-facet direction mode. Internal default is `los`; `default` keeps the fixed polygon normal.",
+    )
     parser.add_argument("--occ-visible-scale", type=float, default=DEFAULT_OCC_VISIBLE_SCALE)
     parser.add_argument(
         "--v-adv-max-occ",
@@ -510,7 +514,6 @@ def main():
         default=DEFAULT_HIDDEN_OBS_VELOCITY,
         help="Hidden-obstacle speed bound used by occlusion reasoning.",
     )
-    parser.add_argument("--occ-version", type=str, choices=["v1", "v2"], default=None)
     parser.add_argument(
         "--occ-enable-visible-hocbf",
         type=crowd1._str2bool,
@@ -591,7 +594,6 @@ def main():
         vref_front_mode_occ=args.vref,
         occ_visible_scale=args.occ_visible_scale,
         hidden_obs_velocity=args.hidden_obs_velocity,
-        occ_version=args.occ_version,
         occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
         oa_dynamic_occluders=args.oa_dynamic_occluders,
         oa_allow_solver_fallback=args.oa_allow_solver_fallback,

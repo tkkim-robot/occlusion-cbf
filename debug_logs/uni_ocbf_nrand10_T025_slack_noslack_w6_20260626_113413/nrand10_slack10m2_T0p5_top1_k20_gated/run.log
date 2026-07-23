@@ -1,0 +1,537 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=uni seed=42 idx=1..100 n_rand=10 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[001/100] idx=  4 -> infeasible (raw=infeasible, compute_ms=6.894773134263232, intv=0.3079466584198934)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[002/100] idx=  3 -> success    (raw=success, compute_ms=4.969725841559106, intv=0.058741948588140046)
+[003/100] idx=  5 -> success    (raw=success, compute_ms=4.817493264837583, intv=0.07734331289600943)
+[004/100] idx=  1 -> success    (raw=success, compute_ms=6.078820213185663, intv=0.07447133137455794)
+[005/100] idx=  2 -> success    (raw=success, compute_ms=5.319728455508563, intv=0.09889712722483139)
+[006/100] idx=  6 -> infeasible (raw=infeasible, compute_ms=5.286111000960669, intv=0.15537199897987727)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[007/100] idx=  7 -> success    (raw=success, compute_ms=4.802696526597564, intv=0.11337329334631634)
+[008/100] idx= 13 -> infeasible (raw=infeasible, compute_ms=6.825920702704719, intv=0.339677061895352)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[009/100] idx= 10 -> infeasible (raw=infeasible, compute_ms=5.400446869523803, intv=0.08217614833116403)
+[010/100] idx=  8 -> success    (raw=success, compute_ms=4.473947229161976, intv=0.04745952687050142)
+[011/100] idx= 11 -> success    (raw=success, compute_ms=4.799411270862648, intv=0.1259222686543255)
+[012/100] idx=  9 -> success    (raw=success, compute_ms=5.326683633713252, intv=0.14835189211078528)
+[013/100] idx= 14 -> infeasible (raw=infeasible, compute_ms=5.79591653593153, intv=0.1383111411622565)
+[014/100] idx= 15 -> success    (raw=success, compute_ms=4.57779104413959, intv=0.09880160628986104)
+[015/100] idx= 12 -> infeasible (raw=infeasible, compute_ms=5.0997782156200095, intv=0.7580124938833323)
+[016/100] idx= 18 -> infeasible (raw=infeasible, compute_ms=5.007807334611991, intv=0.04670176927373792)
+[017/100] idx= 16 -> success    (raw=success, compute_ms=4.765820270226293, intv=0.056393965138818225)
+[018/100] idx= 17 -> infeasible (raw=infeasible, compute_ms=4.891696789300255, intv=0.09571872719905976)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[019/100] idx= 23 -> infeasible (raw=infeasible, compute_ms=14.159527111820184, intv=1.1509711681649093)
+[020/100] idx= 22 -> infeasible (raw=infeasible, compute_ms=5.502106180847649, intv=0.11924738217022869)
+[021/100] idx= 19 -> success    (raw=success, compute_ms=4.488518620777979, intv=0.042703849123670964)
+[022/100] idx= 20 -> infeasible (raw=infeasible, compute_ms=5.741664033008682, intv=0.11205854279794675)
+[023/100] idx= 21 -> infeasible (raw=infeasible, compute_ms=5.4292364160385755, intv=0.1306747006476036)
+[024/100] idx= 24 -> infeasible (raw=infeasible, compute_ms=5.295640900837775, intv=0.05118107885838532)
+[025/100] idx= 25 -> infeasible (raw=infeasible, compute_ms=5.780777986188862, intv=0.08331708719739271)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[026/100] idx= 29 -> success    (raw=success, compute_ms=5.09917020092883, intv=0.059114899550642246)
+[027/100] idx= 27 -> success    (raw=success, compute_ms=4.654673643391069, intv=0.06388303740945399)
+[028/100] idx= 26 -> success    (raw=success, compute_ms=5.038969168144269, intv=0.08360707947697821)
+[029/100] idx= 28 -> success    (raw=success, compute_ms=5.055284468318003, intv=0.1302006148108638)
+[030/100] idx= 31 -> infeasible (raw=infeasible, compute_ms=5.600821111327847, intv=0.15548743072613075)
+[031/100] idx= 33 -> infeasible (raw=infeasible, compute_ms=6.890087463699917, intv=0.5363542657679105)
+[032/100] idx= 30 -> success    (raw=success, compute_ms=5.094717113390654, intv=0.0948223205966228)
+[033/100] idx= 38 -> infeasible (raw=infeasible, compute_ms=8.779091080975567, intv=0.3578991775541779)
+[034/100] idx= 34 -> infeasible (raw=infeasible, compute_ms=5.721168850280651, intv=0.11314689318440882)
+[035/100] idx= 37 -> infeasible (raw=infeasible, compute_ms=5.0134312878823, intv=0.10194906511696271)
+[036/100] idx= 35 -> collision  (raw=collision, compute_ms=5.220919941521664, intv=0.12962226552423825)
+[037/100] idx= 36 -> success    (raw=success, compute_ms=5.31970820946425, intv=0.06202590361170176)
+[038/100] idx= 32 -> success    (raw=success, compute_ms=5.058837063375547, intv=0.16708053143560894)
+[039/100] idx= 40 -> success    (raw=success, compute_ms=4.968710845675781, intv=0.13204202971676066)
+[040/100] idx= 39 -> collision  (raw=collision, compute_ms=4.859026199868238, intv=0.4573850992662748)
+[041/100] idx= 41 -> success    (raw=success, compute_ms=5.12323250754422, intv=0.0711772852623622)
+[042/100] idx= 45 -> infeasible (raw=infeasible, compute_ms=7.170394803368963, intv=0.29715143770938535)
+[043/100] idx= 42 -> success    (raw=success, compute_ms=4.710282302178924, intv=0.12397597287081949)
+[044/100] idx= 44 -> success    (raw=success, compute_ms=4.983862254880092, intv=0.058016613005521335)
+[045/100] idx= 47 -> infeasible (raw=infeasible, compute_ms=6.075786172500105, intv=0.10646738595004324)
+[046/100] idx= 48 -> infeasible (raw=infeasible, compute_ms=7.103312528800286, intv=0.39152077778469685)
+[047/100] idx= 43 -> success    (raw=success, compute_ms=5.15974053653048, intv=0.16097502284811496)
+[048/100] idx= 46 -> success    (raw=success, compute_ms=4.484839513262688, intv=0.10009591132447045)
+[049/100] idx= 49 -> success    (raw=success, compute_ms=4.545468463819578, intv=0.047527101041662315)
+[050/100] idx= 50 -> success    (raw=success, compute_ms=5.458250027555605, intv=0.05831629853084293)
+[051/100] idx= 51 -> success    (raw=success, compute_ms=4.69015480524143, intv=0.10673863929362447)
+[052/100] idx= 55 -> infeasible (raw=infeasible, compute_ms=6.224934424270636, intv=0.36578441601917694)
+[053/100] idx= 53 -> success    (raw=success, compute_ms=5.77590329218582, intv=0.16224483069655263)
+[054/100] idx= 52 -> success    (raw=success, compute_ms=5.401815239146196, intv=0.2149875189101447)
+[055/100] idx= 54 -> success    (raw=success, compute_ms=4.469265631434239, intv=0.05547858235437243)
+[056/100] idx= 56 -> success    (raw=success, compute_ms=4.494064081404971, intv=0.12719007259562712)
+[057/100] idx= 57 -> success    (raw=success, compute_ms=5.118033069034888, intv=0.11472128608554222)
+[058/100] idx= 59 -> success    (raw=success, compute_ms=4.694991447720224, intv=0.04473453459696396)
+[059/100] idx= 58 -> success    (raw=success, compute_ms=5.147828438933742, intv=0.10143649964070924)
+[060/100] idx= 61 -> success    (raw=success, compute_ms=5.067766267838838, intv=0.04431154291373765)
+[061/100] idx= 60 -> success    (raw=success, compute_ms=5.274083609381723, intv=0.19259146080068607)
+[062/100] idx= 65 -> infeasible (raw=infeasible, compute_ms=5.01056764253133, intv=0.07215419741284615)
+[063/100] idx= 64 -> infeasible (raw=infeasible, compute_ms=5.402230114840212, intv=0.1061274262101431)
+[064/100] idx= 62 -> success    (raw=success, compute_ms=5.442549733880119, intv=0.11125677153596167)
+[065/100] idx= 63 -> success    (raw=success, compute_ms=6.691748005073658, intv=0.10736078279740503)
+[066/100] idx= 66 -> success    (raw=success, compute_ms=4.993101505254007, intv=0.06636429512150052)
+[067/100] idx= 67 -> success    (raw=success, compute_ms=4.636238166657959, intv=0.06336529612483442)
+[068/100] idx= 71 -> infeasible (raw=infeasible, compute_ms=6.188268621917814, intv=0.34254939461267125)
+[069/100] idx= 68 -> infeasible (raw=infeasible, compute_ms=5.549283923606154, intv=0.19710628581349876)
+[070/100] idx= 69 -> success    (raw=success, compute_ms=5.4352005248000665, intv=0.1435600552062946)
+[071/100] idx= 72 -> infeasible (raw=infeasible, compute_ms=6.4461099337304075, intv=0.30172799180455573)
+[072/100] idx= 70 -> success    (raw=success, compute_ms=5.52185488661739, intv=0.1085656385578785)
+[073/100] idx= 73 -> success    (raw=success, compute_ms=5.051622748416321, intv=0.14645354981954384)
+[074/100] idx= 78 -> infeasible (raw=infeasible, compute_ms=5.731301662054947, intv=0.11611282935233565)
+[075/100] idx= 74 -> infeasible (raw=infeasible, compute_ms=5.051312632367386, intv=0.11319627858282033)
+[076/100] idx= 76 -> infeasible (raw=infeasible, compute_ms=4.9372439022232415, intv=0.14336967405640152)
+[077/100] idx= 75 -> infeasible (raw=infeasible, compute_ms=7.173068741797172, intv=0.18514309160396453)
+[078/100] idx= 77 -> success    (raw=success, compute_ms=5.365212515667561, intv=0.10309366108976384)
+[079/100] idx= 79 -> success    (raw=success, compute_ms=5.230856768580716, intv=0.11049319232294579)
+[080/100] idx= 83 -> infeasible (raw=infeasible, compute_ms=5.2003014831814784, intv=0.030284523418099545)
+[081/100] idx= 86 -> infeasible (raw=infeasible, compute_ms=15.407754308305298, intv=0.7675117033449631)
+[082/100] idx= 81 -> infeasible (raw=infeasible, compute_ms=5.713405780855631, intv=0.13402753773754728)
+[083/100] idx= 87 -> infeasible (raw=infeasible, compute_ms=14.3596249503187, intv=0.5669730403742967)
+[084/100] idx= 80 -> success    (raw=success, compute_ms=4.870612854504371, intv=0.0928100909982431)
+[085/100] idx= 82 -> success    (raw=success, compute_ms=4.890988859055148, intv=0.1221049326452554)
+[086/100] idx= 88 -> infeasible (raw=infeasible, compute_ms=7.366707483588746, intv=0.5430536504211271)
+[087/100] idx= 89 -> infeasible (raw=infeasible, compute_ms=8.347506773446693, intv=0.4024508650234489)
+[088/100] idx= 84 -> success    (raw=success, compute_ms=4.488689942247765, intv=0.08417056093461321)
+[089/100] idx= 92 -> infeasible (raw=infeasible, compute_ms=6.531249131425681, intv=0.5947825734745761)
+[090/100] idx= 94 -> infeasible (raw=infeasible, compute_ms=8.030434839181705, intv=0.3825544496397858)
+[091/100] idx= 85 -> infeasible (raw=infeasible, compute_ms=5.0548400135593035, intv=0.1024391022380931)
+[092/100] idx= 95 -> infeasible (raw=infeasible, compute_ms=4.977652164902695, intv=0.11833057172166703)
+[093/100] idx= 91 -> success    (raw=success, compute_ms=8.499097392695262, intv=0.07991632917805039)
+[094/100] idx= 90 -> success    (raw=success, compute_ms=5.097951839681613, intv=0.15732628700819726)
+[095/100] idx= 97 -> success    (raw=success, compute_ms=5.683866422623396, intv=0.10662743908234902)
+[096/100] idx= 93 -> success    (raw=success, compute_ms=5.149089603966384, intv=0.09186856692253982)
+[097/100] idx=100 -> infeasible (raw=infeasible, compute_ms=5.5955057668584125, intv=0.2599748081889668)
+[098/100] idx= 98 -> success    (raw=success, compute_ms=5.051046856713119, intv=0.0638890851281308)
+[099/100] idx= 99 -> infeasible (raw=infeasible, compute_ms=4.934776370225509, intv=0.15238288696855848)
+[100/100] idx= 96 -> infeasible (raw=infeasible, compute_ms=4.2150001025230095, intv=1.0823496572007925)
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [29.49776119 10.957689    0.37552057  0.6187758   0.11196872 -2.
+ 32.          1.        ], Robot: [29.90078449 11.43167139] 0.25, Distance: 0.6221632292146012, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Collision with known obstacle detected! Obs: [28.77988552  7.74570799  0.3896728   0.3248259   0.87843746 -2.
+ 32.          1.        ], Robot: [29.20148164  8.22496838] 0.25, Distance: 0.6383054265897102, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+
+=== Crowd Trial Summary (3-way) ===
+success=53 | collision=2 | infeasible=45 | total=100
+success idx   : [1, 2, 3, 5, 7, 8, 9, 11, 15, 16, 19, 26, 27, 28, 29, 30, 32, 36, 40, 41, 42, 43, 44, 46, 49, 50, 51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 63, 66, 67, 69, 70, 73, 77, 79, 80, 82, 84, 90, 91, 93, 97, 98]
+collision idx : [35, 39]
+infeasible idx: [4, 6, 10, 12, 13, 14, 17, 18, 20, 21, 22, 23, 24, 25, 31, 33, 34, 37, 38, 45, 47, 48, 55, 64, 65, 68, 71, 72, 74, 75, 76, 78, 81, 83, 85, 86, 87, 88, 89, 92, 94, 95, 96, 99, 100]
+avg controller compute time over idx [ms]: 5.744045406173829
+avg control intervention over idx: 0.18577718958257422
+avg terminal slack L1 over idx: 0.021823275262545346
+avg terminal slack max over idx: 0.021823161460890247
+avg terminal slack active ratio over idx: 0.2297074779805685
+avg sim time over idx [s]: 83.902
+avg wall time per idx [s]: 11.72817874670145
+avg forced initially occluded over idx: 5.86
+avg forced revealed over idx: 4.41
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/uni_ocbf_nrand10_T025_slack_noslack_w6_20260626_113413/nrand10_slack10m2_T0p5_top1_k20_gated/crowd_trials_occlusion_cbf_42_1_100_20260626_155223.csv
+saved summary : debug_logs/uni_ocbf_nrand10_T025_slack_noslack_w6_20260626_113413/nrand10_slack10m2_T0p5_top1_k20_gated/crowd_trials_occlusion_cbf_42_1_100_20260626_155223.json
+

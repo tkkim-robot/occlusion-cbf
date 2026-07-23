@@ -6,13 +6,16 @@ Single-baseline mode:
     - one baseline over idx range
 
 Suite mode:
-    - sequentially run the 5 non-occlusion baselines:
-      OA-MPC(wmax=default), OA-MPC(wmax=pi), control_tree_mpc,
+    - sequentially run the 5 non-OCBF baselines:
+      OA-MPC(wmax=default), OACP-MPC, control_tree_mpc,
       single_risk_mpc, cbf_qp
 
 All runs force:
     - show_animation = False
     - save_animation = False
+
+For Unicycle2D paper baseline sweeps, non-OCBF baselines default to
+forward-only actuation. Pass --uni-allow-reverse true or --uni-v-min to override.
 """
 
 from __future__ import annotations
@@ -33,12 +36,38 @@ from examples._baseline_defs import CROWD_BASELINE_MAP
 BASELINE_MAP = dict(CROWD_BASELINE_MAP)
 
 SUITE_NON_OCC_5 = [
-    {"label": "oa_mpc_wmax_default", "baseline": "oa_mpc", "wmax": "default"},
-    {"label": "oa_mpc_wmax_pi", "baseline": "oa_mpc", "wmax": "pi"},
+    {"label": "oa_mpc", "baseline": "oa_mpc", "wmax": "default"},
+    {"label": "oacp_mpc", "baseline": "oacp_mpc", "wmax": "default"},
     {"label": "control_tree_mpc", "baseline": "control_tree_mpc", "wmax": "default"},
     {"label": "single_risk_mpc", "baseline": "single_risk_mpc", "wmax": "default"},
     {"label": "cbf_qp", "baseline": "cbf_qp", "wmax": "default"},
 ]
+
+
+def _is_ocbf_baseline(baseline_alias: str) -> bool:
+    return str(BASELINE_MAP.get(str(baseline_alias), baseline_alias)).strip().lower() == "occlusion_cbf_qp"
+
+
+def _default_uni_non_ocbf_forward_only(
+    *,
+    model: str,
+    baseline_alias: str,
+    robot_spec_overrides: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Use forward-only Uni actuation by default for paper baseline sweeps.
+
+    The scenario runners keep their historical Uni default for OCBF/direct
+    visualization. This benchmark tool defaults only non-OCBF baselines to
+    forward-only unless the caller explicitly sets a Uni speed-bound option.
+    """
+    if str(model).strip().lower() != "uni" or _is_ocbf_baseline(baseline_alias):
+        return robot_spec_overrides
+
+    out = dict(robot_spec_overrides or {})
+    has_explicit_uni_bound = any(k in out for k in ("_uni_forward_only", "_uni_allow_reverse", "v_min"))
+    if not has_explicit_uni_bound:
+        out["_uni_forward_only"] = True
+    return out
 
 
 def _load_run_crowd_scenario(scenario_name: str):
@@ -154,7 +183,6 @@ def _run_baseline_sweep(
     oa_visible_reach_mode: str | None,
     oa_use_nominal_tracking_cost: bool | None,
     oa_dt: float | None,
-    occ_version: str | None,
     occ_visible_scale: float | None,
     occ_enable_visible_hocbf: bool | None,
     crowd_mode: str,
@@ -172,7 +200,14 @@ def _run_baseline_sweep(
     ts: str,
 ) -> dict[str, Any]:
     _, scenario_label = _load_run_crowd_scenario(scenario_name)
+    if occ_enable_visible_hocbf is None:
+        occ_enable_visible_hocbf = str(scenario_label).strip().lower() == "crowd2"
     controller_pos = BASELINE_MAP[str(baseline_alias)]
+    robot_spec_overrides = _default_uni_non_ocbf_forward_only(
+        model=str(model),
+        baseline_alias=str(baseline_alias),
+        robot_spec_overrides=robot_spec_overrides,
+    )
     stem = f"crowd_trials_{run_label}_{seed}_{idx_start}_{idx_end}_{ts}"
     rows_path = out_dir / f"{stem}.csv"
     summary_path = out_dir / f"{stem}.json"
@@ -189,7 +224,7 @@ def _run_baseline_sweep(
         f"oa_dynamic_occluders={oa_dynamic_occluders} "
         f"oa_dsafe={oa_dsafe} oa_visible_reach_mode={oa_visible_reach_mode} "
         f"oa_use_nominal_tracking_cost={oa_use_nominal_tracking_cost} oa_dt={oa_dt} "
-        f"occ_version={occ_version} occ_visible_scale={occ_visible_scale} "
+        f"occ_visible_scale={occ_visible_scale} "
         f"occ_enable_visible_hocbf={occ_enable_visible_hocbf} "
         f"crowd_mode={crowd_mode}",
         flush=True,
@@ -222,7 +257,6 @@ def _run_baseline_sweep(
                 oa_visible_reach_mode=oa_visible_reach_mode,
                 oa_use_nominal_tracking_cost=oa_use_nominal_tracking_cost,
                 oa_dt=oa_dt,
-                occ_version=occ_version,
                 occ_visible_scale=occ_visible_scale,
                 occ_enable_visible_hocbf=occ_enable_visible_hocbf,
                 crowd_mode=str(crowd_mode),
@@ -262,7 +296,6 @@ def _run_baseline_sweep(
                 oa_visible_reach_mode,
                 oa_use_nominal_tracking_cost,
                 oa_dt,
-                occ_version,
                 occ_visible_scale,
                 occ_enable_visible_hocbf,
                 str(crowd_mode),
@@ -293,7 +326,6 @@ def _run_baseline_sweep(
                         "controller_pos": str(controller_pos),
                         "wmax": str(wmax),
                         "idx": int(idx),
-                        "occ_version": occ_version,
                         "occ_visible_scale": occ_visible_scale,
                         "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
                         "raw_outcome": "exception",
@@ -345,6 +377,8 @@ def _run_baseline_sweep(
     avg_term_slack_l1_all = _mean([_safe_float(r.get("avg_terminal_slack_l1")) for r in rows])
     avg_term_slack_max_all = _mean([_safe_float(r.get("avg_terminal_slack_max")) for r in rows])
     avg_term_slack_active_ratio_all = _mean([_safe_float(r.get("terminal_slack_active_ratio")) for r in rows])
+    avg_occ_vref_unexpanded_margin_all = _mean([_safe_float(r.get("avg_occ_vref_unexpanded_margin")) for r in rows])
+    avg_occ_vref_max_weight_all = _mean([_safe_float(r.get("avg_occ_vref_max_softmax_weight")) for r in rows])
     avg_sim_time_all = _mean([_safe_float(r.get("total_sim_time")) for r in rows])
     avg_wall_time_all = _mean([_safe_float(r.get("case_wall_time_s")) for r in rows])
     avg_forced_init_occ = _mean([_safe_float(r.get("n_forced_initially_occluded")) for r in rows])
@@ -366,7 +400,6 @@ def _run_baseline_sweep(
         "oa_visible_reach_mode",
         "oa_use_nominal_tracking_cost",
         "oa_dt",
-        "occ_version",
         "occ_visible_scale",
         "occ_enable_visible_hocbf",
         "crowd_mode",
@@ -389,6 +422,8 @@ def _run_baseline_sweep(
         "avg_terminal_slack_max",
         "terminal_slack_active_steps",
         "terminal_slack_active_ratio",
+        "avg_occ_vref_unexpanded_margin",
+        "avg_occ_vref_max_softmax_weight",
         "total_sim_time",
         "case_wall_time_s",
         "total_steps",
@@ -422,7 +457,6 @@ def _run_baseline_sweep(
             "oa_visible_reach_mode": oa_visible_reach_mode,
             "oa_use_nominal_tracking_cost": oa_use_nominal_tracking_cost,
             "oa_dt": oa_dt,
-            "occ_version": occ_version,
             "occ_visible_scale": occ_visible_scale,
             "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
             "crowd_mode": str(crowd_mode),
@@ -459,6 +493,8 @@ def _run_baseline_sweep(
             "avg_terminal_slack_l1_over_idx": avg_term_slack_l1_all,
             "avg_terminal_slack_max_over_idx": avg_term_slack_max_all,
             "avg_terminal_slack_active_ratio_over_idx": avg_term_slack_active_ratio_all,
+            "avg_occ_vref_unexpanded_margin_over_idx": avg_occ_vref_unexpanded_margin_all,
+            "avg_occ_vref_max_softmax_weight_over_idx": avg_occ_vref_max_weight_all,
             "avg_total_sim_time_s_over_idx": avg_sim_time_all,
             "avg_case_wall_time_s_over_idx": avg_wall_time_all,
             "avg_n_forced_initially_occluded_over_idx": avg_forced_init_occ,
@@ -504,7 +540,7 @@ def _run_baseline_sweep(
 def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> int:
     print("=== Running baseline suite: non_occlusion_5 ===")
     print(
-        "Methods: oa_mpc(wmax=default), oa_mpc(wmax=pi), "
+        "Methods: oa_mpc(wmax=default), oacp_mpc, "
         "control_tree_mpc, single_risk_mpc, cbf_qp"
     )
     print()
@@ -531,7 +567,6 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
             oa_visible_reach_mode=args.oa_visible_reach_mode,
             oa_use_nominal_tracking_cost=args.oa_use_nominal_tracking_cost,
             oa_dt=args.oa_dt,
-            occ_version=args.occ_version,
             occ_visible_scale=args.occ_visible_scale,
             occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
             crowd_mode=str(args.crowd_mode),
@@ -621,7 +656,6 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
             "oa_visible_reach_mode": args.oa_visible_reach_mode,
             "oa_use_nominal_tracking_cost": args.oa_use_nominal_tracking_cost,
             "oa_dt": args.oa_dt,
-            "occ_version": args.occ_version,
             "occ_visible_scale": args.occ_visible_scale,
             "occ_enable_visible_hocbf": args.occ_enable_visible_hocbf,
             "crowd_mode": str(args.crowd_mode),
@@ -795,13 +829,6 @@ def main() -> int:
         help="Forwarded to test_crowd OA-MPC config.",
     )
     p.add_argument(
-        "--occ-version",
-        type=str,
-        default=None,
-        choices=["v1", "v2"],
-        help="Forwarded to examples/test_crowd.py occlusion polygon variant.",
-    )
-    p.add_argument(
         "--occ-visible-scale",
         type=float,
         default=None,
@@ -812,8 +839,11 @@ def main() -> int:
         type=_str2bool,
         nargs="?",
         const=True,
-        default=False,
-        help="Forwarded to examples/test_crowd.py: enable visible-obstacle CBF/HOCBF rows inside occlusion-CBF.",
+        default=None,
+        help=(
+            "Forwarded to scenario runner: enable visible-obstacle CBF/HOCBF rows "
+            "inside occlusion-CBF. Default is true for crowd2 and false otherwise."
+        ),
     )
     p.add_argument("--oacp-dt-plan", type=float, default=None)
     p.add_argument("--oacp-Th", type=float, default=None)
@@ -851,6 +881,34 @@ def main() -> int:
         default=None,
     )
     p.add_argument(
+        "--oacp-branch-safety-gate",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="OACP only: gate the selected contingency branch and switch to the other safe branch when possible.",
+    )
+    p.add_argument(
+        "--oacp-branch-gate-reject-all",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="OACP only: mark infeasible when both contingency branches fail the branch safety gate.",
+    )
+    p.add_argument(
+        "--oacp-branch-slack-gate-tol",
+        type=float,
+        default=None,
+        help="OACP only: maximum branch risk slack allowed by branch safety gate.",
+    )
+    p.add_argument(
+        "--oacp-branch-clearance-gate-tol",
+        type=float,
+        default=None,
+        help="OACP only: allowed negative planned clearance tolerance for branch safety gate.",
+    )
+    p.add_argument(
         "--uni-reverse-bias",
         type=float,
         default=None,
@@ -874,6 +932,50 @@ def main() -> int:
         default=None,
         help="Override backup_cbf.v_min_cmd_rev_occ_uni.",
     )
+    p.add_argument(
+        "--uni-allow-reverse",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help=(
+            "Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. "
+            "This overrides the benchmark-tool default forward-only mode for non-OCBF Uni baselines."
+        ),
+    )
+    p.add_argument(
+        "--uni-forward-only",
+        type=_str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help=(
+            "Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given. "
+            "This is already the default for non-OCBF Uni baselines in this benchmark tool."
+        ),
+    )
+    p.add_argument(
+        "--uni-v-min",
+        type=float,
+        default=None,
+        help="Override Unicycle2D input lower speed bound.",
+    )
+    p.add_argument(
+        "--uni-vref-tracking-mode",
+        type=str,
+        choices=["gated", "projected"],
+        default=None,
+        help="Unicycle OCBF mapping from inertial v_ref to (v, omega).",
+    )
+    p.add_argument("--uni-k-theta-p", type=float, default=None, help="Override backup_cbf.k_theta_occ_uni_p.")
+    p.add_argument("--uni-k-theta-d", type=float, default=None, help="Override backup_cbf.k_theta_occ_uni_d.")
+    p.add_argument("--uni-k-v-p", type=float, default=None, help="Override backup_cbf.k_v_occ_uni_p.")
+    p.add_argument("--uni-k-v-d", type=float, default=None, help="Override backup_cbf.k_v_occ_uni_d.")
+    p.add_argument("--uni-turn-boost", type=float, default=None, help="Override backup_cbf.k_turn_boost_occ_uni.")
+    p.add_argument("--uni-turn-boost-angle", type=float, default=None, help="Override backup_cbf.turn_boost_angle_occ_uni.")
+    p.add_argument("--uni-v-min-cmd", type=float, default=None, help="Override backup_cbf.v_min_occ_uni.")
+    p.add_argument("--uni-turn-crawl-speed", type=float, default=None, help="Minimum forward crawl speed while turning toward OCBF v_ref.")
+    p.add_argument("--uni-turn-crawl-angle", type=float, default=None, help="Max heading error [rad] where OCBF turn-crawl is allowed.")
     p.add_argument(
         "--occ-t-horizon",
         type=float,
@@ -912,10 +1014,66 @@ def main() -> int:
         help="Override backup_cbf.terminal_slack_max for terminal-set rows only.",
     )
     p.add_argument(
+        "--occ-obs-hocbf-slack-max",
+        type=float,
+        default=None,
+        help="Allow bounded slack on visible-obstacle HOCBF rows in OCBF-QP.",
+    )
+    p.add_argument(
+        "--occ-rollout-slack-max",
+        type=float,
+        default=None,
+        help="Allow bounded slack on occlusion rollout rows in OCBF-QP.",
+    )
+    p.add_argument(
+        "--occ-terminal-mode",
+        type=str,
+        choices=["all", "topm", "dominant", "none"],
+        default=None,
+        help="Select which OCBF occlusion scenarios receive terminal backup-set rows.",
+    )
+    p.add_argument(
+        "--occ-terminal-active-count",
+        type=int,
+        default=None,
+        help="Top-M terminal rows to keep when --occ-terminal-mode=topm.",
+    )
+    p.add_argument(
+        "--occ-terminal-residual-mode",
+        type=str,
+        choices=["off", "visibility_intersection", "visibility_only"],
+        default=None,
+        help="Optionally replace terminal rows with predicted terminal visibility residual sets.",
+    )
+    p.add_argument(
+        "--occ-terminal-visibility-reaction-margin",
+        type=float,
+        default=None,
+        help="Extra terminal buffer applied to predicted visibility residual halfspaces.",
+    )
+    p.add_argument(
+        "--occ-qp-failure-fallback-mode",
+        type=str,
+        choices=["strict", "state_safe", "always"],
+        default=None,
+        help="How OCBF-QP classifies backup-policy fallback when the QP solve itself fails.",
+    )
+    p.add_argument(
         "--occ-vref-scenario-softmax-kappa",
         type=float,
         default=None,
         help="Override backup_cbf.vref_scenario_softmax_kappa for occlusion-CBF front-speed scenario weighting.",
+    )
+    p.add_argument(
+        "--occ-vref-scenario-weight-mode",
+        type=str,
+        choices=["barrier_expand", "barrier_unexpand"],
+        default=None,
+        help=(
+            "Override backup_cbf.vref_scenario_weight_mode for OCBF scenario blending. "
+            "barrier_expand scores rollout-expanded margins; barrier_unexpand scores "
+            "unexpanded current-geometry margins."
+        ),
     )
     p.add_argument(
         "--occ-max-active-occlusions",
@@ -941,7 +1099,10 @@ def main() -> int:
         type=str,
         default=None,
         choices=["default", "los"],
-        help="Override backup_cbf.vref_front_mode_occ for occlusion backup v_target construction.",
+        help=(
+            "Override backup_cbf.vref_front_mode_occ for occlusion backup v_target construction. "
+            "Internal default is `los`; `default` keeps the fixed polygon normal."
+        ),
     )
     p.add_argument("--out-dir", type=str, default="debug_logs")
     p.add_argument(
@@ -960,6 +1121,12 @@ def main() -> int:
     args.exclude_idx = _parse_int_list_arg(args.exclude_idx)
     args.backup_cbf_overrides = _parse_json_arg(args.backup_cbf_json) or {}
     args.robot_spec_overrides = _parse_json_arg(args.robot_spec_json) or {}
+    if args.uni_allow_reverse is not None:
+        args.robot_spec_overrides["_uni_allow_reverse"] = bool(args.uni_allow_reverse)
+    if args.uni_forward_only:
+        args.robot_spec_overrides["_uni_forward_only"] = True
+    if args.uni_v_min is not None:
+        args.robot_spec_overrides["v_min"] = float(args.uni_v_min)
     if args.uni_reverse_bias is not None:
         args.backup_cbf_overrides["reverse_bias_occ_uni"] = float(args.uni_reverse_bias)
     if args.uni_reverse_gate_angle is not None:
@@ -968,6 +1135,26 @@ def main() -> int:
         args.backup_cbf_overrides["reverse_speed_gate_power_occ_uni"] = float(args.uni_reverse_gate_power)
     if args.uni_v_min_cmd_rev is not None:
         args.backup_cbf_overrides["v_min_cmd_rev_occ_uni"] = float(args.uni_v_min_cmd_rev)
+    if args.uni_vref_tracking_mode is not None:
+        args.backup_cbf_overrides["vref_tracking_mode_occ_uni"] = str(args.uni_vref_tracking_mode).strip().lower()
+    if args.uni_k_theta_p is not None:
+        args.backup_cbf_overrides["k_theta_occ_uni_p"] = float(args.uni_k_theta_p)
+    if args.uni_k_theta_d is not None:
+        args.backup_cbf_overrides["k_theta_occ_uni_d"] = float(args.uni_k_theta_d)
+    if args.uni_k_v_p is not None:
+        args.backup_cbf_overrides["k_v_occ_uni_p"] = float(args.uni_k_v_p)
+    if args.uni_k_v_d is not None:
+        args.backup_cbf_overrides["k_v_occ_uni_d"] = float(args.uni_k_v_d)
+    if args.uni_turn_boost is not None:
+        args.backup_cbf_overrides["k_turn_boost_occ_uni"] = float(args.uni_turn_boost)
+    if args.uni_turn_boost_angle is not None:
+        args.backup_cbf_overrides["turn_boost_angle_occ_uni"] = float(args.uni_turn_boost_angle)
+    if args.uni_v_min_cmd is not None:
+        args.backup_cbf_overrides["v_min_occ_uni"] = float(args.uni_v_min_cmd)
+    if args.uni_turn_crawl_speed is not None:
+        args.backup_cbf_overrides["turn_crawl_speed_occ_uni"] = float(args.uni_turn_crawl_speed)
+    if args.uni_turn_crawl_angle is not None:
+        args.backup_cbf_overrides["turn_crawl_angle_occ_uni"] = float(args.uni_turn_crawl_angle)
     if args.occ_t_horizon is not None:
         args.backup_cbf_overrides["T_horizon"] = float(args.occ_t_horizon)
     if args.occ_rho_T is not None:
@@ -985,8 +1172,26 @@ def main() -> int:
         args.backup_cbf_overrides["terminal_slack_weight"] = float(args.occ_terminal_slack_weight)
     if args.occ_terminal_slack_max is not None:
         args.backup_cbf_overrides["terminal_slack_max"] = float(args.occ_terminal_slack_max)
+    if args.occ_obs_hocbf_slack_max is not None:
+        args.backup_cbf_overrides["obs_hocbf_slack_max"] = float(args.occ_obs_hocbf_slack_max)
+    if args.occ_rollout_slack_max is not None:
+        args.backup_cbf_overrides["occ_rollout_slack_max"] = float(args.occ_rollout_slack_max)
+    if args.occ_terminal_mode is not None:
+        args.backup_cbf_overrides["terminal_mode"] = str(args.occ_terminal_mode).strip().lower()
+    if args.occ_terminal_active_count is not None:
+        args.backup_cbf_overrides["terminal_active_count"] = int(args.occ_terminal_active_count)
+    if args.occ_terminal_residual_mode is not None:
+        args.backup_cbf_overrides["terminal_residual_mode"] = str(args.occ_terminal_residual_mode).strip().lower()
+    if args.occ_terminal_visibility_reaction_margin is not None:
+        args.backup_cbf_overrides["terminal_visibility_reaction_margin"] = float(
+            args.occ_terminal_visibility_reaction_margin
+        )
+    if args.occ_qp_failure_fallback_mode is not None:
+        args.backup_cbf_overrides["qp_failure_fallback_mode"] = str(args.occ_qp_failure_fallback_mode).strip().lower()
     if args.occ_vref_scenario_softmax_kappa is not None:
         args.backup_cbf_overrides["vref_scenario_softmax_kappa"] = float(args.occ_vref_scenario_softmax_kappa)
+    if args.occ_vref_scenario_weight_mode is not None:
+        args.backup_cbf_overrides["vref_scenario_weight_mode"] = str(args.occ_vref_scenario_weight_mode).strip().lower()
     if args.occ_max_active_occlusions is not None:
         args.backup_cbf_overrides["max_active_occlusions"] = int(args.occ_max_active_occlusions)
     if args.occ_selection_mode is not None:
@@ -1022,6 +1227,14 @@ def main() -> int:
         oacp_cfg["dynamic_occluders"] = bool(args.oacp_dynamic_occluders)
     if args.oacp_visible_reach_mode is not None:
         oacp_cfg["visible_reach_mode"] = str(args.oacp_visible_reach_mode).strip().lower()
+    if args.oacp_branch_safety_gate is not None:
+        oacp_cfg["branch_safety_gate"] = bool(args.oacp_branch_safety_gate)
+    if args.oacp_branch_gate_reject_all is not None:
+        oacp_cfg["branch_gate_reject_all"] = bool(args.oacp_branch_gate_reject_all)
+    if args.oacp_branch_slack_gate_tol is not None:
+        oacp_cfg["branch_slack_gate_tol"] = float(args.oacp_branch_slack_gate_tol)
+    if args.oacp_branch_clearance_gate_tol is not None:
+        oacp_cfg["branch_clearance_gate_tol"] = float(args.oacp_branch_clearance_gate_tol)
     if oacp_cfg:
         args.robot_spec_overrides.setdefault("oacp_mpc", {}).update(oacp_cfg)
     if not args.robot_spec_overrides:
@@ -1060,7 +1273,6 @@ def main() -> int:
         oa_visible_reach_mode=args.oa_visible_reach_mode,
         oa_use_nominal_tracking_cost=args.oa_use_nominal_tracking_cost,
         oa_dt=args.oa_dt,
-        occ_version=args.occ_version,
         occ_visible_scale=args.occ_visible_scale,
         occ_enable_visible_hocbf=args.occ_enable_visible_hocbf,
         crowd_mode=str(args.crowd_mode),
@@ -1084,7 +1296,7 @@ def _run_one_idx_job_star(
     task: tuple[
         str, str, str, str, int, int, float, str, bool | None,
         bool | None, float | None, str | None, bool | None, float | None,
-        str | None, float | None, bool | None, str, int, int | None, float, float, float,
+        float | None, bool | None, str, int, int | None, float, float, float,
         bool, bool, dict[str, Any] | None, dict[str, Any] | None, str
     ]
 ) -> dict[str, Any]:
@@ -1104,20 +1316,19 @@ def _run_one_idx_job_star(
         oa_visible_reach_mode=task[12],
         oa_use_nominal_tracking_cost=task[13],
         oa_dt=task[14],
-        occ_version=task[15],
-        occ_visible_scale=task[16],
-        occ_enable_visible_hocbf=task[17],
-        crowd_mode=task[18],
-        forced_events=task[19],
-        forced_bg_rand=task[20],
-        forced_hidden_speed=task[21],
-        forced_occluder_radius_min=task[22],
-        forced_occluder_radius_max=task[23],
-        forced_validate_occlusion=task[24],
-        forced_require_corridor_conflict=task[25],
-        backup_cbf_overrides=task[26],
-        robot_spec_overrides=task[27],
-        run_label=task[28],
+        occ_visible_scale=task[15],
+        occ_enable_visible_hocbf=task[16],
+        crowd_mode=task[17],
+        forced_events=task[18],
+        forced_bg_rand=task[19],
+        forced_hidden_speed=task[20],
+        forced_occluder_radius_min=task[21],
+        forced_occluder_radius_max=task[22],
+        forced_validate_occlusion=task[23],
+        forced_require_corridor_conflict=task[24],
+        backup_cbf_overrides=task[25],
+        robot_spec_overrides=task[26],
+        run_label=task[27],
     )
 
 
@@ -1138,7 +1349,6 @@ def _run_one_idx_job(
     oa_visible_reach_mode: str | None,
     oa_use_nominal_tracking_cost: bool | None,
     oa_dt: float | None,
-    occ_version: str | None,
     occ_visible_scale: float | None,
     occ_enable_visible_hocbf: bool | None,
     crowd_mode: str,
@@ -1166,7 +1376,6 @@ def _run_one_idx_job(
             case_idx=int(idx),
             rand_obs=True,
             n_rand=int(n_rand),
-            occ_version=occ_version,
             occ_visible_scale=occ_visible_scale,
             occ_enable_visible_hocbf=occ_enable_visible_hocbf,
             oa_wmax=str(wmax),
@@ -1204,7 +1413,6 @@ def _run_one_idx_job(
             "oa_visible_reach_mode": oa_visible_reach_mode,
             "oa_use_nominal_tracking_cost": oa_use_nominal_tracking_cost,
             "oa_dt": oa_dt,
-            "occ_version": occ_version,
             "occ_visible_scale": occ_visible_scale,
             "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
             "crowd_mode": str(metrics.get("crowd_mode", crowd_mode)),
@@ -1233,6 +1441,8 @@ def _run_one_idx_job(
             "avg_terminal_slack_max": _safe_float(metrics.get("avg_terminal_slack_max", None)),
             "terminal_slack_active_steps": int(metrics.get("terminal_slack_active_steps", 0) or 0),
             "terminal_slack_active_ratio": _safe_float(metrics.get("terminal_slack_active_ratio", None)),
+            "avg_occ_vref_unexpanded_margin": _safe_float(metrics.get("avg_occ_vref_unexpanded_margin", None)),
+            "avg_occ_vref_max_softmax_weight": _safe_float(metrics.get("avg_occ_vref_max_softmax_weight", None)),
             "total_sim_time": _safe_float(metrics.get("total_sim_time", None)),
             "case_wall_time_s": float(time.perf_counter() - t0),
             "total_steps": int(metrics.get("total_steps", 0) or 0),
@@ -1255,7 +1465,6 @@ def _run_one_idx_job(
             "oa_visible_reach_mode": oa_visible_reach_mode,
             "oa_use_nominal_tracking_cost": oa_use_nominal_tracking_cost,
             "oa_dt": oa_dt,
-            "occ_version": occ_version,
             "occ_visible_scale": occ_visible_scale,
             "occ_enable_visible_hocbf": occ_enable_visible_hocbf,
             "crowd_mode": str(crowd_mode),

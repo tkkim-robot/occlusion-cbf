@@ -1,0 +1,23 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=di seed=42 idx=1..1 n_rand=50 tf=30.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/001] idx=  1 -> infeasible (raw=timeout/deadlock, compute_ms=15.660944580778722, intv=0.7872434666435755)
+
+=== Crowd Trial Summary (3-way) ===
+success=0 | collision=0 | infeasible=1 | total=1
+success idx   : []
+collision idx : []
+infeasible idx: [1]
+avg controller compute time over idx [ms]: 15.660944580778722
+avg control intervention over idx: 0.7872434666435755
+avg terminal slack L1 over idx: 0.0
+avg terminal slack max over idx: 0.0
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 30.0
+avg wall time per idx [s]: 18.150851833983324
+avg forced initially occluded over idx: 6.0
+avg forced revealed over idx: 3.0
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/ocbf_softmin_jax_smoke_20260512_143246/crowd_trials_occlusion_cbf_42_1_1_20260512_143246.csv
+saved summary : debug_logs/ocbf_softmin_jax_smoke_20260512_143246/crowd_trials_occlusion_cbf_42_1_1_20260512_143246.json
+

@@ -1,0 +1,107 @@
+{
+  "config": {
+    "scenario": "crowd2",
+    "label": "occlusion_cbf",
+    "baseline": "occlusion_cbf",
+    "controller_pos": "occlusion_cbf_qp",
+    "model": "uni",
+    "seed": 42,
+    "idx_start": 1,
+    "idx_end": 20,
+    "exclude_idx": [],
+    "n_rand": 50,
+    "tf": 500.0,
+    "oa_wmax": "default",
+    "oa_allow_solver_fallback": null,
+    "oa_dynamic_occluders": null,
+    "oa_dsafe": null,
+    "oa_visible_reach_mode": null,
+    "oa_use_nominal_tracking_cost": null,
+    "oa_dt": null,
+    "occ_version": "v2",
+    "occ_visible_scale": null,
+    "occ_enable_visible_hocbf": true,
+    "crowd_mode": "forced_emergence",
+    "forced_events": 6,
+    "forced_bg_rand": null,
+    "forced_hidden_speed": 1.0,
+    "forced_occluder_radius_min": 0.8,
+    "forced_occluder_radius_max": 1.0,
+    "forced_validate_occlusion": true,
+    "forced_require_corridor_conflict": true,
+    "backup_cbf_overrides": {
+      "vref_tracking_mode_occ_uni": "projected",
+      "T_horizon": 0.4,
+      "rho_T": 0.05,
+      "terminal_slack_weight": 0.1,
+      "terminal_slack_max": 2.0,
+      "obs_hocbf_slack_max": 0.02,
+      "qp_failure_fallback_mode": "state_safe",
+      "vref_scenario_softmax_kappa": 40.0,
+      "vref_scenario_weight_mode": "barrier",
+      "max_active_occlusions": 2,
+      "occ_selection_mode": "h_tilde",
+      "vref_front_mode_occ": "los"
+    },
+    "robot_spec_overrides": null,
+    "classification": {
+      "success": "raw_outcome == success",
+      "collision": "raw_outcome == collision",
+      "infeasible": "all remaining raw outcomes (infeasible/timeout/deadlock/exception/unknown)"
+    }
+  },
+  "counts": {
+    "success": 6,
+    "collision": 3,
+    "infeasible": 11,
+    "total": 20
+  },
+  "idx_lists": {
+    "success": [
+      2,
+      3,
+      4,
+      5,
+      18,
+      19
+    ],
+    "collision": [
+      6,
+      9,
+      17
+    ],
+    "infeasible": [
+      1,
+      7,
+      8,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      20
+    ]
+  },
+  "averages": {
+    "avg_compute_time_ms_over_idx": 13.075771539232125,
+    "avg_solve_time_ms_over_idx": 13.075771539232125,
+    "avg_control_intervention_l2_sq_over_idx": 0.4133608858271673,
+    "avg_terminal_slack_l1_over_idx": 0.050246590147590475,
+    "avg_terminal_slack_max_over_idx": 0.04362203172361641,
+    "avg_terminal_slack_active_ratio_over_idx": 0.4895276229245937,
+    "avg_occ_vref_predicted_margin_over_idx": null,
+    "avg_occ_vref_max_softmax_weight_over_idx": 0.9747350391767325,
+    "avg_total_sim_time_s_over_idx": 56.4175,
+    "avg_case_wall_time_s_over_idx": 28.184441402053928,
+    "avg_n_forced_initially_occluded_over_idx": 5.9,
+    "avg_n_forced_revealed_over_idx": 3.5,
+    "avg_n_forced_corridor_conflict_over_idx": 1.0,
+    "forced_reveal_positive_trial_rate": 1.0
+  },
+  "artifacts": {
+    "rows_csv": "debug_logs/uni_ocbf_design_search_20260523_144625/stage11_combined_slack_idx1_20/obs0.02_w01/crowd_trials_occlusion_cbf_42_1_20_20260523_182301.csv",
+    "summary_json": "debug_logs/uni_ocbf_design_search_20260523_144625/stage11_combined_slack_idx1_20/obs0.02_w01/crowd_trials_occlusion_cbf_42_1_20_20260523_182301.json"
+  }
+}

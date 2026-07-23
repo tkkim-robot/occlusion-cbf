@@ -1,0 +1,27 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=uni seed=42 idx=2..2 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+Restricted license - for non-production use only - expires 2027-11-29
+Infeasible detected!!
+[001/001] idx=  2 -> infeasible (raw=infeasible, compute_ms=16.384248658861186, intv=0.5906570676299193)
+
+=== Crowd Trial Summary (3-way) ===
+success=0 | collision=0 | infeasible=1 | total=1
+success idx   : []
+collision idx : []
+infeasible idx: [2]
+avg controller compute time over idx [ms]: 16.384248658861186
+avg control intervention over idx: 0.5906570676299193
+avg terminal slack L1 over idx: 0.0
+avg terminal slack max over idx: 0.0
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 19.950000000000003
+avg wall time per idx [s]: 20.712598540994804
+avg forced initially occluded over idx: 6.0
+avg forced revealed over idx: 3.0
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/uni_idx2_reverse_allowed_bias_huge_20260618/v-0.2_top3_k20_bias100.0/crowd_trials_occlusion_cbf_42_2_2_20260618_184001.csv
+saved summary : debug_logs/uni_idx2_reverse_allowed_bias_huge_20260618/v-0.2_top3_k20_bias100.0/crowd_trials_occlusion_cbf_42_2_2_20260618_184001.json
+

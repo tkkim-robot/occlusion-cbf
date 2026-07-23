@@ -1,0 +1,29 @@
+{
+  "timestamp": "20260422_230029",
+  "out_dir": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029",
+  "baselines": [
+    "control_tree_mpc",
+    "single_risk_mpc",
+    "oacp_mpc",
+    "oa_mpc"
+  ],
+  "models": [
+    "di",
+    "uni"
+  ],
+  "idx_start": 1,
+  "idx_end": 20,
+  "n_rand": 50,
+  "tf": 500.0,
+  "crowd_mode": "forced_emergence",
+  "rand_obs_setting": "v2 (test_crowd2 default)",
+  "forced_events": 6,
+  "forced_hidden_speed": 1.0,
+  "workers_per_sweep": 2,
+  "oa_freeze_flags": {
+    "dynamic_occluders": true,
+    "visible_reach_mode": "worst_case",
+    "use_nominal_tracking_cost": false,
+    "allow_solver_fallback": false
+  }
+}

@@ -1,0 +1,134 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=di seed=42 idx=1..100 n_rand=10 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/100] idx=  1 -> success    (raw=success, compute_ms=3.4192040137722546, intv=0.08631907237223495)
+[002/100] idx=  2 -> success    (raw=success, compute_ms=3.4091708918609642, intv=0.046600621158610384)
+[003/100] idx=  3 -> success    (raw=success, compute_ms=3.567643831388413, intv=0.11508397002001682)
+[004/100] idx=  4 -> success    (raw=success, compute_ms=3.4029079768786192, intv=0.11618907227998276)
+[005/100] idx=  5 -> success    (raw=success, compute_ms=3.3643067557081814, intv=0.16287058915146477)
+[006/100] idx=  6 -> success    (raw=success, compute_ms=3.575675976751196, intv=0.20619724886642724)
+[007/100] idx=  7 -> success    (raw=success, compute_ms=3.792024200477574, intv=0.1685039042411348)
+[008/100] idx=  8 -> success    (raw=success, compute_ms=3.4849320913109127, intv=0.0877299430533003)
+[009/100] idx=  9 -> success    (raw=success, compute_ms=3.553941921040571, intv=0.06947919420611454)
+[010/100] idx= 10 -> success    (raw=success, compute_ms=3.5657660386270225, intv=0.23137903743084104)
+[011/100] idx= 11 -> success    (raw=success, compute_ms=3.317228254769824, intv=0.07781617988050259)
+[012/100] idx= 12 -> success    (raw=success, compute_ms=3.5118953311831023, intv=0.04374545584189921)
+[013/100] idx= 13 -> success    (raw=success, compute_ms=3.4301443592641117, intv=0.18402668454560822)
+[014/100] idx= 14 -> success    (raw=success, compute_ms=3.774981081215587, intv=0.1443659269478299)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[015/100] idx= 15 -> success    (raw=success, compute_ms=4.0975131765836466, intv=0.12060559555197468)
+[016/100] idx= 16 -> success    (raw=success, compute_ms=4.172212117611531, intv=0.054624031036563714)
+[017/100] idx= 17 -> success    (raw=success, compute_ms=3.596342239440011, intv=0.07408040674053723)
+[018/100] idx= 18 -> success    (raw=success, compute_ms=3.576701473408415, intv=0.048547308944215155)
+[019/100] idx= 19 -> success    (raw=success, compute_ms=3.1925514389008347, intv=0.04491457780418691)
+[020/100] idx= 20 -> success    (raw=success, compute_ms=3.6914231188631037, intv=0.19896331935906644)
+[021/100] idx= 21 -> success    (raw=success, compute_ms=3.5817704331633795, intv=0.08009173408053326)
+[022/100] idx= 22 -> success    (raw=success, compute_ms=4.171847416843977, intv=0.1595076707295461)
+[023/100] idx= 23 -> success    (raw=success, compute_ms=3.9565461723039266, intv=0.19248817548284314)
+[024/100] idx= 24 -> success    (raw=success, compute_ms=3.552746209466561, intv=0.05846348815186281)
+[025/100] idx= 25 -> success    (raw=success, compute_ms=3.4636017549085176, intv=0.09739146492806275)
+[026/100] idx= 26 -> success    (raw=success, compute_ms=3.729816253869117, intv=0.13202483805075477)
+[027/100] idx= 27 -> success    (raw=success, compute_ms=3.5447390536306385, intv=0.04735616479579212)
+[028/100] idx= 28 -> success    (raw=success, compute_ms=3.640670426157957, intv=0.050887854572830876)
+[029/100] idx= 29 -> success    (raw=success, compute_ms=3.675633953522463, intv=0.04416041041505239)
+[030/100] idx= 30 -> success    (raw=success, compute_ms=3.7410815941323774, intv=0.07926435122339348)
+[031/100] idx= 31 -> success    (raw=success, compute_ms=3.902261821336314, intv=0.1074047029335943)
+[032/100] idx= 32 -> success    (raw=success, compute_ms=3.647512827220703, intv=0.12185909287860536)
+[033/100] idx= 33 -> success    (raw=success, compute_ms=4.213647684318898, intv=0.17339240306351744)
+[034/100] idx= 34 -> success    (raw=success, compute_ms=4.590159515808207, intv=0.14630586307176682)
+[035/100] idx= 35 -> success    (raw=success, compute_ms=3.9317680250482265, intv=0.10927845741890589)
+[036/100] idx= 36 -> success    (raw=success, compute_ms=3.453449680366586, intv=0.04285882246214231)
+[037/100] idx= 37 -> success    (raw=success, compute_ms=3.1280635822597422, intv=0.12725080296971195)
+[038/100] idx= 38 -> success    (raw=success, compute_ms=4.226069609753073, intv=0.11307449046602847)
+[039/100] idx= 39 -> success    (raw=success, compute_ms=4.46348003532877, intv=0.17234247678072603)
+[040/100] idx= 40 -> success    (raw=success, compute_ms=3.428679397234655, intv=0.2339485413639798)
+[041/100] idx= 41 -> success    (raw=success, compute_ms=4.48860880964152, intv=0.1850823516334379)
+[042/100] idx= 42 -> success    (raw=success, compute_ms=3.441580318296442, intv=0.17557760450290527)
+[043/100] idx= 43 -> success    (raw=success, compute_ms=3.8747208719317032, intv=0.10338592672222836)
+[044/100] idx= 44 -> success    (raw=success, compute_ms=3.4297925522568202, intv=0.21739610067633558)
+[045/100] idx= 45 -> success    (raw=success, compute_ms=4.026292866586278, intv=0.17974534199266748)
+[046/100] idx= 46 -> success    (raw=success, compute_ms=3.6607752789193713, intv=0.0825406628657856)
+[047/100] idx= 47 -> success    (raw=success, compute_ms=4.472856634856726, intv=0.17411691104155724)
+[048/100] idx= 48 -> success    (raw=success, compute_ms=3.6323934000302818, intv=0.09421934452776101)
+[049/100] idx= 49 -> success    (raw=success, compute_ms=3.6714967671192658, intv=0.1131505170377155)
+[050/100] idx= 50 -> success    (raw=success, compute_ms=4.12456887671324, intv=0.021421933845906585)
+[051/100] idx= 51 -> success    (raw=success, compute_ms=3.2902095474508126, intv=0.07573101350845629)
+[052/100] idx= 52 -> success    (raw=success, compute_ms=5.320972541220586, intv=0.14623443476673392)
+[053/100] idx= 53 -> success    (raw=success, compute_ms=4.236759264659488, intv=0.12141900553862917)
+[054/100] idx= 54 -> success    (raw=success, compute_ms=3.445303105518643, intv=0.04460812849325042)
+[055/100] idx= 55 -> success    (raw=success, compute_ms=3.571209846362253, intv=0.15548326555392075)
+[056/100] idx= 56 -> success    (raw=success, compute_ms=3.78828429363682, intv=0.08637917836524527)
+[057/100] idx= 57 -> success    (raw=success, compute_ms=3.652625054522391, intv=0.16798593330815892)
+[058/100] idx= 58 -> success    (raw=success, compute_ms=3.8086158065773734, intv=0.05523894384996114)
+[059/100] idx= 59 -> success    (raw=success, compute_ms=3.5363435517924553, intv=0.10330063860120325)
+[060/100] idx= 60 -> success    (raw=success, compute_ms=3.6236411188608915, intv=0.37068583072645167)
+[061/100] idx= 61 -> success    (raw=success, compute_ms=4.21917800202594, intv=0.047406733959993126)
+[062/100] idx= 62 -> success    (raw=success, compute_ms=3.869246465953151, intv=0.07051161123364294)
+[063/100] idx= 63 -> success    (raw=success, compute_ms=3.4762904583931897, intv=0.09500569850486887)
+[064/100] idx= 64 -> success    (raw=success, compute_ms=3.937292159543336, intv=0.09340550069304787)
+[065/100] idx= 65 -> success    (raw=success, compute_ms=3.7849048990569303, intv=0.1482667193641056)
+[066/100] idx= 66 -> success    (raw=success, compute_ms=3.9197184718213975, intv=0.05392522644635515)
+[067/100] idx= 67 -> success    (raw=success, compute_ms=4.788401625471281, intv=0.10304697027930812)
+[068/100] idx= 68 -> success    (raw=success, compute_ms=4.149471466417391, intv=0.17020293000200595)
+[069/100] idx= 69 -> success    (raw=success, compute_ms=3.5974283742969138, intv=0.19565662624502275)
+[070/100] idx= 70 -> success    (raw=success, compute_ms=3.9305157733296006, intv=0.12506215739029317)
+[071/100] idx= 71 -> success    (raw=success, compute_ms=3.8512136416773037, intv=0.20206318785704586)
+[072/100] idx= 72 -> success    (raw=success, compute_ms=3.877612649062602, intv=0.22696081830446077)
+[073/100] idx= 73 -> success    (raw=success, compute_ms=3.7252419469905766, intv=0.09414365344004186)
+[074/100] idx= 74 -> success    (raw=success, compute_ms=3.646474295116465, intv=0.14105113747790546)
+[075/100] idx= 75 -> success    (raw=success, compute_ms=3.3937692505578947, intv=0.18731378643099733)
+[076/100] idx= 76 -> success    (raw=success, compute_ms=3.7984587065303734, intv=0.21975576049328052)
+[077/100] idx= 77 -> success    (raw=success, compute_ms=3.9559058470947135, intv=0.09836023399234751)
+[078/100] idx= 78 -> success    (raw=success, compute_ms=3.9474322458372435, intv=0.18996325720702967)
+[079/100] idx= 79 -> success    (raw=success, compute_ms=3.659681206728902, intv=0.06281034261597024)
+[080/100] idx= 80 -> success    (raw=success, compute_ms=4.030242133746778, intv=0.06809119160075547)
+[081/100] idx= 81 -> success    (raw=success, compute_ms=3.8554794018218224, intv=0.11843091263024118)
+[082/100] idx= 82 -> success    (raw=success, compute_ms=3.911330308603604, intv=0.17449131845771376)
+[083/100] idx= 83 -> success    (raw=success, compute_ms=3.394503456593094, intv=0.17789262215520651)
+[084/100] idx= 84 -> success    (raw=success, compute_ms=3.789237268957531, intv=0.09207621770174657)
+[085/100] idx= 85 -> success    (raw=success, compute_ms=3.523687263194006, intv=0.07862031688398367)
+[086/100] idx= 86 -> success    (raw=success, compute_ms=3.554975296563296, intv=0.20611990669686608)
+[087/100] idx= 87 -> success    (raw=success, compute_ms=3.5119868895038553, intv=0.17825975578529912)
+[088/100] idx= 88 -> success    (raw=success, compute_ms=3.2385870166194297, intv=0.07841701840647249)
+[089/100] idx= 89 -> success    (raw=success, compute_ms=4.27249587628591, intv=0.1078706952371739)
+[090/100] idx= 90 -> success    (raw=success, compute_ms=3.54298223513922, intv=0.0454498520807498)
+[091/100] idx= 91 -> success    (raw=success, compute_ms=4.384949979292049, intv=0.282538008513803)
+[092/100] idx= 92 -> success    (raw=success, compute_ms=3.7032724914729203, intv=0.22680687528398488)
+[093/100] idx= 93 -> success    (raw=success, compute_ms=3.701981357138855, intv=0.17536087014332158)
+[094/100] idx= 94 -> success    (raw=success, compute_ms=4.275178376603832, intv=0.226470410964772)
+[095/100] idx= 95 -> success    (raw=success, compute_ms=3.94506488362563, intv=0.14521654821984134)
+[096/100] idx= 96 -> success    (raw=success, compute_ms=3.4139150361250254, intv=0.07698131488732643)
+[097/100] idx= 97 -> success    (raw=success, compute_ms=4.815541551164907, intv=0.08369210225951867)
+[098/100] idx= 98 -> success    (raw=success, compute_ms=5.418441381263227, intv=0.11923703723504699)
+[099/100] idx= 99 -> success    (raw=success, compute_ms=4.308967540325387, intv=0.05905262775252149)
+[100/100] idx=100 -> success    (raw=success, compute_ms=3.510078906559627, intv=0.13018626440685532)
+
+=== Crowd Trial Summary (3-way) ===
+success=100 | collision=0 | infeasible=0 | total=100
+success idx   : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]
+collision idx : []
+infeasible idx: []
+avg controller compute time over idx [ms]: 3.802682983791885
+avg control intervention over idx: 0.12621271232071396
+avg terminal slack L1 over idx: 0.0
+avg terminal slack max over idx: 0.0
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 109.55000000000001
+avg wall time per idx [s]: 11.469276512866491
+avg forced initially occluded over idx: 5.86
+avg forced revealed over idx: 5.16
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/paper_workers1_ocbf_pure_noslack_nrand10_30_20260524_032241/nrand10_noslack_top3_k40_rhoauto/crowd_trials_occlusion_cbf_42_1_100_20260524_032241.csv
+saved summary : debug_logs/paper_workers1_ocbf_pure_noslack_nrand10_30_20260524_032241/nrand10_noslack_top3_k40_rhoauto/crowd_trials_occlusion_cbf_42_1_100_20260524_032241.json
+

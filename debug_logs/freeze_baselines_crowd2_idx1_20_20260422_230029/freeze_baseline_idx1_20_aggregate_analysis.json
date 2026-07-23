@@ -1,0 +1,674 @@
+[
+  {
+    "model": "di",
+    "baseline": "control_tree_mpc",
+    "success": 0,
+    "collision": 19,
+    "infeasible": 1,
+    "total": 20,
+    "success_rate": 0.0,
+    "raw_counts": {
+      "collision": 19,
+      "timeout/deadlock": 1
+    },
+    "idx_success": [],
+    "idx_collision": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "idx_infeasible": [
+      12
+    ],
+    "timeout_deadlock_idx": [
+      12
+    ],
+    "raw_infeasible_idx": [],
+    "exceptions": 0,
+    "avg_solve_ms": 210.47578273073708,
+    "avg_sim_s": 132.7225,
+    "avg_wall_s": 513.7612053124758,
+    "avg_forced_revealed": 3.15,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 12,
+        "raw_outcome": "timeout/deadlock",
+        "wall_s": 1943.6461726669222,
+        "sim_s": 500.0,
+        "steps": 10000,
+        "solve_ms": 191.86423471096205,
+        "final_goal_distance": 39.277014883360835
+      },
+      {
+        "idx": 17,
+        "raw_outcome": "collision",
+        "wall_s": 1408.246933458955,
+        "sim_s": 389.5,
+        "steps": 7790,
+        "solve_ms": 178.23106039480447,
+        "final_goal_distance": 39.42301587705783
+      },
+      {
+        "idx": 20,
+        "raw_outcome": "collision",
+        "wall_s": 1090.9358350830153,
+        "sim_s": 294.2,
+        "steps": 5884,
+        "solve_ms": 182.77257371365496,
+        "final_goal_distance": 38.70150098332636
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_control_tree_mpc_42_1_20_20260422_230030.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_control_tree_mpc_42_1_20_20260422_230030.csv"
+  },
+  {
+    "model": "di",
+    "baseline": "single_risk_mpc",
+    "success": 3,
+    "collision": 17,
+    "infeasible": 0,
+    "total": 20,
+    "success_rate": 0.15,
+    "raw_counts": {
+      "collision": 17,
+      "success": 3
+    },
+    "idx_success": [
+      3,
+      10,
+      13
+    ],
+    "idx_collision": [
+      1,
+      2,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      11,
+      12,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "idx_infeasible": [],
+    "timeout_deadlock_idx": [],
+    "raw_infeasible_idx": [],
+    "exceptions": 0,
+    "avg_solve_ms": 28.519929568135677,
+    "avg_sim_s": 55.36,
+    "avg_wall_s": 37.18899286245578,
+    "avg_forced_revealed": 3.25,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 15,
+        "raw_outcome": "collision",
+        "wall_s": 84.60830508288927,
+        "sim_s": 107.95,
+        "steps": 2159,
+        "solve_ms": 34.64667340731934,
+        "final_goal_distance": 3.6047530571594515
+      },
+      {
+        "idx": 20,
+        "raw_outcome": "collision",
+        "wall_s": 78.80128491704818,
+        "sim_s": 105.80000000000001,
+        "steps": 2116,
+        "solve_ms": 30.948780694637986,
+        "final_goal_distance": 17.006280991066728
+      },
+      {
+        "idx": 4,
+        "raw_outcome": "collision",
+        "wall_s": 68.99926225002855,
+        "sim_s": 112.45,
+        "steps": 2249,
+        "solve_ms": 25.838731151619132,
+        "final_goal_distance": 23.30761786830925
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_single_risk_mpc_42_1_20_20260423_003258.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_single_risk_mpc_42_1_20_20260423_003258.csv"
+  },
+  {
+    "model": "di",
+    "baseline": "oacp_mpc",
+    "success": 9,
+    "collision": 7,
+    "infeasible": 4,
+    "total": 20,
+    "success_rate": 0.45,
+    "raw_counts": {
+      "success": 9,
+      "infeasible": 4,
+      "collision": 7
+    },
+    "idx_success": [
+      1,
+      3,
+      4,
+      5,
+      11,
+      12,
+      16,
+      18,
+      20
+    ],
+    "idx_collision": [
+      7,
+      8,
+      9,
+      14,
+      15,
+      17,
+      19
+    ],
+    "idx_infeasible": [
+      2,
+      6,
+      10,
+      13
+    ],
+    "timeout_deadlock_idx": [],
+    "raw_infeasible_idx": [
+      2,
+      6,
+      10,
+      13
+    ],
+    "exceptions": 0,
+    "avg_solve_ms": 262.9351151001633,
+    "avg_sim_s": 72.6475,
+    "avg_wall_s": 386.3928631936957,
+    "avg_forced_revealed": 4.2,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 4,
+        "raw_outcome": "success",
+        "wall_s": 661.4317277080845,
+        "sim_s": 120.60000000000001,
+        "steps": 2412,
+        "solve_ms": 264.2808801444129,
+        "final_goal_distance": 0.2320079094491858
+      },
+      {
+        "idx": 5,
+        "raw_outcome": "success",
+        "wall_s": 629.473177124979,
+        "sim_s": 119.4,
+        "steps": 2388,
+        "solve_ms": 256.5483000408136,
+        "final_goal_distance": 0.26314835886942334
+      },
+      {
+        "idx": 11,
+        "raw_outcome": "success",
+        "wall_s": 611.2261299160309,
+        "sim_s": 118.65,
+        "steps": 2373,
+        "solve_ms": 249.93040706667088,
+        "final_goal_distance": 0.26117078534328525
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oacp_mpc_42_1_20_20260423_004733.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oacp_mpc_42_1_20_20260423_004733.csv"
+  },
+  {
+    "model": "di",
+    "baseline": "oa_mpc",
+    "success": 0,
+    "collision": 0,
+    "infeasible": 20,
+    "total": 20,
+    "success_rate": 0.0,
+    "raw_counts": {
+      "infeasible": 20
+    },
+    "idx_success": [],
+    "idx_collision": [],
+    "idx_infeasible": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "timeout_deadlock_idx": [],
+    "raw_infeasible_idx": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "exceptions": 0,
+    "avg_solve_ms": 205.162052413935,
+    "avg_sim_s": 4.065,
+    "avg_wall_s": 18.259886585338972,
+    "avg_forced_revealed": 1.1,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 17,
+        "raw_outcome": "infeasible",
+        "wall_s": 33.7383927910123,
+        "sim_s": 7.45,
+        "steps": 149,
+        "solve_ms": 216.4987896822218,
+        "final_goal_distance": 32.76025739888263
+      },
+      {
+        "idx": 7,
+        "raw_outcome": "infeasible",
+        "wall_s": 30.47762066696305,
+        "sim_s": 6.8500000000000005,
+        "steps": 137,
+        "solve_ms": 213.89398785022487,
+        "final_goal_distance": 32.63656807440335
+      },
+      {
+        "idx": 9,
+        "raw_outcome": "infeasible",
+        "wall_s": 28.728602790972218,
+        "sim_s": 5.9,
+        "steps": 118,
+        "solve_ms": 233.0780953101782,
+        "final_goal_distance": 33.220682569367376
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oa_mpc_42_1_20_20260423_012232.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oa_mpc_42_1_20_20260423_012232.csv"
+  },
+  {
+    "model": "uni",
+    "baseline": "control_tree_mpc",
+    "success": 0,
+    "collision": 18,
+    "infeasible": 2,
+    "total": 20,
+    "success_rate": 0.0,
+    "raw_counts": {
+      "collision": 18,
+      "timeout/deadlock": 2
+    },
+    "idx_success": [],
+    "idx_collision": [
+      1,
+      3,
+      4,
+      5,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "idx_infeasible": [
+      2,
+      6
+    ],
+    "timeout_deadlock_idx": [
+      2,
+      6
+    ],
+    "raw_infeasible_idx": [],
+    "exceptions": 0,
+    "avg_solve_ms": 187.56944538151348,
+    "avg_sim_s": 79.785,
+    "avg_wall_s": 267.69963649379207,
+    "avg_forced_revealed": 2.9,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 6,
+        "raw_outcome": "timeout/deadlock",
+        "wall_s": 1621.0569763750536,
+        "sim_s": 500.0,
+        "steps": 10000,
+        "solve_ms": 159.76525782701793,
+        "final_goal_distance": 42.33002876016117
+      },
+      {
+        "idx": 2,
+        "raw_outcome": "timeout/deadlock",
+        "wall_s": 1561.781898999936,
+        "sim_s": 500.0,
+        "steps": 10000,
+        "solve_ms": 154.18217936401487,
+        "final_goal_distance": 55.54779947407822
+      },
+      {
+        "idx": 11,
+        "raw_outcome": "collision",
+        "wall_s": 285.1349517919589,
+        "sim_s": 88.55000000000001,
+        "steps": 1771,
+        "solve_ms": 155.75111995978077,
+        "final_goal_distance": 35.72587617052958
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_control_tree_mpc_42_1_20_20260423_012412.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_control_tree_mpc_42_1_20_20260423_012412.csv"
+  },
+  {
+    "model": "uni",
+    "baseline": "single_risk_mpc",
+    "success": 5,
+    "collision": 15,
+    "infeasible": 0,
+    "total": 20,
+    "success_rate": 0.25,
+    "raw_counts": {
+      "collision": 15,
+      "success": 5
+    },
+    "idx_success": [
+      4,
+      5,
+      10,
+      11,
+      14
+    ],
+    "idx_collision": [
+      1,
+      2,
+      3,
+      6,
+      7,
+      8,
+      9,
+      12,
+      13,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "idx_infeasible": [],
+    "timeout_deadlock_idx": [],
+    "raw_infeasible_idx": [],
+    "exceptions": 0,
+    "avg_solve_ms": 26.24691676172312,
+    "avg_sim_s": 76.2875,
+    "avg_wall_s": 45.77747727289098,
+    "avg_forced_revealed": 3.85,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 14,
+        "raw_outcome": "success",
+        "wall_s": 93.06635529198684,
+        "sim_s": 170.75,
+        "steps": 3415,
+        "solve_ms": 22.192298526375243,
+        "final_goal_distance": 0.2720685868937607
+      },
+      {
+        "idx": 4,
+        "raw_outcome": "success",
+        "wall_s": 91.03570650005713,
+        "sim_s": 166.10000000000002,
+        "steps": 3322,
+        "solve_ms": 22.534862856511285,
+        "final_goal_distance": 0.25361148457438787
+      },
+      {
+        "idx": 11,
+        "raw_outcome": "success",
+        "wall_s": 90.40868533402681,
+        "sim_s": 153.45000000000002,
+        "steps": 3069,
+        "solve_ms": 23.621600566133882,
+        "final_goal_distance": 0.26614596899640547
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_single_risk_mpc_42_1_20_20260423_015400.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_single_risk_mpc_42_1_20_20260423_015400.csv"
+  },
+  {
+    "model": "uni",
+    "baseline": "oacp_mpc",
+    "success": 0,
+    "collision": 20,
+    "infeasible": 0,
+    "total": 20,
+    "success_rate": 0.0,
+    "raw_counts": {
+      "collision": 20
+    },
+    "idx_success": [],
+    "idx_collision": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "idx_infeasible": [],
+    "timeout_deadlock_idx": [],
+    "raw_infeasible_idx": [],
+    "exceptions": 0,
+    "avg_solve_ms": 200.60393055413522,
+    "avg_sim_s": 24.777500000000003,
+    "avg_wall_s": 102.84785444360459,
+    "avg_forced_revealed": 2.55,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 2,
+        "raw_outcome": "collision",
+        "wall_s": 355.23673500004224,
+        "sim_s": 91.75,
+        "steps": 1835,
+        "solve_ms": 186.28093760088848,
+        "final_goal_distance": 10.330162086932347
+      },
+      {
+        "idx": 4,
+        "raw_outcome": "collision",
+        "wall_s": 274.90825095796026,
+        "sim_s": 69.55,
+        "steps": 1391,
+        "solve_ms": 188.94835500594624,
+        "final_goal_distance": 24.533421044489884
+      },
+      {
+        "idx": 10,
+        "raw_outcome": "collision",
+        "wall_s": 172.38858791603707,
+        "sim_s": 42.45,
+        "steps": 849,
+        "solve_ms": 193.65428650677117,
+        "final_goal_distance": 19.302354354757526
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oacp_mpc_42_1_20_20260423_015800.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oacp_mpc_42_1_20_20260423_015800.csv"
+  },
+  {
+    "model": "uni",
+    "baseline": "oa_mpc",
+    "success": 0,
+    "collision": 0,
+    "infeasible": 20,
+    "total": 20,
+    "success_rate": 0.0,
+    "raw_counts": {
+      "infeasible": 20
+    },
+    "idx_success": [],
+    "idx_collision": [],
+    "idx_infeasible": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "timeout_deadlock_idx": [],
+    "raw_infeasible_idx": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "exceptions": 0,
+    "avg_solve_ms": 190.5677907653811,
+    "avg_sim_s": 6.3525,
+    "avg_wall_s": 26.560115385398966,
+    "avg_forced_revealed": 1.35,
+    "avg_forced_initially_occluded": 5.9,
+    "forced_reveal_positive_trial_rate": 1.0,
+    "slowest": [
+      {
+        "idx": 17,
+        "raw_outcome": "infeasible",
+        "wall_s": 48.765814875019714,
+        "sim_s": 10.100000000000001,
+        "steps": 202,
+        "solve_ms": 232.33953030609368,
+        "final_goal_distance": 32.05284728428992
+      },
+      {
+        "idx": 6,
+        "raw_outcome": "infeasible",
+        "wall_s": 40.44439970795065,
+        "sim_s": 8.85,
+        "steps": 177,
+        "solve_ms": 219.75295486173323,
+        "final_goal_distance": 31.231978679687856
+      },
+      {
+        "idx": 9,
+        "raw_outcome": "infeasible",
+        "wall_s": 38.89333866699599,
+        "sim_s": 8.5,
+        "steps": 170,
+        "solve_ms": 220.04485367454916,
+        "final_goal_distance": 31.532262804405384
+      }
+    ],
+    "summary_json": "debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oa_mpc_42_1_20_20260423_020653.json",
+    "rows_csv": "/Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oa_mpc_42_1_20_20260423_020653.csv"
+  }
+]

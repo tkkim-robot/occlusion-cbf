@@ -1,0 +1,59 @@
+[
+  {
+    "mode": "forward_only",
+    "topk": 2,
+    "kappa": 0,
+    "tracking": "gated",
+    "visible": false,
+    "label": "forward_only_top2_k0_gated",
+    "returncode": 0,
+    "elapsed_wall_s": 139.724,
+    "out_dir": "debug_logs/uni_ocbf_fwd_vs_fullrev_noslack_targeted_20260621_172039/forward_only_top2_k0_gated",
+    "summary_json": "debug_logs/uni_ocbf_fwd_vs_fullrev_noslack_targeted_20260621_172039/forward_only_top2_k0_gated/crowd_trials_occlusion_cbf_42_1_100_20260621_172039.json",
+    "success": 0,
+    "collision": 7,
+    "infeasible": 93,
+    "total": 100,
+    "success_idx": []
+  },
+  {
+    "mode": "forward_only",
+    "topk": 2,
+    "kappa": 10,
+    "tracking": "gated",
+    "visible": false,
+    "label": "forward_only_top2_k10_gated",
+    "returncode": 0,
+    "elapsed_wall_s": 183.742,
+    "out_dir": "debug_logs/uni_ocbf_fwd_vs_fullrev_noslack_targeted_20260621_172039/forward_only_top2_k10_gated",
+    "summary_json": "debug_logs/uni_ocbf_fwd_vs_fullrev_noslack_targeted_20260621_172039/forward_only_top2_k10_gated/crowd_trials_occlusion_cbf_42_1_100_20260621_172259.json",
+    "success": 2,
+    "collision": 9,
+    "infeasible": 89,
+    "total": 100,
+    "success_idx": [
+      2,
+      58
+    ]
+  },
+  {
+    "mode": "forward_only",
+    "topk": 2,
+    "kappa": 20,
+    "tracking": "gated",
+    "visible": false,
+    "label": "forward_only_top2_k20_gated",
+    "returncode": 0,
+    "elapsed_wall_s": 176.453,
+    "out_dir": "debug_logs/uni_ocbf_fwd_vs_fullrev_noslack_targeted_20260621_172039/forward_only_top2_k20_gated",
+    "summary_json": "debug_logs/uni_ocbf_fwd_vs_fullrev_noslack_targeted_20260621_172039/forward_only_top2_k20_gated/crowd_trials_occlusion_cbf_42_1_100_20260621_172603.json",
+    "success": 2,
+    "collision": 8,
+    "infeasible": 90,
+    "total": 100,
+    "success_idx": [
+      2,
+      57
+    ]
+  }
+]

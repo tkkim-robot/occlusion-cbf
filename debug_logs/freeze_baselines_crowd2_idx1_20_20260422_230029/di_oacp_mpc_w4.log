@@ -1,0 +1,68 @@
+[CMD] uv run python tools/benchmark_crowd_trials.py --scenario crowd2 --idx-start 1 --idx-end 20 --n-rand 50 --tf 500 --crowd-mode forced_emergence --forced-events 6 --forced-hidden-speed 1.0 --forced-occluder-radius-min 0.8 --forced-occluder-radius-max 1.0 --forced-validate-occlusion true --forced-require-corridor-conflict true --workers 4 --out-dir /Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029 --oa-dynamic-occluders true --oa-visible-reach-mode worst_case --oa-use-nominal-tracking-cost false --oa-allow-solver-fallback false --model di --baseline oacp_mpc
+[RUN] scenario=crowd2 label=oacp_mpc baseline=oacp_mpc pos=oacp_mpc model=di seed=42 idx=1..20 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=False oa_dynamic_occluders=True oa_dsafe=None oa_visible_reach_mode=worst_case oa_use_nominal_tracking_cost=False oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/020] idx=  2 -> infeasible (raw=infeasible, solve_ms=265.7588748685143, intv=0.2170639036228986)
+[002/020] idx=  1 -> success    (raw=success, solve_ms=263.47266926723404, intv=0.1318134943620479)
+[003/020] idx=  6 -> infeasible (raw=infeasible, solve_ms=299.26842420051497, intv=0.0685271730230007)
+[004/020] idx=  3 -> success    (raw=success, solve_ms=266.71735808489035, intv=0.1910395213571329)
+[005/020] idx=  4 -> success    (raw=success, solve_ms=264.2808801444129, intv=0.49227106193916415)
+[006/020] idx=  7 -> collision  (raw=collision, solve_ms=270.3027583313724, intv=0.8444383555804997)
+[007/020] idx=  8 -> collision  (raw=collision, solve_ms=271.5282007916643, intv=0.4331315524834368)
+[008/020] idx=  9 -> collision  (raw=collision, solve_ms=254.47226201411698, intv=0.2804237240846538)
+[009/020] idx= 10 -> infeasible (raw=infeasible, solve_ms=261.45070166488944, intv=0.42527179738426935)
+[010/020] idx= 13 -> infeasible (raw=infeasible, solve_ms=302.9299212136286, intv=0.5549805593018159)
+[011/020] idx= 14 -> collision  (raw=collision, solve_ms=272.64723188923915, intv=0.6990803511828211)
+[012/020] idx=  5 -> success    (raw=success, solve_ms=256.5483000408136, intv=0.399975743117595)
+[013/020] idx= 15 -> collision  (raw=collision, solve_ms=261.8133438859701, intv=0.4431678121837333)
+[014/020] idx= 12 -> success    (raw=success, solve_ms=245.84114494971445, intv=0.1893012357528723)
+[015/020] idx= 17 -> collision  (raw=collision, solve_ms=253.44249906066256, intv=0.5254043990863844)
+[016/020] idx= 11 -> success    (raw=success, solve_ms=249.93040706667088, intv=0.34416614948575863)
+[017/020] idx= 16 -> success    (raw=success, solve_ms=239.4357768932846, intv=0.15975926632410836)
+[018/020] idx= 19 -> collision  (raw=collision, solve_ms=261.3593933696689, intv=0.514531782540029)
+[019/020] idx= 18 -> success    (raw=success, solve_ms=252.65797702847104, intv=0.40449275086738257)
+[020/020] idx= 20 -> success    (raw=success, solve_ms=244.84417723753253, intv=0.2708758292688885)
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [26.12513329  9.09441767  0.30887783 -0.7826264  -0.5093722  -2.
+ 32.          1.        ], Robot: [25.65604127  8.81903905] 0.25, Distance: 0.5439491746683679, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [22.25625387 10.31855921  0.8         0.07011752 -0.20534492  9.95185834
+ 10.95422686  1.        ], Robot: [21.28339193 10.69680219] 0.25, Distance: 1.0438046237359957, True
+Collision detected !!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 3.22157167 16.27986632  0.3998914  -0.34145508  0.33179607 -2.
+ 32.          1.        ], Robot: [ 2.85174553 15.75166829] 0.25, Distance: 0.6447980555560243, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 0.5        10.04076188  0.8         0.06048474 -0.17752899  8.96741049
+ 10.09394996  1.        ], Robot: [0.97282582 9.1056146 ] 0.25, Distance: 1.0478858117125993, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 0.57606959 24.09123396  0.388668   -0.71962162 -0.14446611 -2.
+ 32.          1.        ], Robot: [1.39948306e-02 2.43474881e+01] 0.25, Distance: 0.6177331393769393, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 7.61525313 20.51233213  0.8        -0.10012941  0.29998731 20.22836504
+ 21.10040521  1.        ], Robot: [ 6.58539753 20.70595363] 0.25, Distance: 1.0478987665904997, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [22.73025676  9.73466509  0.8         0.09945624  0.28955841  9.70573707
+ 10.65696662  1.        ], Robot: [21.79912914 10.21603098] 0.25, Distance: 1.0481945262748689, True
+Collision detected !!
+
+=== Crowd Trial Summary (3-way) ===
+success=9 | collision=7 | infeasible=4 | total=20
+success idx   : [1, 3, 4, 5, 11, 12, 16, 18, 20]
+collision idx : [7, 8, 9, 14, 15, 17, 19]
+infeasible idx: [2, 6, 10, 13]
+avg solve time over idx [ms]: 262.9351151001633
+avg control intervention over idx: 0.37948582314742463
+avg terminal slack L1 over idx: None
+avg terminal slack max over idx: None
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 72.6475
+avg wall time per idx [s]: 386.3928631936957
+avg forced initially occluded over idx: 5.9
+avg forced revealed over idx: 4.2
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : /Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oacp_mpc_42_1_20_20260423_004733.csv
+saved summary : /Users/parkcart/workspace/occlusion-cbf/debug_logs/freeze_baselines_crowd2_idx1_20_20260422_230029/crowd_trials_oacp_mpc_42_1_20_20260423_004733.json
+

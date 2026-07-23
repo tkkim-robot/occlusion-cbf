@@ -1,0 +1,36 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=di seed=42 idx=1..20 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/020] idx=  1 -> collision  (raw=collision, compute_ms=29.030691420494698, intv=0.4072650591842038)
+[002/020] idx=  2 -> collision  (raw=collision, compute_ms=38.35059083578301, intv=0.18839377691630818)
+[003/020] idx=  4 -> collision  (raw=collision, compute_ms=23.71359858969974, intv=0.6832684177948498)
+[004/020] idx=  5 -> collision  (raw=collision, compute_ms=31.841809449379227, intv=0.6369939027873588)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+Restricted license - for non-production use only - expires 2027-11-29
+[005/020] idx=  3 -> infeasible (raw=infeasible, compute_ms=26.529214293443374, intv=0.33393872618178444)
+[006/020] idx=  9 -> infeasible (raw=infeasible, compute_ms=37.12487602695966, intv=0.20987946722052492)
+Collision with known obstacle detected! Obs: [ 2.31064427  9.52885872  0.36599384 -0.98714669 -0.04082587 -2.
+ 32.          1.        ], Robot: [1.82488399 9.15131068] 0.25, Distance: 0.6152280682977654, True
+Collision detected !!
+Collision with known obstacle detected! Obs: [ 3.76950655 11.95124584  0.3069557  -0.2906989  -0.7916817  -2.
+ 32.          1.        ], Robot: [ 3.27828586 11.70090733] 0.25, Distance: 0.5513321403492047, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[007/020] idx=  8 -> infeasible (raw=infeasible, compute_ms=30.346136109361204, intv=0.6706483498543795)
+[008/020] idx= 10 -> infeasible (raw=infeasible, compute_ms=35.30049426122927, intv=0.6852008166240036)
+[009/020] idx= 11 -> collision  (raw=collision, compute_ms=33.407195283186184, intv=0.588796586296994)
+[010/020] idx=  6 -> success    (raw=success, compute_ms=24.68694971388138, intv=0.23635865179785925)
+[011/020] idx=  7 -> success    (raw=success, compute_ms=23.759567058388637, intv=0.30505638353633585)
+[012/020] idx= 14 -> collision  (raw=collision, compute_ms=30.53411741572571, intv=0.5380738648162928)
+[013/020] idx= 13 -> infeasible (raw=infeasible, compute_ms=22.447948876786082, intv=0.3420486723279293)
+Collision with known obstacle detected! Obs: [-0.64131388  9.1927562   0.31286749 -0.87043675 -0.16094609 -2.
+ 32.          1.        ], Robot: [-1.18257284  9.32259331] 0.25, Distance: 0.5566138119248885, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[014/020] idx= 15 -> infeasible (raw=infeasible, compute_ms=25.43752413938185, intv=0.36745838576510803)
+/opt/homebrew/Caskroom/miniforge/base/envs/myenv/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 5 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

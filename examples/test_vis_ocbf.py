@@ -558,8 +558,6 @@ def _make_robot_spec(args, sensing_range: float):
         "occlusion_types": [1],
         "occ_visible_scale": 1.0,
         "occ_kappa": float(args.occ_kappa),
-        "occ_visibility_version": "v1",
-        "occ_rollout_version": "v2",
     }
 
 

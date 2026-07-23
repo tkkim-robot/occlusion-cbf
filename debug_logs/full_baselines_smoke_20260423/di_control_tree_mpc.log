@@ -1,0 +1,24 @@
+[CMD] uv run python tools/benchmark_crowd_trials.py --scenario crowd2 --baseline control_tree_mpc --model di --seed 42 --idx-start 1 --idx-end 1 --n-rand 50 --tf 2.0 --crowd-mode forced_emergence --forced-events 6 --forced-hidden-speed 1.0 --workers 1
+[RUN] scenario=crowd2 label=control_tree_mpc baseline=control_tree_mpc pos=control_tree_mpc model=di seed=42 idx=1..1 n_rand=50 tf=2.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=None occ_visible_scale=None occ_enable_visible_hocbf=False crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+[001/001] idx=  1 -> infeasible (raw=timeout/deadlock, compute_ms=284.9424928019289, intv=2.4321779958215712)
+
+=== Crowd Trial Summary (3-way) ===
+success=0 | collision=0 | infeasible=1 | total=1
+success idx   : []
+collision idx : []
+infeasible idx: [1]
+avg controller compute time over idx [ms]: 284.9424928019289
+avg control intervention over idx: 2.4321779958215712
+avg terminal slack L1 over idx: None
+avg terminal slack max over idx: None
+avg terminal slack active ratio over idx: 0.0
+avg sim time over idx [s]: 2.0
+avg wall time per idx [s]: 12.27010079100728
+avg forced initially occluded over idx: 6.0
+avg forced revealed over idx: 0.0
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 0.0
+saved rows    : debug_logs/crowd_trials_control_tree_mpc_42_1_1_20260423_123827.csv
+saved summary : debug_logs/crowd_trials_control_tree_mpc_42_1_1_20260423_123827.json
+

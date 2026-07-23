@@ -1,0 +1,121 @@
+[RUN] scenario=crowd2 label=occlusion_cbf baseline=occlusion_cbf pos=occlusion_cbf_qp model=uni seed=42 idx=1..20 n_rand=50 tf=500.0 wmax=default oa_allow_solver_fallback=None oa_dynamic_occluders=None oa_dsafe=None oa_visible_reach_mode=None oa_use_nominal_tracking_cost=None oa_dt=None occ_version=v2 occ_visible_scale=None occ_enable_visible_hocbf=True crowd_mode=forced_emergence
+[RUN] show_animation=False, save_animation=False
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[001/020] idx=  8 -> infeasible (raw=infeasible, compute_ms=11.478737443252838, intv=0.9236003775129147)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[002/020] idx= 10 -> infeasible (raw=infeasible, compute_ms=15.452974215875585, intv=0.6135667423691268)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[003/020] idx=  3 -> infeasible (raw=infeasible, compute_ms=13.977418283850238, intv=0.47979806136989633)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[004/020] idx=  9 -> infeasible (raw=infeasible, compute_ms=15.550249783712896, intv=0.2765529145295157)
+[005/020] idx= 13 -> collision  (raw=collision, compute_ms=11.93529054554455, intv=0.3936134602985717)
+[006/020] idx=  7 -> infeasible (raw=infeasible, compute_ms=15.874742681435386, intv=0.5446685129416039)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[007/020] idx=  2 -> collision  (raw=collision, compute_ms=14.383734415024824, intv=0.18057447292786513)
+[008/020] idx= 15 -> infeasible (raw=infeasible, compute_ms=15.905852246630404, intv=0.49491067649599774)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[009/020] idx= 11 -> infeasible (raw=infeasible, compute_ms=18.286559746017495, intv=0.28053265982000514)
+Collision with known obstacle detected! Obs: [ 7.87589271 22.51127262  0.37619281  0.04663665 -0.94983673 -2.
+ 32.          1.        ], Robot: [ 8.0002078  21.89875279] 0.25, Distance: 0.6250078253015982, True
+Collision detected !!
+Restricted license - for non-production use only - expires 2027-11-29
+[010/020] idx= 17 -> infeasible (raw=infeasible, compute_ms=14.960550287166066, intv=0.19036839523288654)
+Restricted license - for non-production use only - expires 2027-11-29
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1539: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+[011/020] idx=  1 -> infeasible (raw=infeasible, compute_ms=13.324608498296644, intv=0.2028147082423046)
+[012/020] idx= 16 -> infeasible (raw=infeasible, compute_ms=15.177715664841733, intv=0.32552866478001785)
+[013/020] idx= 12 -> infeasible (raw=infeasible, compute_ms=14.07216637816303, intv=0.8787720711541214)
+[014/020] idx=  6 -> collision  (raw=collision, compute_ms=13.346496154971614, intv=0.2553490679499288)
+[015/020] idx= 20 -> infeasible (raw=infeasible, compute_ms=10.29692324098303, intv=0.5854473162240741)
+[016/020] idx=  4 -> success    (raw=success, compute_ms=9.959351557550468, intv=0.19908748521732125)
+[017/020] idx=  5 -> success    (raw=success, compute_ms=10.610058966047383, intv=0.23931046999590175)
+[018/020] idx= 19 -> infeasible (raw=infeasible, compute_ms=9.810431009857718, intv=0.4695215569997695)
+/Users/parkcart/workspace/occlusion-cbf/.venv/lib/python3.10/site-packages/cvxpy/problems/problem.py:1545: UserWarning: 
+    The problem is either infeasible or unbounded, but the solver
+    cannot tell which. Disable any solver-specific presolve methods
+    and re-solve to determine the precise problem status.
+
+    For GUROBI and CPLEX you can automatically perform this re-solve
+    with the keyword argument prob.solve(reoptimize=True, ...).
+    
+  warnings.warn(INF_OR_UNB_MESSAGE)
+[019/020] idx= 18 -> infeasible (raw=infeasible, compute_ms=10.581739605808576, intv=0.2906119469991678)
+[020/020] idx= 14 -> success    (raw=success, compute_ms=11.129035121659738, intv=0.4847706475230508)
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [ 1.88669466 12.23585373  0.34537531  0.7906432   0.31870865 -2.
+ 32.          1.        ], Robot: [ 2.24131706 12.71261267] 0.25, Distance: 0.5941852685027392, True
+Collision detected !!
+Infeasible detected!!
+ERROR in osqp_update_data_vec: Problem data validation.
+Infeasible detected!!
+Infeasible detected!!
+Infeasible detected!!
+Collision with known obstacle detected! Obs: [19.80163466 10.82887604  0.32076437 -0.06509869 -0.52470848 -2.
+ 32.          1.        ], Robot: [19.83632147 10.26104738] 0.25, Distance: 0.5688871214017576, True
+Collision detected !!
+Infeasible detected!!
+Infeasible detected!!
+
+=== Crowd Trial Summary (3-way) ===
+success=3 | collision=3 | infeasible=14 | total=20
+success idx   : [4, 5, 14]
+collision idx : [2, 6, 13]
+infeasible idx: [1, 3, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20]
+avg controller compute time over idx [ms]: 13.305731792334509
+avg control intervention over idx: 0.4154700104292021
+avg terminal slack L1 over idx: 0.016665044198052682
+avg terminal slack max over idx: 0.016018422056116238
+avg terminal slack active ratio over idx: 0.4806510393132336
+avg sim time over idx [s]: 49.6475
+avg wall time per idx [s]: 26.967380916702677
+avg forced initially occluded over idx: 5.9
+avg forced revealed over idx: 3.25
+avg forced corridor conflict over idx: 1.0
+forced reveal-positive trial rate: 1.0
+saved rows    : debug_logs/uni_ocbf_design_search_20260523_144625/stage2_idx1_20/T03_top2_k40_r005_sw5_sm2_all/crowd_trials_occlusion_cbf_42_1_20_20260523_151949.csv
+saved summary : debug_logs/uni_ocbf_design_search_20260523_144625/stage2_idx1_20/T03_top2_k40_r005_sw5_sm2_all/crowd_trials_occlusion_cbf_42_1_20_20260523_151949.json
+

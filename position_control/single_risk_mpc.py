@@ -42,7 +42,7 @@ class SingleRiskMPC(MPCCommonUtils):
       - receding-horizon execution where only the first control from the single
         optimized plan is applied each cycle.
 
-    Not implemented paper-faithfully here:
+    Not implemented here:
       - the paper's original application-specific symbolic-state definitions and
         full experiment stacks; this file is a test_crowd2 adaptation that reuses the
         repo's occlusion geometry to synthesize one direct hidden-world
