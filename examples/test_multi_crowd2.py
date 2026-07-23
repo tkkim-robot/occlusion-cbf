@@ -49,6 +49,14 @@ except ImportError:
     import test_crowd as crowd1
     import test_crowd2 as crowd2
 
+from position_control.ocbf.defaults import (
+    OCBF_QP_FAILURE_FALLBACK_MODES,
+    OCBF_SELECTION_MODES,
+    OCBF_TERMINAL_MODES,
+    OCBF_TERMINAL_RESIDUAL_MODES,
+    OCBF_VREF_SCENARIO_WEIGHT_MODES,
+)
+
 from safe_control.utils import env, plotting
 
 
@@ -894,7 +902,7 @@ def main():
     parser.add_argument(
         "--occ-vref-scenario-weight-mode",
         type=str,
-        choices=["barrier_expand", "barrier_unexpand"],
+        choices=OCBF_VREF_SCENARIO_WEIGHT_MODES,
         default=None,
         help=(
             "Override OCBF scenario blending score. barrier_expand uses rollout-expanded "
@@ -902,21 +910,21 @@ def main():
         ),
     )
     parser.add_argument("--occ-max-active-occlusions", type=int, default=None)
-    parser.add_argument("--occ-selection-mode", type=str, choices=["h_tilde", "distance"], default=None)
+    parser.add_argument("--occ-selection-mode", type=str, choices=OCBF_SELECTION_MODES, default=None)
     parser.add_argument("--occ-terminal-slack-weight", type=float, default=None)
     parser.add_argument("--occ-terminal-slack-max", type=float, default=None)
     parser.add_argument("--occ-obs-hocbf-slack-max", type=float, default=None)
     parser.add_argument("--occ-rollout-slack-max", type=float, default=None)
-    parser.add_argument("--occ-terminal-mode", type=str, choices=["all", "topm", "dominant", "none"], default=None)
+    parser.add_argument("--occ-terminal-mode", type=str, choices=OCBF_TERMINAL_MODES, default=None)
     parser.add_argument("--occ-terminal-active-count", type=int, default=None)
     parser.add_argument(
         "--occ-terminal-residual-mode",
         type=str,
-        choices=["off", "visibility_intersection", "visibility_only"],
+        choices=OCBF_TERMINAL_RESIDUAL_MODES,
         default=None,
     )
     parser.add_argument("--occ-terminal-visibility-reaction-margin", type=float, default=None)
-    parser.add_argument("--occ-qp-failure-fallback-mode", type=str, choices=["strict", "state_safe", "always"], default=None)
+    parser.add_argument("--occ-qp-failure-fallback-mode", type=str, choices=OCBF_QP_FAILURE_FALLBACK_MODES, default=None)
     parser.add_argument("--occ-enable-visible-hocbf", type=crowd1._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--occ-k-p", type=float, default=None)
     parser.add_argument("--occ-k-d", type=float, default=None)

@@ -31,6 +31,16 @@ except ImportError:
 ensure_repo_root()
 install_position_controller_shims()
 LocalTrackingControllerDyn_OCC = load_local_occ_controller("crowd")
+from position_control.ocbf.defaults import (
+    OCBF_QP_FAILURE_FALLBACK_MODES,
+    OCBF_ROLLOUT_MODES,
+    OCBF_SELECTION_MODES,
+    OCBF_TERMINAL_MODES,
+    OCBF_TERMINAL_RESIDUAL_MODES,
+    OCBF_VREF_FRONT_MODES,
+    OCBF_VREF_SCENARIO_WEIGHT_MODES,
+    OCBF_VREF_TRACKING_MODES,
+)
 from safe_control.utils import env, plotting
 
 SMALL_DYN_SPEED_MIN = 0.3
@@ -1953,7 +1963,12 @@ def main():
     parser.add_argument("--occ-rho-T", type=str, default=None, help="Override backup_cbf.rho_T for terminal occlusion backup constraint. Accepts a float or 'auto'.")
     parser.add_argument("--occ-k-p", type=float, default=None, help="Override backup_cbf.k_p_occ_di for DI occlusion backup controller.")
     parser.add_argument("--occ-k-d", type=float, default=None, help="Override backup_cbf.k_d_occ_di for DI occlusion backup controller.")
-    parser.add_argument("--occ-kappa", type=float, default=None, help="Override occlusion CBF scenario softmax kappa.")
+    parser.add_argument(
+        "--occ-kappa",
+        type=float,
+        default=None,
+        help="Override the OCBF barrier smoothing kappa. Default is fixed at 10.0; use only for ablations.",
+    )
     parser.add_argument(
         "--occ-vref-scenario-softmax-kappa",
         type=float,
@@ -1963,7 +1978,7 @@ def main():
     parser.add_argument(
         "--occ-vref-scenario-weight-mode",
         type=str,
-        choices=["barrier_expand", "barrier_unexpand"],
+        choices=OCBF_VREF_SCENARIO_WEIGHT_MODES,
         default=None,
         help=(
             "Override backup_cbf.vref_scenario_weight_mode for OCBF scenario blending. "
@@ -1980,14 +1995,14 @@ def main():
     parser.add_argument(
         "--occ-selection-mode",
         type=str,
-        choices=["h_tilde", "distance"],
+        choices=OCBF_SELECTION_MODES,
         default=None,
         help="Occlusion-CBF active occlusion selection score.",
     )
     parser.add_argument(
         "--occ-rollout-mode",
         type=str,
-        choices=["common", "per_scenario"],
+        choices=OCBF_ROLLOUT_MODES,
         default=None,
         help="Override backup_cbf.occ_rollout_mode for occlusion backup rollout construction.",
     )
@@ -2005,32 +2020,32 @@ def main():
     )
     parser.add_argument("--occ-obs-hocbf-slack-max", type=float, default=None)
     parser.add_argument("--occ-rollout-slack-max", type=float, default=None)
-    parser.add_argument("--occ-terminal-mode", type=str, choices=["all", "topm", "dominant", "none"], default=None)
+    parser.add_argument("--occ-terminal-mode", type=str, choices=OCBF_TERMINAL_MODES, default=None)
     parser.add_argument("--occ-terminal-active-count", type=int, default=None)
     parser.add_argument(
         "--occ-terminal-residual-mode",
         type=str,
-        choices=["off", "visibility_intersection", "visibility_only"],
+        choices=OCBF_TERMINAL_RESIDUAL_MODES,
         default=None,
     )
     parser.add_argument("--occ-terminal-visibility-reaction-margin", type=float, default=None)
     parser.add_argument(
         "--occ-qp-failure-fallback-mode",
         type=str,
-        choices=["strict", "state_safe", "always"],
+        choices=OCBF_QP_FAILURE_FALLBACK_MODES,
         default=None,
     )
     parser.add_argument(
         "--vref-mode-occ",
         type=str,
-        choices=["soft", "strict"],
+        choices=OCBF_VREF_TRACKING_MODES,
         default=None,
         help="Facet aggregation mode for UNI/DU occlusion backup v_ref.",
     )
     parser.add_argument(
         "--vref",
         type=str,
-        choices=["default", "los"],
+        choices=OCBF_VREF_FRONT_MODES,
         default=None,
         help=(
             "Front-facet direction mode for occlusion backup v_target. "

@@ -2,207 +2,42 @@ import time
 
 import cvxpy as cp
 import numpy as np
-from functools import partial
 
 from position_control.backup_controller import OcclusionController
+from position_control.ocbf.defaults import (
+    OCBF_DEFAULT_BARRIER_KAPPA,
+    OCBF_DEFAULT_QP_FAILURE_FALLBACK_MODE,
+    OCBF_DEFAULT_ROLLOUT_MODE,
+    OCBF_DEFAULT_SELECTION_MODE,
+    OCBF_DEFAULT_TERMINAL_MODE,
+    OCBF_DEFAULT_TERMINAL_RESIDUAL_MODE,
+    OCBF_QP_FAILURE_FALLBACK_MODES,
+    OCBF_ROLLOUT_MODES,
+    OCBF_SELECTION_MODES,
+    OCBF_TERMINAL_MODES,
+    OCBF_TERMINAL_RESIDUAL_MODES,
+    normalize_choice,
+)
+from position_control.ocbf.jax_constraints import (
+    JAX_AVAILABLE as _JAX_AVAILABLE,
+    jnp,
+    jax_occ_constraints_kernel_di as _jax_occ_constraints_kernel_di,
+    jax_occ_constraints_kernel_uni as _jax_occ_constraints_kernel_uni,
+)
 from safe_control.position_control.backup_cbf_qp import BackupCBFQP
 from utils.occlusion import OcclusionUtils
 
-try:
-    import jax
-    import jax.numpy as jnp
-
-    _JAX_AVAILABLE = True
-except Exception:
-    jax = None
-    jnp = None
-    _JAX_AVAILABLE = False
-
 _JAX_OCC_WARNED_MISSING = False
 
-
-if _JAX_AVAILABLE:
-    @partial(jax.jit, static_argnums=(14,))
-    def _jax_occ_constraints_kernel_di(
-        phi_b,           # (N,4)
-        Phi_b,           # (N,4,4)
-        fcl_traj,        # (N,4)
-        tau_points,      # (N,)
-        A_pad,           # (S,K,2)
-        b0_pad,          # (S,K)
-        v_expand_pad,    # (S,K)
-        valid_mask,      # (S,K)
-        sc_present,      # (S,)
-        f_x_vec,         # (4,)
-        g_x_mat,         # (4,2)
-        kappa,
-        alpha,
-        radius,
-        n_tau,           # static: avoid re-trace on Python loop
-    ):
-        """
-        Build occlusion CBF rows in a vectorized manner.
-        Returns:
-            A_occ: (S,N,2), b_occ: (S,N), keep_mask: (S,N)
-        """
-        phi = phi_b[:n_tau, :]
-        Phi = Phi_b[:n_tau, :, :]
-        fcl = fcl_traj[:n_tau, :]
-        tau = tau_points[:n_tau]
-
-        pos = phi[:, :2]  # (N,2)
-
-        # h(s,n,k) = A(s,k,:)·p(n,:) - b0(s,k) - (R + v_expand(s,k)*tau(n))
-        h = (
-            jnp.einsum("skd,nd->snk", A_pad, pos)
-            - b0_pad[:, None, :]
-            - (radius + v_expand_pad[:, None, :] * tau[None, :, None])
-        )
-
-        valid_bool = valid_mask[:, None, :] > 0.5
-        neg_inf = jnp.full_like(h, -jnp.inf)
-        h_valid = jnp.where(valid_bool, h, neg_inf)
-
-        max_h = jnp.max(h_valid, axis=2)              # (S,N)
-        finite_row = jnp.isfinite(max_h)
-        max_h_safe = jnp.where(finite_row, max_h, 0.0)
-
-        z = jnp.where(
-            valid_bool,
-            jnp.exp(kappa * (h - max_h_safe[:, :, None])),
-            0.0,
-        )
-        Z = jnp.sum(z, axis=2)                        # (S,N)
-        Z_safe = jnp.maximum(Z, 1e-12)
-        lam = z / Z_safe[:, :, None]                  # (S,N,K)
-
-        # Number of valid halfspaces per scenario (for log(K) term)
-        K_count = jnp.sum(valid_mask, axis=1)         # (S,)
-        K_safe = jnp.maximum(K_count, 1.0)
-
-        h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)[:, None]) / kappa
-        grad_pos = jnp.einsum("snk,skd->snd", lam, A_pad)                  # (S,N,2)
-
-        # Eq. (24b): partial h_C / partial s
-        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
-
-        # Eq. (24c)/(25): partial h_C / partial t
-        # Pure facet propagation: a_dot=0, nu_dot=0, b_dot=nu => dh_dt = dh_ds
-        dh_dt = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
-
-        # Eq. (32)/(35b): explicit-time residual (= 0 under pure propagation)
-        time_residual = dh_dt - dh_ds                                      # (S,N)
-
-        zeros2 = jnp.zeros((grad_pos.shape[0], grad_pos.shape[1], 2), dtype=grad_pos.dtype)
-        grad_h_phi = jnp.concatenate([grad_pos, zeros2], axis=2)          # (S,N,4)
-
-        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                     # (N,4)
-        delta_f = Phi_f - fcl                                              # (N,4)
-
-        # Eq. (35b): c_occ = grad_h @ (Phi @ f(x) - f_b(y)) + dh_dt - dh_ds
-        c_occ = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + time_residual  # (S,N)
-
-        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                   # (N,4,2)
-        A_occ = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)             # (S,N,2)
-
-        rhs = c_occ + alpha * h_tilde
-        norm_A_occ = jnp.linalg.norm(A_occ, axis=2)
-
-        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(A_occ), axis=2)
-        active_mask = sc_present[:, None] & finite_mask
-        degenerate = (norm_A_occ < 1e-9) & (rhs < 0.0)
-        keep = active_mask & (~degenerate)
-
-        return -A_occ, rhs, keep
-
-    @partial(jax.jit, static_argnums=(14,))
-    def _jax_occ_constraints_kernel_uni(
-        phi_b,           # (N,3)
-        Phi_b,           # (N,3,3)
-        fcl_traj,        # (N,3)
-        tau_points,      # (N,)
-        A_pad,           # (S,K,2)
-        b0_pad,          # (S,K)
-        v_expand_pad,    # (S,K)
-        valid_mask,      # (S,K)
-        sc_present,      # (S,)
-        f_x_vec,         # (3,)
-        g_x_mat,         # (3,2)
-        kappa,
-        alpha,
-        radius,
-        n_tau,           # static
-    ):
-        phi = phi_b[:n_tau, :]
-        Phi = Phi_b[:n_tau, :, :]
-        fcl = fcl_traj[:n_tau, :]
-        tau = tau_points[:n_tau]
-
-        pos = phi[:, :2]  # (N,2)
-        h = (
-            jnp.einsum("skd,nd->snk", A_pad, pos)
-            - b0_pad[:, None, :]
-            - (radius + v_expand_pad[:, None, :] * tau[None, :, None])
-        )
-
-        valid_bool = valid_mask[:, None, :] > 0.5
-        neg_inf = jnp.full_like(h, -jnp.inf)
-        h_valid = jnp.where(valid_bool, h, neg_inf)
-
-        max_h = jnp.max(h_valid, axis=2)
-        finite_row = jnp.isfinite(max_h)
-        max_h_safe = jnp.where(finite_row, max_h, 0.0)
-
-        z = jnp.where(
-            valid_bool,
-            jnp.exp(kappa * (h - max_h_safe[:, :, None])),
-            0.0,
-        )
-        Z = jnp.sum(z, axis=2)
-        Z_safe = jnp.maximum(Z, 1e-12)
-        lam = z / Z_safe[:, :, None]
-
-        K_count = jnp.sum(valid_mask, axis=1)
-        K_safe = jnp.maximum(K_count, 1.0)
-
-        h_tilde = max_h_safe + (jnp.log(Z_safe) - jnp.log(K_safe)[:, None]) / kappa
-        grad_pos = jnp.einsum("snk,skd->snd", lam, A_pad)                  # (S,N,2)
-
-        # Eq. (24b): partial h_C / partial s
-        dh_ds = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
-
-        # Eq. (24c)/(25): partial h_C / partial t
-        # Pure facet propagation: a_dot=0, nu_dot=0, b_dot=nu => dh_dt = dh_ds
-        dh_dt = jnp.einsum("snk,sk->sn", lam, -v_expand_pad)              # (S,N)
-
-        # Eq. (32)/(35b): explicit-time residual (= 0 under pure propagation)
-        time_residual = dh_dt - dh_ds                                      # (S,N)
-
-        zeros1 = jnp.zeros((grad_pos.shape[0], grad_pos.shape[1], 1), dtype=grad_pos.dtype)
-        grad_h_phi = jnp.concatenate([grad_pos, zeros1], axis=2)          # (S,N,3)
-
-        Phi_f = jnp.einsum("nij,j->ni", Phi, f_x_vec)                     # (N,3)
-        delta_f = Phi_f - fcl                                              # (N,3)
-
-        # Eq. (35b): c_occ = grad_h @ (Phi @ f(x) - f_b(y)) + dh_dt - dh_ds
-        c_occ = jnp.einsum("snd,nd->sn", grad_h_phi, delta_f) + time_residual  # (S,N)
-
-        Phi_g = jnp.einsum("nij,jm->nim", Phi, g_x_mat)                   # (N,3,2)
-        A_occ = jnp.einsum("snd,ndm->snm", grad_h_phi, Phi_g)             # (S,N,2)
-
-        rhs = c_occ + alpha * h_tilde
-        norm_A_occ = jnp.linalg.norm(A_occ, axis=2)
-
-        finite_mask = finite_row & jnp.isfinite(rhs) & jnp.all(jnp.isfinite(A_occ), axis=2)
-        active_mask = sc_present[:, None] & finite_mask
-        degenerate = (norm_A_occ < 1e-9) & (rhs < 0.0)
-        keep = active_mask & (~degenerate)
-
-        return -A_occ, rhs, keep
-
 class OcclusionCBFQP(BackupCBFQP):
+    """Backup-CBF QP with time-expanded occlusion constraints.
 
-    def __init__(self, robot, robot_spec, num_obs=10, kappa=10.0, ax=None):
+    The class is scenario-agnostic. Paper benchmark defaults that are specific
+    to crowd2, such as state-safe QP fallback, are applied by the example and
+    benchmark wrappers before this class is instantiated.
+    """
+
+    def __init__(self, robot, robot_spec, num_obs=10, kappa=OCBF_DEFAULT_BARRIER_KAPPA, ax=None):
         self.num_obs = num_obs
         kappa_cfg = robot_spec.get("occ_kappa", kappa)
         try:
@@ -249,9 +84,11 @@ class OcclusionCBFQP(BackupCBFQP):
         self.T_horizon = float(cfg.get("T_horizon", 2.0))
         self.dt_backup = float(cfg.get("dt_backup", 0.05))
         alpha = float(cfg.get("alpha", 1.0))
-        self.occ_rollout_mode = str(cfg.get("occ_rollout_mode", "common")).strip().lower()
-        if self.occ_rollout_mode not in {"common", "per_scenario"}:
-            self.occ_rollout_mode = "common"
+        self.occ_rollout_mode = normalize_choice(
+            cfg.get("occ_rollout_mode", OCBF_DEFAULT_ROLLOUT_MODE),
+            OCBF_ROLLOUT_MODES,
+            OCBF_DEFAULT_ROLLOUT_MODE,
+        )
         self.terminal_slack_weight = float(cfg.get("terminal_slack_weight", 0.0))
         term_slack_max_cfg = cfg.get("terminal_slack_max", None)
         self.terminal_slack_max = None if term_slack_max_cfg is None else float(term_slack_max_cfg)
@@ -263,26 +100,34 @@ class OcclusionCBFQP(BackupCBFQP):
         self.max_active_occlusions = int(cfg.get("max_active_occlusions", 0))
         if self.max_active_occlusions < 0:
             self.max_active_occlusions = 0
-        self.occ_selection_mode = str(cfg.get("occ_selection_mode", "h_tilde")).strip().lower()
-        if self.occ_selection_mode not in {"h_tilde", "distance"}:
-            self.occ_selection_mode = "h_tilde"
-        self.terminal_mode = str(cfg.get("terminal_mode", "all")).strip().lower()
-        if self.terminal_mode not in {"all", "topm", "dominant", "none"}:
-            self.terminal_mode = "all"
+        self.occ_selection_mode = normalize_choice(
+            cfg.get("occ_selection_mode", OCBF_DEFAULT_SELECTION_MODE),
+            OCBF_SELECTION_MODES,
+            OCBF_DEFAULT_SELECTION_MODE,
+        )
+        self.terminal_mode = normalize_choice(
+            cfg.get("terminal_mode", OCBF_DEFAULT_TERMINAL_MODE),
+            OCBF_TERMINAL_MODES,
+            OCBF_DEFAULT_TERMINAL_MODE,
+        )
         self.terminal_active_count = int(cfg.get("terminal_active_count", 0))
         if self.terminal_active_count < 0:
             self.terminal_active_count = 0
-        self.terminal_residual_mode = str(cfg.get("terminal_residual_mode", "off")).strip().lower()
-        if self.terminal_residual_mode not in {"off", "visibility_intersection", "visibility_only"}:
-            self.terminal_residual_mode = "off"
+        self.terminal_residual_mode = normalize_choice(
+            cfg.get("terminal_residual_mode", OCBF_DEFAULT_TERMINAL_RESIDUAL_MODE),
+            OCBF_TERMINAL_RESIDUAL_MODES,
+            OCBF_DEFAULT_TERMINAL_RESIDUAL_MODE,
+        )
         self.terminal_visibility_reaction_margin = float(
             cfg.get("terminal_visibility_reaction_margin", 0.0)
         )
         if not np.isfinite(self.terminal_visibility_reaction_margin):
             self.terminal_visibility_reaction_margin = 0.0
-        self.qp_failure_fallback_mode = str(cfg.get("qp_failure_fallback_mode", "state_safe")).strip().lower()
-        if self.qp_failure_fallback_mode not in {"strict", "state_safe", "always"}:
-            self.qp_failure_fallback_mode = "state_safe"
+        self.qp_failure_fallback_mode = normalize_choice(
+            cfg.get("qp_failure_fallback_mode", OCBF_DEFAULT_QP_FAILURE_FALLBACK_MODE),
+            OCBF_QP_FAILURE_FALLBACK_MODES,
+            OCBF_DEFAULT_QP_FAILURE_FALLBACK_MODE,
+        )
         cfg.update(
             {
                 "T_horizon": self.T_horizon,

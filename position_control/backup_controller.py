@@ -15,6 +15,17 @@ import numpy as np
 from abc import ABC, abstractmethod
 from functools import partial
 
+from position_control.ocbf.defaults import (
+    OCBF_DEFAULT_BARRIER_KAPPA,
+    OCBF_DEFAULT_VREF_FRONT_MODE,
+    OCBF_DEFAULT_VREF_SCENARIO_WEIGHT_MODE,
+    OCBF_DEFAULT_VREF_TRACKING_MODE,
+    OCBF_VREF_FRONT_MODES,
+    OCBF_VREF_SCENARIO_WEIGHT_MODES,
+    OCBF_VREF_TRACKING_MODES,
+    normalize_choice,
+)
+
 try:
     import jax
     import jax.numpy as jnp
@@ -1560,23 +1571,15 @@ class BackupController(ABC):
 
 
 class OcclusionController(BackupController):
-    """
-    Lane change backup controller using cascaded PD control.
-    
-    This controller steers the vehicle to change to a target lane Y position
-    and stabilize there. Uses a cascaded control structure:
-    1. Outer loop: Lateral position (y) → desired heading (theta_des)
-    2. Inner loop: Heading error → desired steering angle (delta_des)
-    3. Actuator loop: Steering error → steering rate (delta_dot)
+    """Backup policy used by Occlusion-CBF rollout constraints.
+
+    Each control step receives selected occlusion scenarios from
+    ``OcclusionCBFQP`` and generates a local escape velocity reference. DI
+    tracks that reference with acceleration feedback; Uni/DU map it to their
+    admissible velocity/turn-rate controls.
     """
     def __init__(self, robot_spec, dt):
-        """
-        Initialize the stopping controller.
-        
-        Args:
-            robot_spec: Dictionary with robot specifications
-            dt: Time step for simulation
-        """
+        """Initialize the occlusion backup controller."""
         super().__init__(robot_spec, dt)
         model = str(self.robot_spec.get("model", "DoubleIntegrator2D")).strip()
         if model not in {"DoubleIntegrator2D", "Unicycle2D", "DynamicUnicycle2D"}:
@@ -1606,9 +1609,11 @@ class OcclusionController(BackupController):
         self.last_vref_scenario_debug = None
         self.last_vref_scenario_summary = None
 
-        weight_mode = str(cfg.get("vref_scenario_weight_mode", "barrier_expand")).strip().lower()
-        if weight_mode not in {"barrier_expand", "barrier_unexpand"}:
-            weight_mode = "barrier_expand"
+        weight_mode = normalize_choice(
+            cfg.get("vref_scenario_weight_mode", OCBF_DEFAULT_VREF_SCENARIO_WEIGHT_MODE),
+            OCBF_VREF_SCENARIO_WEIGHT_MODES,
+            OCBF_DEFAULT_VREF_SCENARIO_WEIGHT_MODE,
+        )
         cfg["vref_scenario_weight_mode"] = weight_mode
 
         # Optional JAX acceleration path for rollout/STM.
@@ -1903,31 +1908,25 @@ class OcclusionController(BackupController):
 
     def _occ_vref_mode(self):
         if self.model == "DoubleIntegrator2D":
-            return "strict"
+            return OCBF_DEFAULT_VREF_TRACKING_MODE
         cfg = self.robot_spec.get("backup_cbf", {})
         if self.model == "Unicycle2D":
-            mode = cfg.get("vref_mode_occ_uni", cfg.get("vref_mode_occ", "strict"))
+            mode = cfg.get("vref_mode_occ_uni", cfg.get("vref_mode_occ", OCBF_DEFAULT_VREF_TRACKING_MODE))
         elif self.model == "DynamicUnicycle2D":
-            mode = cfg.get("vref_mode_occ_du", cfg.get("vref_mode_occ", "strict"))
+            mode = cfg.get("vref_mode_occ_du", cfg.get("vref_mode_occ", OCBF_DEFAULT_VREF_TRACKING_MODE))
         else:
-            mode = cfg.get("vref_mode_occ", "strict")
-        mode = str(mode).strip().lower()
-        if mode not in {"soft", "strict"}:
-            mode = "strict"
-        return mode
+            mode = cfg.get("vref_mode_occ", OCBF_DEFAULT_VREF_TRACKING_MODE)
+        return normalize_choice(mode, OCBF_VREF_TRACKING_MODES, OCBF_DEFAULT_VREF_TRACKING_MODE)
 
     def _occ_vref_front_mode(self):
         cfg = self.robot_spec.get("backup_cbf", {})
         if self.model == "Unicycle2D":
-            mode = cfg.get("vref_front_mode_occ_uni", cfg.get("vref_front_mode_occ", "los"))
+            mode = cfg.get("vref_front_mode_occ_uni", cfg.get("vref_front_mode_occ", OCBF_DEFAULT_VREF_FRONT_MODE))
         elif self.model == "DynamicUnicycle2D":
-            mode = cfg.get("vref_front_mode_occ_du", cfg.get("vref_front_mode_occ", "los"))
+            mode = cfg.get("vref_front_mode_occ_du", cfg.get("vref_front_mode_occ", OCBF_DEFAULT_VREF_FRONT_MODE))
         else:
-            mode = cfg.get("vref_front_mode_occ", "los")
-        mode = str(mode).strip().lower()
-        if mode not in {"default", "los"}:
-            mode = "default"
-        return mode
+            mode = cfg.get("vref_front_mode_occ", OCBF_DEFAULT_VREF_FRONT_MODE)
+        return normalize_choice(mode, OCBF_VREF_FRONT_MODES, OCBF_DEFAULT_VREF_FRONT_MODE)
 
     def _use_strict_occ_vref(self):
         return self._occ_vref_mode() == "strict"
@@ -2108,13 +2107,13 @@ class OcclusionController(BackupController):
             if owner is not None:
                 kappa = getattr(owner, "kappa", None)
         if kappa is None:
-            kappa = self.robot_spec.get("occ_kappa", 10.0)
+            kappa = self.robot_spec.get("occ_kappa", OCBF_DEFAULT_BARRIER_KAPPA)
         try:
             kappa = float(kappa)
         except Exception:
-            kappa = 10.0
+            kappa = OCBF_DEFAULT_BARRIER_KAPPA
         if (not np.isfinite(kappa)) or kappa <= 0.0:
-            kappa = 10.0
+            kappa = OCBF_DEFAULT_BARRIER_KAPPA
         return kappa
 
     def _occ_scenario_barrier_margin_from_hvec(self, h_vec):
@@ -2138,10 +2137,11 @@ class OcclusionController(BackupController):
 
     def _occ_vref_scenario_weight_mode(self):
         cfg = self.robot_spec.get("backup_cbf", {})
-        mode = str(cfg.get("vref_scenario_weight_mode", "barrier_expand")).strip().lower()
-        if mode not in {"barrier_expand", "barrier_unexpand"}:
-            mode = "barrier_expand"
-        return mode
+        return normalize_choice(
+            cfg.get("vref_scenario_weight_mode", OCBF_DEFAULT_VREF_SCENARIO_WEIGHT_MODE),
+            OCBF_VREF_SCENARIO_WEIGHT_MODES,
+            OCBF_DEFAULT_VREF_SCENARIO_WEIGHT_MODE,
+        )
 
     def _occ_vref_weight_mode_code(self):
         mode = self._occ_vref_scenario_weight_mode()

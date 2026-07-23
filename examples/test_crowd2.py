@@ -40,6 +40,19 @@ except ImportError:
 
     import test_crowd as crowd1
 
+from position_control.ocbf.defaults import (
+    CROWD2_ENABLE_VISIBLE_HOCBF_DEFAULT,
+    OCBF_QP_FAILURE_FALLBACK_MODES,
+    OCBF_ROLLOUT_MODES,
+    OCBF_SELECTION_MODES,
+    OCBF_TERMINAL_MODES,
+    OCBF_TERMINAL_RESIDUAL_MODES,
+    OCBF_VREF_FRONT_MODES,
+    OCBF_VREF_SCENARIO_WEIGHT_MODES,
+    OCBF_VREF_TRACKING_MODES,
+    apply_crowd2_ocbf_defaults,
+)
+
 ENV_WIDTH = 30.0
 ENV_HEIGHT = 30.0
 TRACKING_VIEW_WINDOW_SIZE = 10.0
@@ -68,6 +81,17 @@ DEFAULT_FORCED_OCCLUDER_RADIUS_MAX = 1.0
 LEGACY_ROUTE_DYN_SPEED_MAX = 0.45
 SMALL_DYN_SPEED_MIN = 0.3
 SMALL_DYN_SPEED_MAX = 1.0
+
+
+def _is_ocbf_controller(controller_type):
+    if controller_type is None:
+        return True
+    if isinstance(controller_type, dict):
+        name = controller_type.get("pos", "")
+    else:
+        name = controller_type
+    name = str(name).strip().lower()
+    return name in {"occlusion_cbf", "occlusion_cbf_qp"}
 
 
 def _sample_small_dyn_speed(rng, speed_max=SMALL_DYN_SPEED_MAX, speed_min=SMALL_DYN_SPEED_MIN):
@@ -802,7 +826,7 @@ def run_crowd_scenario(
     vref_mode_occ=None,
     vref_front_mode_occ=None,
     occ_visible_scale=None,
-    occ_enable_visible_hocbf=True,
+    occ_enable_visible_hocbf=CROWD2_ENABLE_VISIBLE_HOCBF_DEFAULT,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
@@ -856,6 +880,9 @@ def run_crowd_scenario(
             static_occluders=static_occluders,
             rand_obs_setting=rand_obs_setting,
         )
+
+    if _is_ocbf_controller(controller_type):
+        backup_cbf_overrides = apply_crowd2_ocbf_defaults(backup_cbf_overrides)
 
     return crowd1.run_crowd_scenario(
         controller_type=controller_type,
@@ -1004,7 +1031,7 @@ def main():
     parser.add_argument(
         "--occ-vref-scenario-weight-mode",
         type=str,
-        choices=["barrier_expand", "barrier_unexpand"],
+        choices=OCBF_VREF_SCENARIO_WEIGHT_MODES,
         default=None,
         help=(
             "Override OCBF scenario blending score. barrier_expand uses rollout-expanded "
@@ -1012,27 +1039,27 @@ def main():
         ),
     )
     parser.add_argument("--occ-max-active-occlusions", type=int, default=None)
-    parser.add_argument("--occ-selection-mode", type=str, choices=["h_tilde", "distance"], default=None)
-    parser.add_argument("--occ-rollout-mode", type=str, choices=["common", "per_scenario"], default=None)
+    parser.add_argument("--occ-selection-mode", type=str, choices=OCBF_SELECTION_MODES, default=None)
+    parser.add_argument("--occ-rollout-mode", type=str, choices=OCBF_ROLLOUT_MODES, default=None)
     parser.add_argument("--occ-terminal-slack-weight", type=float, default=None)
     parser.add_argument("--occ-terminal-slack-max", type=float, default=None)
     parser.add_argument("--occ-obs-hocbf-slack-max", type=float, default=None)
     parser.add_argument("--occ-rollout-slack-max", type=float, default=None)
-    parser.add_argument("--occ-terminal-mode", type=str, choices=["all", "topm", "dominant", "none"], default=None)
+    parser.add_argument("--occ-terminal-mode", type=str, choices=OCBF_TERMINAL_MODES, default=None)
     parser.add_argument("--occ-terminal-active-count", type=int, default=None)
     parser.add_argument(
         "--occ-terminal-residual-mode",
         type=str,
-        choices=["off", "visibility_intersection", "visibility_only"],
+        choices=OCBF_TERMINAL_RESIDUAL_MODES,
         default=None,
     )
     parser.add_argument("--occ-terminal-visibility-reaction-margin", type=float, default=None)
-    parser.add_argument("--occ-qp-failure-fallback-mode", type=str, choices=["strict", "state_safe", "always"], default=None)
-    parser.add_argument("--vref-mode-occ", type=str, choices=["soft", "strict"], default=None)
+    parser.add_argument("--occ-qp-failure-fallback-mode", type=str, choices=OCBF_QP_FAILURE_FALLBACK_MODES, default=None)
+    parser.add_argument("--vref-mode-occ", type=str, choices=OCBF_VREF_TRACKING_MODES, default=None)
     parser.add_argument(
         "--vref",
         type=str,
-        choices=["default", "los"],
+        choices=OCBF_VREF_FRONT_MODES,
         default=None,
         help="OCBF front-facet direction mode. Internal default is `los`; `default` keeps the fixed polygon normal.",
     )
@@ -1042,7 +1069,7 @@ def main():
         type=crowd1._str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=CROWD2_ENABLE_VISIBLE_HOCBF_DEFAULT,
         help="Occlusion-CBF only: also add visible-obstacle CBF/HOCBF rows in the stacked QP.",
     )
     parser.add_argument("--oa-dynamic-occluders", type=crowd1._str2bool, nargs="?", const=True, default=None)

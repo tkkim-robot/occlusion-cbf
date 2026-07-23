@@ -14,8 +14,8 @@ All runs force:
     - show_animation = False
     - save_animation = False
 
-For Unicycle2D paper baseline sweeps, non-OCBF baselines default to
-forward-only actuation. Pass --uni-allow-reverse true or --uni-v-min to override.
+For Unicycle2D paper benchmark sweeps, all planners default to forward-only
+actuation. Pass --uni-allow-reverse true or --uni-v-min to override.
 """
 
 from __future__ import annotations
@@ -33,6 +33,18 @@ from typing import Any
 import numpy as np
 
 from examples._baseline_defs import CROWD_BASELINE_MAP
+from position_control.ocbf.defaults import (
+    OCBF_QP_FAILURE_FALLBACK_MODES,
+    OCBF_ROLLOUT_MODES,
+    OCBF_SELECTION_MODES,
+    OCBF_TERMINAL_MODES,
+    OCBF_TERMINAL_RESIDUAL_MODES,
+    OCBF_VREF_FRONT_MODES,
+    OCBF_VREF_SCENARIO_WEIGHT_MODES,
+    apply_crowd2_ocbf_defaults,
+    default_visible_hocbf_for_scenario,
+)
+
 BASELINE_MAP = dict(CROWD_BASELINE_MAP)
 
 SUITE_NON_OCC_5 = [
@@ -48,19 +60,19 @@ def _is_ocbf_baseline(baseline_alias: str) -> bool:
     return str(BASELINE_MAP.get(str(baseline_alias), baseline_alias)).strip().lower() == "occlusion_cbf_qp"
 
 
-def _default_uni_non_ocbf_forward_only(
+def _default_uni_forward_only(
     *,
     model: str,
     baseline_alias: str,
     robot_spec_overrides: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Use forward-only Uni actuation by default for paper baseline sweeps.
+    """Use forward-only Uni actuation by default for paper benchmark sweeps.
 
-    The scenario runners keep their historical Uni default for OCBF/direct
-    visualization. This benchmark tool defaults only non-OCBF baselines to
+    The scenario runners keep their historical Uni default for direct
+    visualization. This benchmark tool defaults all Uni benchmark runs to
     forward-only unless the caller explicitly sets a Uni speed-bound option.
     """
-    if str(model).strip().lower() != "uni" or _is_ocbf_baseline(baseline_alias):
+    if str(model).strip().lower() != "uni":
         return robot_spec_overrides
 
     out = dict(robot_spec_overrides or {})
@@ -80,10 +92,6 @@ def _load_run_crowd_scenario(scenario_name: str):
         from examples.test_crowd2 import run_crowd_scenario as runner
 
         return runner, "crowd2"
-    if scenario_key in {"occlusion_home", "test_occlusion_home", "occ_home"}:
-        from examples.test_occlusion_home import run_crowd_scenario as runner
-
-        return runner, "occlusion_home"
     raise ValueError(f"Unsupported scenario: {scenario_name}")
 
 
@@ -201,9 +209,11 @@ def _run_baseline_sweep(
 ) -> dict[str, Any]:
     _, scenario_label = _load_run_crowd_scenario(scenario_name)
     if occ_enable_visible_hocbf is None:
-        occ_enable_visible_hocbf = str(scenario_label).strip().lower() == "crowd2"
+        occ_enable_visible_hocbf = default_visible_hocbf_for_scenario(scenario_label)
+    if str(scenario_label).strip().lower() == "crowd2" and _is_ocbf_baseline(str(baseline_alias)):
+        backup_cbf_overrides = apply_crowd2_ocbf_defaults(backup_cbf_overrides)
     controller_pos = BASELINE_MAP[str(baseline_alias)]
-    robot_spec_overrides = _default_uni_non_ocbf_forward_only(
+    robot_spec_overrides = _default_uni_forward_only(
         model=str(model),
         baseline_alias=str(baseline_alias),
         robot_spec_overrides=robot_spec_overrides,
@@ -696,11 +706,11 @@ def main() -> int:
     p.add_argument(
         "--scenario",
         type=str,
-        default="crowd1",
-        choices=["crowd1", "crowd2", "occlusion_home"],
+        default="crowd2",
+        choices=["crowd1", "crowd2"],
         help=(
             "Select which benchmark scenario runner to use: "
-            "examples/test_crowd.py, examples/test_crowd2.py, or examples/test_occlusion_home.py."
+            "examples/test_crowd.py or examples/test_crowd2.py."
         ),
     )
     p.add_argument(
@@ -742,7 +752,7 @@ def main() -> int:
         "--crowd-mode",
         type=str,
         default="random",
-        choices=["random", "forced_emergence", "single_event", "two_event"],
+        choices=["random", "forced_emergence"],
         help="Forwarded to the selected scenario generator.",
     )
     p.add_argument("--forced-events", type=int, default=3)
@@ -940,7 +950,7 @@ def main() -> int:
         default=None,
         help=(
             "Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. "
-            "This overrides the benchmark-tool default forward-only mode for non-OCBF Uni baselines."
+            "This overrides the benchmark-tool default forward-only mode for Uni paper sweeps."
         ),
     )
     p.add_argument(
@@ -951,7 +961,7 @@ def main() -> int:
         default=False,
         help=(
             "Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given. "
-            "This is already the default for non-OCBF Uni baselines in this benchmark tool."
+            "This is already the default for Uni paper sweeps in this benchmark tool."
         ),
     )
     p.add_argument(
@@ -998,7 +1008,7 @@ def main() -> int:
         "--occ-rollout-mode",
         type=str,
         default=None,
-        choices=["common", "per_scenario"],
+        choices=OCBF_ROLLOUT_MODES,
         help="Override backup_cbf.occ_rollout_mode for occlusion backup rollout construction.",
     )
     p.add_argument(
@@ -1028,7 +1038,7 @@ def main() -> int:
     p.add_argument(
         "--occ-terminal-mode",
         type=str,
-        choices=["all", "topm", "dominant", "none"],
+        choices=OCBF_TERMINAL_MODES,
         default=None,
         help="Select which OCBF occlusion scenarios receive terminal backup-set rows.",
     )
@@ -1041,7 +1051,7 @@ def main() -> int:
     p.add_argument(
         "--occ-terminal-residual-mode",
         type=str,
-        choices=["off", "visibility_intersection", "visibility_only"],
+        choices=OCBF_TERMINAL_RESIDUAL_MODES,
         default=None,
         help="Optionally replace terminal rows with predicted terminal visibility residual sets.",
     )
@@ -1054,7 +1064,7 @@ def main() -> int:
     p.add_argument(
         "--occ-qp-failure-fallback-mode",
         type=str,
-        choices=["strict", "state_safe", "always"],
+        choices=OCBF_QP_FAILURE_FALLBACK_MODES,
         default=None,
         help="How OCBF-QP classifies backup-policy fallback when the QP solve itself fails.",
     )
@@ -1067,7 +1077,7 @@ def main() -> int:
     p.add_argument(
         "--occ-vref-scenario-weight-mode",
         type=str,
-        choices=["barrier_expand", "barrier_unexpand"],
+        choices=OCBF_VREF_SCENARIO_WEIGHT_MODES,
         default=None,
         help=(
             "Override backup_cbf.vref_scenario_weight_mode for OCBF scenario blending. "
@@ -1084,7 +1094,7 @@ def main() -> int:
     p.add_argument(
         "--occ-selection-mode",
         type=str,
-        choices=["h_tilde", "distance"],
+        choices=OCBF_SELECTION_MODES,
         default=None,
         help="Occlusion-CBF active occlusion selection score.",
     )
@@ -1092,13 +1102,13 @@ def main() -> int:
         "--occ-kappa",
         type=float,
         default=None,
-        help="Override robot_spec.occ_kappa for occlusion-CBF scenario softmax weighting.",
+        help="Override the OCBF barrier smoothing kappa. Default is fixed at 10.0; use only for ablations.",
     )
     p.add_argument(
         "--vref",
         type=str,
         default=None,
-        choices=["default", "los"],
+        choices=OCBF_VREF_FRONT_MODES,
         help=(
             "Override backup_cbf.vref_front_mode_occ for occlusion backup v_target construction. "
             "Internal default is `los`; `default` keeps the fixed polygon normal."
