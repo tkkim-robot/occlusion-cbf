@@ -106,8 +106,11 @@ class CBFQP:
             self.u_ref.value = control_ref['u_ref']
             if self.robot_spec['model'] in ['Quad3D']:
                  self.u_ref.value = np.vstack((self.u_ref.value, self.u_ref.value)) # Hack for Quad3D dimension mismatch if any
-            self.status = 'optimal'
-            return self.u_ref.value
+            # Even without active CBF rows, solve the projection problem so
+            # actuator bounds are enforced on the nominal command.
+            self.cbf_controller.solve(solver=cp.GUROBI, reoptimize=True)
+            self.status = self.cbf_controller.status
+            return self.u.value
 
         mode = self.robot_spec.get('cbf_mode', 'cbf')
         row_idx = 0

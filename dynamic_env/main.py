@@ -248,9 +248,21 @@ class LocalCBFQP(BaseCBFQP):
             self.u_ref.value = control_ref['u_ref']
             if self.robot_spec['model'] in ['Quad3D']:
                 self.u_ref.value = np.vstack((self.u_ref.value, self.u_ref.value))
-            self.status = 'optimal'
-            u_out = np.asarray(self.u_ref.value, dtype=float).reshape(-1, 1)
-            self._finalize_runtime_stats(t_all0, self.u_ref.value, u_out, solve_ms=0.0, num_constraints=0)
+            # A no-obstacle step still needs the QP's actuator bounds. Returning
+            # the nominal reference directly can violate them (notably for the
+            # kinematic unicycle when its waypoint is far away).
+            t_solve0 = time.perf_counter()
+            self.cbf_controller.solve(solver=cp.GUROBI, reoptimize=True)
+            self.status = self.cbf_controller.status
+            solve_ms = (time.perf_counter() - t_solve0) * 1000.0
+            u_out = self.u.value
+            self._finalize_runtime_stats(
+                t_all0,
+                self.u_ref.value,
+                u_out,
+                solve_ms=solve_ms,
+                num_constraints=0,
+            )
             return u_out
 
         mode = self.robot_spec.get('cbf_mode', 'cbf')
