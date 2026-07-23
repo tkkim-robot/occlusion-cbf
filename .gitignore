@@ -1,12 +1,14 @@
 # Ignore pycache directories
 **/__pycache__/
 __pycache__/
+.venv/
 
 # Ignore misc. files
 *.csv
 *.egg-info/
 .DS_Store
-uv.lock
+build/
+dist/
 
 # Ignore directories and files with "images" in their name
 output/
