@@ -3,10 +3,9 @@
 Research code for evaluating Occlusion Control Barrier Functions (OCBFs) with
 double-integrator, dynamic-unicycle, and unicycle robot models.
 
-The repository is self-contained. The small portion of implementation formerly
-supplied by `safe_control` now lives in `base_control/`; there is no runtime
-dependency, Git submodule, or private repository. Its source revision and scope
-are recorded in [`base_control/UPSTREAM.md`](base_control/UPSTREAM.md).
+The repository is self-contained. Shared robot models, tracking utilities, and
+the baseline CBF-QP live in `base_control/`; project controllers live in
+`position_control/`. There is no runtime dependency or Git submodule.
 
 ## Install
 

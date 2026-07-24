@@ -110,8 +110,11 @@ class Unicycle2D:
         return _moving_circle_barrier(self, X, obs, robot_radius, beta=beta)
 
     def agent_barrier(self, X, obs, robot_radius, beta=1.01):
-        obsX = obs[0:2]
-        d_min = float(np.asarray(obs[2]).reshape(-1)[0]) + robot_radius
+        obs = np.asarray(obs, dtype=float).reshape(-1)
+        if obs.size < 3:
+            raise ValueError("Circle obstacles require x, y, and radius.")
+        obsX = obs[0:2].reshape(2, 1)
+        d_min = float(obs[2]) + robot_radius
 
         theta = X[2,0]
 

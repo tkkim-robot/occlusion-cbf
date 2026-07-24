@@ -122,7 +122,10 @@ class LocalTrackingController:
         self.setup_robot(X0)
 
         # Determine number of constraints
-        self.num_constraints = 5
+        self.num_constraints = max(
+            1,
+            int(self.robot_spec.get('num_constraints', 30)),
+        )
 
         if self.pos_controller_type != 'cbf_qp':
             raise ValueError(
@@ -259,7 +262,7 @@ class LocalTrackingController:
         def angle_normalize(x):
             return (((x + np.pi) % (2 * np.pi)) - np.pi)
         '''
-        Get the nearest 5 obstacles that haven't been passed by (i.e., they're still in front of the robot or the robot should still consider the obstacle).
+        Get the requested number of nearest obstacles that have not been passed.
         '''
 
         if self.robot_spec['model'] in ['SingleIntegrator2D', 'DoubleIntegrator2D', 'Quad2D', 'Quad3D']:
@@ -306,13 +309,13 @@ class LocalTrackingController:
         if len(unpassed_obs) == 0:
             all_obs = np.array(all_obs)
             distances = np.linalg.norm(all_obs[:, :2] - robot_pos, axis=1)
-            nearest_indices = np.argsort(distances)[:5]  # Get indices of the nearest 5 obstacles
+            nearest_indices = np.argsort(distances)[:obs_num]
             return all_obs[nearest_indices]
 
         # Now, find the nearest unpassed obstacles
         unpassed_obs = np.array(unpassed_obs)
         distances = np.linalg.norm(unpassed_obs[:, :2] - robot_pos, axis=1)
-        nearest_indices = np.argsort(distances)[:obs_num]  # Get indices of the nearest 'obs_num' (max 5) unpassed obstacles
+        nearest_indices = np.argsort(distances)[:obs_num]
 
         return unpassed_obs[nearest_indices]
 
@@ -339,28 +342,45 @@ class LocalTrackingController:
         nearest_obstacle = all_obs[min_distance_index]
         return nearest_obstacle.reshape(-1, 1)
 
+    @staticmethod
+    def _known_obs_geometry(obs):
+        """Return the geometry encoded by a supported obstacle row."""
+        obs = np.asarray(obs, dtype=float).reshape(-1)
+        if obs.size < 7:
+            return 'circle'
+        # Project scenarios use eight-column moving-circle rows:
+        # [x, y, radius, vx, vy, y_min, y_max, type].
+        if obs.size >= 8:
+            return 'circle'
+        if np.isclose(obs[6], 1.0) and float(obs[4]) >= 2.0:
+            return 'superellipsoid'
+        return 'circle'
+
     def is_collide_unknown(self):
-        # if self.unknown_obs is None:
-        #     return False
         robot_radius = self.robot.robot_radius
+        robot_pos = self.robot.get_position()
 
         if self.unknown_obs is not None:
-            for obs in self.unknown_obs:
-                # check if the robot collides with the obstacle
-                distance = np.linalg.norm(self.robot.get_position() - obs[:2])
+            for obs in np.atleast_2d(self.unknown_obs):
+                obs = np.asarray(obs, dtype=float).reshape(-1)
+                if obs.size < 3:
+                    continue
+                distance = np.linalg.norm(robot_pos - obs[:2])
                 if distance < (obs[2] + robot_radius):
                     print("Collision with unknown obstacle detected!")
                     return True
 
         if self.obs is not None:
-            for obs in self.obs:
-                # check if the robot collides with the obstacle
-                if obs[6] == 0:
-                    distance = np.linalg.norm(self.robot.get_position() - obs[:2])
+            for obs in np.atleast_2d(self.obs):
+                obs = np.asarray(obs, dtype=float).reshape(-1)
+                if obs.size < 3:
+                    continue
+                if self._known_obs_geometry(obs) == 'circle':
+                    distance = np.linalg.norm(robot_pos - obs[:2])
                     if distance < (obs[2] + robot_radius):
-                        print(f"Collision with known obstacle detected! Obs: {obs}, Robot: {self.robot.get_position()} {robot_radius}, Distance: {distance}, {distance < (obs[2] + robot_radius)}")
+                        print(f"Collision with known obstacle detected! Obs: {obs}, Robot: {robot_pos} {robot_radius}, Distance: {distance}, {distance < (obs[2] + robot_radius)}")
                         return True
-                elif obs[6] == 1:
+                else:
                     ox = obs[0]
                     oy = obs[1]
                     a = obs[2]
@@ -522,6 +542,14 @@ class LocalTrackingController:
         # 8. Step the robot
         self.robot.step(u, self.u_att)
         self.u_pos = u
+
+        collide = self.is_collide_unknown()
+        if collide:
+            self.draw_infeasible()
+            print("Collision detected !!")
+            if self.raise_error:
+                raise InfeasibleError("Collision detected !!")
+            return -2
 
         if self.show_animation:
             self.robot.render_plot()

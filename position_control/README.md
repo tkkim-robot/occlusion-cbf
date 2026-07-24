@@ -13,10 +13,8 @@ baselines.
   `oa_mpc.py`: comparison planners.
 - `_mpc_common.py`: shared MPC utilities.
 
-The generic robot, tracking, environment, and baseline CBF-QP pieces needed by
-these controllers are vendored as the minimal `base_control` package. It is an
-in-tree runtime dependency, not a submodule. See
-[`../base_control/UPSTREAM.md`](../base_control/UPSTREAM.md) for provenance.
+The shared robot, tracking, environment, and baseline CBF-QP pieces used by
+these controllers live in the in-tree `base_control` package.
 
 ## Controller selection
 

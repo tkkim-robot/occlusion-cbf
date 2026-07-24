@@ -2125,6 +2125,17 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.u_pos = u
         self._record_trajectory_sample()
 
+        collide = self.is_collide_unknown()
+        if collide:
+            self._infeasible_active = True
+            self._infeasible_seen = True
+            self.draw_infeasible()
+            print("Collision detected !!")
+            self.last_terminal_event = "collision"
+            if self.raise_error:
+                raise InfeasibleError("Collision detected !!")
+            return -2
+
         if self.plot_occ_polygons and hasattr(self.robot, "update_occlusion_polygons"):
             # Use a baseline-invariant plotting geometry. Controller-internal
             # scenario pruning is allowed for optimization, but should not alter
