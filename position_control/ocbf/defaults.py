@@ -22,6 +22,7 @@ OCBF_DEFAULT_SELECTION_MODE = "h_tilde"
 OCBF_QP_FAILURE_FALLBACK_MODES = ("strict", "state_safe", "always")
 OCBF_DEFAULT_QP_FAILURE_FALLBACK_MODE = "state_safe"
 OCBF_CROWD_QP_FAILURE_FALLBACK_MODE = "state_safe"
+OCBF_CROWD_VREF_SCENARIO_WEIGHT_MODE = "barrier_unexpand"
 
 OCBF_TERMINAL_MODES = ("all", "topm", "dominant", "none")
 OCBF_DEFAULT_TERMINAL_MODE = "all"
@@ -51,6 +52,10 @@ def apply_crowd_ocbf_defaults(backup_cbf_overrides):
     """Apply crowd-specific OCBF defaults without overwriting explicit CLI values."""
     cfg = dict(backup_cbf_overrides or {})
     cfg.setdefault("qp_failure_fallback_mode", OCBF_CROWD_QP_FAILURE_FALLBACK_MODE)
+    cfg.setdefault(
+        "vref_scenario_weight_mode",
+        OCBF_CROWD_VREF_SCENARIO_WEIGHT_MODE,
+    )
     return cfg
 
 

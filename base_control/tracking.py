@@ -258,19 +258,15 @@ class LocalTrackingController:
                 )
             )
 
-    def get_nearest_unpassed_obs(self, detected_obs, angle_unpassed=np.pi*2, obs_num=5):
+    def get_nearest_unpassed_obs(self, detected_obs, angle_unpassed=2 * np.pi, obs_num=5):
+        """Return the nearest obstacles inside the requested angular span.
+
+        The default span is a full circle for every robot model. Callers may
+        still request a narrower field of view explicitly.
+        """
+
         def angle_normalize(x):
             return (((x + np.pi) % (2 * np.pi)) - np.pi)
-        '''
-        Get the requested number of nearest obstacles that have not been passed.
-        '''
-
-        if self.robot_spec['model'] in ['SingleIntegrator2D', 'DoubleIntegrator2D', 'Quad2D', 'Quad3D']:
-            angle_unpassed=np.pi*2
-        elif self.robot_spec['model'] in ['Unicycle2D', 'DynamicUnicycle2D', 'VTOL2D']:
-            angle_unpassed=np.pi*1.2
-        elif 'KinematicBicycle2D' in self.robot_spec['model']:
-            angle_unpassed=np.pi*2.0
 
         if len(detected_obs) != 0:
             if len(self.obs) == 0:
@@ -297,11 +293,10 @@ class LocalTrackingController:
             to_obs_vector = obs_pos - robot_pos
 
             # Calculate the angle between the robot's heading and the vector to the obstacle
-            robot_heading_vector = np.array([np.cos(robot_yaw), np.sin(robot_yaw)])
             angle_to_obs = np.arctan2(to_obs_vector[1], to_obs_vector[0])
             angle_diff = abs(angle_normalize(angle_to_obs - robot_yaw))
 
-            # If the obstacle is within the forward-facing 180 degrees, consider it
+            # Keep obstacles inside the configured angular span.
             if angle_diff <= angle_unpassed/2:
                 unpassed_obs.append(obs)
 

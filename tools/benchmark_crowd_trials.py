@@ -16,6 +16,9 @@ All runs force:
 
 For Unicycle2D paper benchmark sweeps, all planners default to forward-only
 actuation. Pass --uni-allow-reverse true or --uni-v-min to override.
+
+With no arguments, this runs the canonical OACP crowd profile. Shared
+scenario defaults also apply unchanged when another baseline or suite is chosen.
 """
 
 from __future__ import annotations
@@ -32,7 +35,12 @@ from typing import Any
 
 import numpy as np
 
-from examples._baseline_defs import CROWD_BASELINE_MAP
+from examples._baseline_defs import (
+    CROWD_BASELINE_MAP,
+    CROWD_BENCHMARK_DEFAULTS,
+    OACP_BENCHMARK_DEFAULTS,
+    default_benchmark_workers,
+)
 from position_control.ocbf.defaults import (
     OCBF_QP_FAILURE_FALLBACK_MODES,
     OCBF_ROLLOUT_MODES,
@@ -701,12 +709,13 @@ def _run_non_occ_5_suite(args: argparse.Namespace, out_dir: Path, ts: str) -> in
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="Run crowd idx sweep for one baseline or a predefined baseline suite."
+        description="Run crowd idx sweep for one baseline or a predefined baseline suite.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
         "--scenario",
         type=str,
-        default="crowd",
+        default=CROWD_BENCHMARK_DEFAULTS["scenario"],
         choices=["crowd", "crowd_narrow", "crowd2", "crowd1"],
         help=(
             "Select the canonical crowd benchmark or the legacy narrow layout. "
@@ -716,7 +725,7 @@ def main() -> int:
     p.add_argument(
         "--baseline",
         type=str,
-        default=None,
+        default=CROWD_BENCHMARK_DEFAULTS["baseline"],
         choices=list(BASELINE_MAP.keys()),
         help="Single-baseline mode only. Same aliases as examples/test_crowd.py",
     )
@@ -727,10 +736,15 @@ def main() -> int:
         choices=["none", "non_occlusion_5"],
         help="Run predefined baseline suite sequentially.",
     )
-    p.add_argument("--model", type=str, default="uni", choices=["di", "du", "uni"])
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--idx-start", type=int, default=1)
-    p.add_argument("--idx-end", type=int, default=100)
+    p.add_argument(
+        "--model",
+        type=str,
+        default=CROWD_BENCHMARK_DEFAULTS["model"],
+        choices=["di", "du", "uni"],
+    )
+    p.add_argument("--seed", type=int, default=CROWD_BENCHMARK_DEFAULTS["seed"])
+    p.add_argument("--idx-start", type=int, default=CROWD_BENCHMARK_DEFAULTS["idx_start"])
+    p.add_argument("--idx-end", type=int, default=CROWD_BENCHMARK_DEFAULTS["idx_end"])
     p.add_argument(
         "--exclude-idx",
         type=str,
@@ -740,22 +754,26 @@ def main() -> int:
     p.add_argument(
         "--n-rand",
         type=int,
-        default=50,
+        default=CROWD_BENCHMARK_DEFAULTS["n_rand"],
         help=(
             "Random mode: number of moving obstacles. Forced-emergence mode: target number of non-occluder movers "
             "(hidden-emergence agents plus optional background clutter). Large forced occluders are controlled by "
             "--forced-events and are not counted in n-rand."
         ),
     )
-    p.add_argument("--tf", type=float, default=100.0)
+    p.add_argument("--tf", type=float, default=CROWD_BENCHMARK_DEFAULTS["tf"])
     p.add_argument(
         "--crowd-mode",
         type=str,
-        default="random",
+        default=CROWD_BENCHMARK_DEFAULTS["crowd_mode"],
         choices=["random", "forced_emergence"],
         help="Forwarded to the selected scenario generator.",
     )
-    p.add_argument("--forced-events", type=int, default=3)
+    p.add_argument(
+        "--forced-events",
+        type=int,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_events"],
+    )
     p.add_argument(
         "--forced-bg-rand",
         type=int,
@@ -765,28 +783,40 @@ def main() -> int:
             "Default uses a small clutter share and allocates the rest of n-rand to hidden emergence agents."
         ),
     )
-    p.add_argument("--forced-hidden-speed", type=float, default=0.5)
-    p.add_argument("--forced-occluder-radius-min", type=float, default=0.8)
-    p.add_argument("--forced-occluder-radius-max", type=float, default=1.0)
+    p.add_argument(
+        "--forced-hidden-speed",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_hidden_speed"],
+    )
+    p.add_argument(
+        "--forced-occluder-radius-min",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_min"],
+    )
+    p.add_argument(
+        "--forced-occluder-radius-max",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_max"],
+    )
     p.add_argument(
         "--forced-validate-occlusion",
         type=_str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_validate_occlusion"],
     )
     p.add_argument(
         "--forced-require-corridor-conflict",
         type=_str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_require_corridor_conflict"],
     )
     p.add_argument(
         "--workers",
         type=int,
-        default=1,
-        help="Parallel worker processes per baseline (1 = sequential).",
+        default=default_benchmark_workers(),
+        help="Parallel worker processes per baseline; auto-capped at 8 and reserves two CPUs.",
     )
     p.add_argument(
         "--wmax",
@@ -875,27 +905,27 @@ def main() -> int:
         type=_str2bool,
         nargs="?",
         const=True,
-        default=None,
+        default=OACP_BENCHMARK_DEFAULTS["allow_solver_fallback"],
     )
     p.add_argument(
         "--oacp-dynamic-occluders",
         type=_str2bool,
         nargs="?",
         const=True,
-        default=None,
+        default=OACP_BENCHMARK_DEFAULTS["dynamic_occluders"],
     )
     p.add_argument(
         "--oacp-visible-reach-mode",
         type=str,
         choices=["constant_velocity", "worst_case"],
-        default=None,
+        default=OACP_BENCHMARK_DEFAULTS["visible_reach_mode"],
     )
     p.add_argument(
         "--oacp-branch-safety-gate",
         type=_str2bool,
         nargs="?",
         const=True,
-        default=None,
+        default=OACP_BENCHMARK_DEFAULTS["branch_safety_gate"],
         help="OACP only: gate the selected contingency branch and switch to the other safe branch when possible.",
     )
     p.add_argument(

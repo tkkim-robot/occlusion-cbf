@@ -71,6 +71,42 @@ class BaseControlHotfixTests(unittest.TestCase):
 
         self.assertEqual(selected.shape[0], 7)
 
+    def test_unicycle_obstacle_selection_defaults_to_full_circle(self):
+        obstacles = np.array(
+            [
+                [1.0, 0.0, 0.2, 0.0, 0.0, -2.0, 2.0, 1.0],
+                [-1.0, 0.0, 0.2, 0.0, 0.0, -2.0, 2.0, 1.0],
+            ],
+            dtype=float,
+        )
+
+        for model in ("Unicycle2D", "DynamicUnicycle2D"):
+            with self.subTest(model=model):
+                controller = LocalTrackingController.__new__(LocalTrackingController)
+                controller.robot = _RobotStub(yaw=0.0)
+                controller.robot_spec = {"model": model}
+                controller.obs = obstacles.copy()
+
+                selected = controller.get_nearest_unpassed_obs(
+                    detected_obs=np.empty((0, 8)),
+                    obs_num=2,
+                )
+
+                self.assertEqual(selected.shape[0], 2)
+                np.testing.assert_allclose(
+                    np.sort(selected[:, 0]),
+                    np.array([-1.0, 1.0]),
+                )
+
+                forward_only = controller.get_nearest_unpassed_obs(
+                    detected_obs=np.empty((0, 8)),
+                    angle_unpassed=np.pi,
+                    obs_num=2,
+                )
+
+                self.assertEqual(forward_only.shape[0], 1)
+                self.assertEqual(forward_only[0, 0], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

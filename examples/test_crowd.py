@@ -23,6 +23,8 @@ try:
         CROWD_ALGO_CHOICES,
         CROWD_BASELINE_CHOICES,
         CROWD_BASELINE_MAP,
+        CROWD_BENCHMARK_DEFAULTS,
+        OACP_BENCHMARK_DEFAULTS,
         resolve_baseline_alias,
     )
     from examples import test_crowd_narrow as crowd_narrow
@@ -31,6 +33,8 @@ except ImportError:
         CROWD_ALGO_CHOICES,
         CROWD_BASELINE_CHOICES,
         CROWD_BASELINE_MAP,
+        CROWD_BENCHMARK_DEFAULTS,
+        OACP_BENCHMARK_DEFAULTS,
         resolve_baseline_alias,
     )
 
@@ -73,11 +77,11 @@ ROUTE_EVENT_PLACE_ATTEMPTS = 48
 ROUTE_HIDDEN_ATTEMPTS = 36
 ROUTE_EXTRA_HIDDEN_ATTEMPTS = 24
 ROUTE_BG_BATCH_LIMIT = 12
-DEFAULT_FORCED_EVENTS = 6
+DEFAULT_FORCED_EVENTS = CROWD_BENCHMARK_DEFAULTS["forced_events"]
 LEGACY_FORCED_HIDDEN_SPEED = 0.6
-DEFAULT_FORCED_HIDDEN_SPEED = 1.0
-DEFAULT_FORCED_OCCLUDER_RADIUS_MIN = 0.8
-DEFAULT_FORCED_OCCLUDER_RADIUS_MAX = 1.0
+DEFAULT_FORCED_HIDDEN_SPEED = CROWD_BENCHMARK_DEFAULTS["forced_hidden_speed"]
+DEFAULT_FORCED_OCCLUDER_RADIUS_MIN = CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_min"]
+DEFAULT_FORCED_OCCLUDER_RADIUS_MAX = CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_max"]
 LEGACY_ROUTE_DYN_SPEED_MAX = 0.45
 SMALL_DYN_SPEED_MIN = 0.3
 SMALL_DYN_SPEED_MAX = 1.0
@@ -201,6 +205,7 @@ def _simulate_route_forced_event_nominal(
     hidden_xy,
     hidden_vel,
     hidden_radius,
+    ego_start_distance=0.0,
     nominal_speed=ROUTE_NOMINAL_SPEED,
     dt=ROUTE_EVENT_VALIDATION_DT,
     horizon_s=ROUTE_EVENT_VALIDATION_HORIZON_S,
@@ -221,7 +226,9 @@ def _simulate_route_forced_event_nominal(
     hidden_speed = float(np.linalg.norm(hidden_vel))
     for step in range(n_steps + 1):
         t = float(step) * float(dt)
-        ego_xy = crowd_narrow._nominal_ego_position_on_polyline(ROUTE_XY, nominal_speed, t)
+        ego_xy = _route_point_at_distance(
+            float(ego_start_distance) + float(nominal_speed) * t
+        )
         hxy = hidden_xy + t * hidden_vel
         d_path = crowd_narrow._point_polyline_distance(hxy, ROUTE_XY)
         dist_to_ego = float(np.linalg.norm(hxy - ego_xy))
@@ -288,6 +295,7 @@ def _sample_hidden_for_event(
     rand_obs_setting,
     forced_validate_occlusion,
     forced_require_corridor_conflict,
+    ego_start_distance=0.0,
     attempts=ROUTE_HIDDEN_ATTEMPTS,
     lateral_jitter=0.16,
     target_along_jitter=0.6,
@@ -338,6 +346,7 @@ def _sample_hidden_for_event(
             hidden_xy=hidden_xy,
             hidden_vel=hidden_vel,
             hidden_radius=hidden_radius,
+            ego_start_distance=ego_start_distance,
         )
         if pred["predicted_reveal_step"] is None:
             continue
@@ -526,24 +535,9 @@ def _build_route_forced_emergence_scenario(
                                     rand_obs_setting=rand_obs_setting,
                                     forced_validate_occlusion=forced_validate_occlusion,
                                     forced_require_corridor_conflict=forced_require_corridor_conflict,
+                                    ego_start_distance=observer_dist,
                                     attempts=ROUTE_HIDDEN_ATTEMPTS,
                                 )
-                                if primary_hidden is None and bool(forced_require_corridor_conflict):
-                                    primary_hidden = _sample_hidden_for_event(
-                                        rng=rng,
-                                        occ_xy=occ_xy,
-                                        occ_radius=occ_radius,
-                                        observer_xy=observer_xy,
-                                        event_xy=event_xy,
-                                        tangent=seg["tangent"],
-                                        lateral=seg["lateral"],
-                                        existing_rows=forced_rows,
-                                        forced_hidden_speed=forced_hidden_speed,
-                                        rand_obs_setting=rand_obs_setting,
-                                        forced_validate_occlusion=forced_validate_occlusion,
-                                        forced_require_corridor_conflict=False,
-                                        attempts=max(8, ROUTE_HIDDEN_ATTEMPTS // 2),
-                                    )
                                 if primary_hidden is None:
                                     continue
 
@@ -635,6 +629,7 @@ def _build_route_forced_emergence_scenario(
                                         "occluder_roam_y_bounds": [float(occ_y_min), float(occ_y_max)],
                                         "event_xy": [float(event_xy[0]), float(event_xy[1])],
                                         "observer_xy": [float(observer_xy[0]), float(observer_xy[1])],
+                                        "observer_route_distance": float(observer_dist),
                                         "hidden_initial_position": [float(primary_hidden["hidden_xy"][0]), float(primary_hidden["hidden_xy"][1])],
                                         "hidden_velocity": [float(primary_hidden["hidden_vel"][0]), float(primary_hidden["hidden_vel"][1])],
                                         "hidden_speed": float(primary_hidden["hidden_speed"]),
@@ -703,6 +698,7 @@ def _build_route_forced_emergence_scenario(
                     rand_obs_setting=rand_obs_setting,
                     forced_validate_occlusion=forced_validate_occlusion,
                     forced_require_corridor_conflict=False,
+                    ego_start_distance=float(meta["observer_route_distance"]),
                     attempts=ROUTE_EXTRA_HIDDEN_ATTEMPTS,
                     lateral_jitter=0.30,
                     target_along_jitter=0.8,
@@ -812,14 +808,14 @@ def _build_route_forced_emergence_scenario(
 
 def run_crowd_scenario(
     controller_type=None,
-    model_key="di",
+    model_key=CROWD_BENCHMARK_DEFAULTS["model"],
     show_animation=True,
     save_animation=False,
-    tf=200.0,
-    seed=42,
-    case_idx=None,
+    tf=CROWD_BENCHMARK_DEFAULTS["tf"],
+    seed=CROWD_BENCHMARK_DEFAULTS["seed"],
+    case_idx=CROWD_BENCHMARK_DEFAULTS["idx_start"],
     rand_obs=True,
-    n_rand=20,
+    n_rand=CROWD_BENCHMARK_DEFAULTS["n_rand"],
     du_min_speed_scale=None,
     du_k_turn_brake=None,
     du_k_a_p=None,
@@ -838,14 +834,14 @@ def run_crowd_scenario(
     oa_use_nominal_tracking_cost=None,
     oa_wmax="default",
     oa_dt=None,
-    crowd_mode="forced_emergence",
-    forced_events=DEFAULT_FORCED_EVENTS,
+    crowd_mode=CROWD_BENCHMARK_DEFAULTS["crowd_mode"],
+    forced_events=CROWD_BENCHMARK_DEFAULTS["forced_events"],
     forced_bg_rand=None,
-    forced_hidden_speed=None,
-    forced_occluder_radius_min=DEFAULT_FORCED_OCCLUDER_RADIUS_MIN,
-    forced_occluder_radius_max=DEFAULT_FORCED_OCCLUDER_RADIUS_MAX,
-    forced_validate_occlusion=True,
-    forced_require_corridor_conflict=True,
+    forced_hidden_speed=CROWD_BENCHMARK_DEFAULTS["forced_hidden_speed"],
+    forced_occluder_radius_min=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_min"],
+    forced_occluder_radius_max=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_max"],
+    forced_validate_occlusion=CROWD_BENCHMARK_DEFAULTS["forced_validate_occlusion"],
+    forced_require_corridor_conflict=CROWD_BENCHMARK_DEFAULTS["forced_require_corridor_conflict"],
     rand_obs_setting=crowd_narrow.DEFAULT_RAND_OBS_SETTING,
     static_occluders=False,
     backup_cbf_overrides=None,
@@ -944,8 +940,17 @@ def run_crowd_scenario(
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run the canonical route-focused crowd benchmark.")
-    parser.add_argument("--model", type=str, default="di", choices=["di", "du", "uni"], help="Robot model alias (`di`, `du`, or `uni`).")
+    parser = argparse.ArgumentParser(
+        description="Run the canonical route-focused crowd benchmark.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=CROWD_BENCHMARK_DEFAULTS["model"],
+        choices=["di", "du", "uni"],
+        help="Robot model alias (`di`, `du`, or `uni`).",
+    )
     parser.add_argument(
         "--algo",
         type=str,
@@ -960,13 +965,30 @@ def main(argv=None):
         choices=CROWD_BASELINE_CHOICES,
         help="Baseline alias. If provided, overrides --algo.",
     )
-    parser.add_argument("--tf", type=float, default=200.0, help="Simulation final time [s].")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for scenario generation.")
-    parser.add_argument("--idx", "--case-idx", dest="case_idx", type=int, default=None, help="Case index (1-based) for deterministic random scenario selection.")
+    parser.add_argument(
+        "--tf",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["tf"],
+        help="Simulation final time [s].",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=CROWD_BENCHMARK_DEFAULTS["seed"],
+        help="Random seed for scenario generation.",
+    )
+    parser.add_argument(
+        "--idx",
+        "--case-idx",
+        dest="case_idx",
+        type=int,
+        default=CROWD_BENCHMARK_DEFAULTS["idx_start"],
+        help="Case index (1-based) for deterministic random scenario selection.",
+    )
     parser.add_argument(
         "--n-rand",
         type=int,
-        default=20,
+        default=CROWD_BENCHMARK_DEFAULTS["n_rand"],
         help=(
             "Target number of non-occluder movers. The generator uses most of this budget for hidden-emergence "
             "agents and the rest for sparse background clutter."
@@ -974,7 +996,13 @@ def main(argv=None):
     )
     parser.add_argument("--no-rand-obs", action="store_true", help="Disable random moving obstacles.")
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
-    parser.add_argument("--crowd-mode", type=str, default="forced_emergence", choices=["random", "forced_emergence"], help="Scenario generator mode.")
+    parser.add_argument(
+        "--crowd-mode",
+        type=str,
+        default=CROWD_BENCHMARK_DEFAULTS["crowd_mode"],
+        choices=["random", "forced_emergence"],
+        help="Scenario generator mode.",
+    )
     parser.add_argument(
         "--rand-obs-setting",
         type=str,
@@ -986,21 +1014,47 @@ def main(argv=None):
             "`v2` uses the current distributed-speed generator."
         ),
     )
-    parser.add_argument("--forced-events", type=int, default=DEFAULT_FORCED_EVENTS, help="Number of occluder/hidden-agent events along the route.")
+    parser.add_argument(
+        "--forced-events",
+        type=int,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_events"],
+        help="Number of occluder/hidden-agent events along the route.",
+    )
     parser.add_argument("--forced-bg-rand", type=int, default=None, help="Explicit background clutter count. Default leaves the remainder after hidden-event allocation.")
     parser.add_argument(
         "--forced-hidden-speed",
         type=float,
-        default=None,
-        help=(
-            "Nominal hidden-agent speed magnitude. "
-            f"Default follows --rand-obs-setting: {LEGACY_FORCED_HIDDEN_SPEED} for v1, {DEFAULT_FORCED_HIDDEN_SPEED} for v2."
-        ),
+        default=CROWD_BENCHMARK_DEFAULTS["forced_hidden_speed"],
+        help="Nominal hidden-agent speed magnitude.",
     )
-    parser.add_argument("--forced-occluder-radius-min", type=float, default=DEFAULT_FORCED_OCCLUDER_RADIUS_MIN, help="Minimum occluder radius.")
-    parser.add_argument("--forced-occluder-radius-max", type=float, default=DEFAULT_FORCED_OCCLUDER_RADIUS_MAX, help="Maximum occluder radius.")
-    parser.add_argument("--forced-validate-occlusion", type=crowd_narrow._str2bool, nargs="?", const=True, default=True, help="Require hidden agent to be initially occluded during generation.")
-    parser.add_argument("--forced-require-corridor-conflict", type=crowd_narrow._str2bool, nargs="?", const=True, default=True, help="Require predicted route-corridor conflict during generation.")
+    parser.add_argument(
+        "--forced-occluder-radius-min",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_min"],
+        help="Minimum occluder radius.",
+    )
+    parser.add_argument(
+        "--forced-occluder-radius-max",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_max"],
+        help="Maximum occluder radius.",
+    )
+    parser.add_argument(
+        "--forced-validate-occlusion",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_validate_occlusion"],
+        help="Require hidden agent to be initially occluded during generation.",
+    )
+    parser.add_argument(
+        "--forced-require-corridor-conflict",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_require_corridor_conflict"],
+        help="Require predicted route-corridor conflict during generation.",
+    )
     parser.add_argument("--du-min-speed-scale", type=float, default=None)
     parser.add_argument("--du-k-turn-brake", type=float, default=None)
     parser.add_argument("--du-k-a-p", type=float, default=None)
@@ -1112,10 +1166,33 @@ def main(argv=None):
     parser.add_argument("--oacp-use-bezier-reference", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oacp-bezier-ref-order", type=int, default=None)
     parser.add_argument("--oacp-branch-switch-margin", type=float, default=None)
-    parser.add_argument("--oacp-allow-solver-fallback", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
-    parser.add_argument("--oacp-dynamic-occluders", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
-    parser.add_argument("--oacp-visible-reach-mode", type=str, choices=["constant_velocity", "worst_case"], default=None)
-    parser.add_argument("--oacp-branch-safety-gate", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
+    parser.add_argument(
+        "--oacp-allow-solver-fallback",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=OACP_BENCHMARK_DEFAULTS["allow_solver_fallback"],
+    )
+    parser.add_argument(
+        "--oacp-dynamic-occluders",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=OACP_BENCHMARK_DEFAULTS["dynamic_occluders"],
+    )
+    parser.add_argument(
+        "--oacp-visible-reach-mode",
+        type=str,
+        choices=["constant_velocity", "worst_case"],
+        default=OACP_BENCHMARK_DEFAULTS["visible_reach_mode"],
+    )
+    parser.add_argument(
+        "--oacp-branch-safety-gate",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=OACP_BENCHMARK_DEFAULTS["branch_safety_gate"],
+    )
     parser.add_argument("--oacp-branch-gate-reject-all", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oacp-branch-slack-gate-tol", type=float, default=None)
     parser.add_argument("--oacp-branch-clearance-gate-tol", type=float, default=None)
