@@ -39,6 +39,7 @@ from position_control.ocbf.defaults import (
     OCBF_VREF_FRONT_MODES,
     OCBF_VREF_SCENARIO_WEIGHT_MODES,
     OCBF_VREF_TRACKING_MODES,
+    merge_ocbf_best_parameters,
 )
 from base_control.utils import env, plotting
 
@@ -994,7 +995,7 @@ def _prepare_crowd_runtime(
     vref_mode_occ=None,
     vref_front_mode_occ=None,
     occ_visible_scale=None,
-    occ_enable_visible_hocbf=False,
+    occ_enable_visible_hocbf=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
@@ -1025,7 +1026,9 @@ def _prepare_crowd_runtime(
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
 
-    is_oa_mpc = str(controller_type.get("pos", "")).strip().lower() == "oa_mpc"
+    requested_pos_name = str(controller_type.get("pos", "")).strip().lower()
+    is_oa_mpc = requested_pos_name == "oa_mpc"
+    is_ocbf = requested_pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}
 
     mk = str(model_key).strip().lower()
     if mk in {"di", "doubleintegrator2d"}:
@@ -1203,6 +1206,16 @@ def _prepare_crowd_runtime(
     else:
         raise ValueError(f"Unsupported resolved model `{model}`.")
 
+    if is_ocbf:
+        tuned_backup, tuned_robot = merge_ocbf_best_parameters(
+            model,
+            backup_defaults=robot_spec["backup_cbf"],
+            robot_defaults=robot_spec,
+            backup_overrides=backup_cbf_overrides,
+        )
+        robot_spec = tuned_robot
+        robot_spec["backup_cbf"] = tuned_backup
+
     if robot_spec_overrides:
         robot_spec.update(robot_spec_overrides)
     if model == "Unicycle2D" and not explicit_uni_v_min:
@@ -1335,7 +1348,7 @@ def run_crowd_scenario(
     vref_mode_occ=None,
     vref_front_mode_occ=None,
     occ_visible_scale=None,
-    occ_enable_visible_hocbf=False,
+    occ_enable_visible_hocbf=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
@@ -2066,8 +2079,11 @@ def main(argv=None):
         type=_str2bool,
         nargs="?",
         const=True,
-        default=False,
-        help="Occlusion-CBF only: also add visible-obstacle CBF/HOCBF rows in the stacked QP.",
+        default=None,
+        help=(
+            "Occlusion-CBF only: override whether visible-obstacle CBF/HOCBF rows "
+            "are added. The tuned YAML parameter is used when omitted."
+        ),
     )
     parser.add_argument(
         "--oa-dynamic-occluders",

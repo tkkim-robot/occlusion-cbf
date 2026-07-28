@@ -13,6 +13,9 @@ dependencies = [
     "shapely>=2.0.7",
     "gurobipy",
     "jax>=0.4.30",
+    "optuna>=3.6",
+    "pyyaml>=6.0",
+    "wandb>=0.17",
 ]
 
 [build-system]
@@ -28,3 +31,6 @@ include = [
     "position_control*",
     "utils*",
 ]
+
+[tool.setuptools.package-data]
+"position_control.ocbf" = ["config/*.yaml"]

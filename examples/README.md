@@ -64,6 +64,11 @@ Common controller baselines include `occlusion_cbf`, `cbf_qp`, `oa_mpc`,
 `single_risk_mpc`, `control_tree_mpc`, and `oacp_mpc`; the crosswalk runner
 supports the subset shown by its `--help`.
 
+When `occlusion_cbf` is selected, Double Integrator and Unicycle automatically
+load their committed optimized YAML profiles from
+`position_control/ocbf/config/`. Explicit scenario flags still override those
+values. Dynamic Unicycle continues to use its existing untuned defaults.
+
 ## Compatibility names
 
 New code should import `examples.test_crowd` or

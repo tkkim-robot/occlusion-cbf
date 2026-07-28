@@ -44,6 +44,7 @@ ensure_repo_root()
 LocalTrackingControllerDyn_OCC = load_local_occ_controller("vis_ocbf")
 
 from base_control.utils import env
+from position_control.ocbf.defaults import merge_ocbf_best_parameters
 
 
 matplotlib.rcParams.update(
@@ -532,7 +533,7 @@ def _compute_scene_bounds(x0_vis, visible_obs, occlusion_scenarios, robot_radius
 
 
 def _make_robot_spec(args, sensing_range: float):
-    return {
+    robot_spec = {
         "model": "DoubleIntegrator2D",
         "v_max": 1.0,
         "a_max": 1.0,
@@ -544,9 +545,6 @@ def _make_robot_spec(args, sensing_range: float):
         "sensing_range": float(sensing_range),
         "fov_angle": 360.0,
         "backup_cbf": {
-            "T_horizon": float(args.T_horizon),
-            "dt_backup": float(args.dt_backup),
-            "vref_scenario_softmax_kappa": float(args.vref_scenario_softmax_kappa),
             "rho_T": "auto",
             "vref_front_mode_occ": "los",
         },
@@ -556,8 +554,24 @@ def _make_robot_spec(args, sensing_range: float):
         "dynamic_obs_types": [1],
         "occlusion_types": [1],
         "occ_visible_scale": 1.0,
-        "occ_kappa": float(args.occ_kappa),
     }
+    backup_cfg, robot_spec = merge_ocbf_best_parameters(
+        robot_spec["model"],
+        backup_defaults=robot_spec["backup_cbf"],
+        robot_defaults=robot_spec,
+    )
+    if args.T_horizon is not None:
+        backup_cfg["T_horizon"] = float(args.T_horizon)
+    if args.dt_backup is not None:
+        backup_cfg["dt_backup"] = float(args.dt_backup)
+    if args.vref_scenario_softmax_kappa is not None:
+        backup_cfg["vref_scenario_softmax_kappa"] = float(
+            args.vref_scenario_softmax_kappa
+        )
+    if args.occ_kappa is not None:
+        robot_spec["occ_kappa"] = float(args.occ_kappa)
+    robot_spec["backup_cbf"] = backup_cfg
+    return robot_spec
 
 
 def _make_controller(x0_vis, args, sensing_range: float):
@@ -566,7 +580,7 @@ def _make_controller(x0_vis, args, sensing_range: float):
         np.asarray(x0_vis, dtype=float),
         robot_spec,
         controller_type={"pos": "occlusion_cbf_qp"},
-        dt=float(args.dt_backup),
+        dt=float(robot_spec["backup_cbf"]["dt_backup"]),
         show_animation=False,
         save_animation=False,
         env=env.Env(),
@@ -1925,11 +1939,32 @@ def build_arg_parser():
         default=False,
         help="Show the original smoothed terminal-set contour in addition to the raw geometric terminal polygons.",
     )
-    parser.add_argument("--T-horizon", dest="T_horizon", type=float, default=3.0)
-    parser.add_argument("--dt-backup", type=float, default=0.05)
+    parser.add_argument(
+        "--T-horizon",
+        dest="T_horizon",
+        type=float,
+        default=None,
+        help="Override the tuned DI Occlusion-CBF horizon.",
+    )
+    parser.add_argument(
+        "--dt-backup",
+        type=float,
+        default=None,
+        help="Override the tuned DI Occlusion-CBF backup integration step.",
+    )
     parser.add_argument("--v-adv-max-occ", type=float, default=0.5)
-    parser.add_argument("--occ-kappa", type=float, default=10.0)
-    parser.add_argument("--vref-scenario-softmax-kappa", type=float, default=6.0)
+    parser.add_argument(
+        "--occ-kappa",
+        type=float,
+        default=None,
+        help="Override the tuned DI Occlusion-CBF barrier smoothing value.",
+    )
+    parser.add_argument(
+        "--vref-scenario-softmax-kappa",
+        type=float,
+        default=None,
+        help="Override the tuned DI scenario-weighting softmax value.",
+    )
     parser.add_argument("--figure-width", type=float, default=11.2)
     parser.add_argument("--figure-height", type=float, default=7.8)
     parser.add_argument("--no-labels", action="store_true")

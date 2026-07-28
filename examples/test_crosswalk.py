@@ -28,6 +28,7 @@ except ImportError:
 REPO_ROOT = ensure_repo_root()
 LocalTrackingControllerDyn_OCC = load_local_occ_controller("crosswalk")
 from base_control.utils import env, plotting
+from position_control.ocbf.defaults import merge_ocbf_best_parameters
 
 BUS_TYPES = [0, 1]  # 0: bus occlusion off, 1: bus occlusion on
 
@@ -422,10 +423,6 @@ def crosswalk_scenario_v3(
             robot_spec["animation_export_video"] = (
                 str(robot_spec["animation_frame_ext"]).strip().lower() == "png"
             )
-        if vref_scenario_softmax_kappa is not None:
-            robot_spec["backup_cbf"]["vref_scenario_softmax_kappa"] = float(
-                vref_scenario_softmax_kappa
-            )
         if model_key in {"di", "doubleintegrator2d"}:
             robot_spec.update(
                 {
@@ -451,7 +448,23 @@ def crosswalk_scenario_v3(
                     "w_max": 1.2,
                 }
             )
-        if str(controller_type.get("pos", "")).strip().lower() == "oa_mpc":
+        pos_name = str(controller_type.get("pos", "")).strip().lower()
+        if pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}:
+            tuned_backup, tuned_robot = merge_ocbf_best_parameters(
+                robot_spec["model"],
+                backup_defaults=robot_spec["backup_cbf"],
+                robot_defaults=robot_spec,
+            )
+            robot_spec = tuned_robot
+            robot_spec["backup_cbf"] = tuned_backup
+        if occ_T_horizon is not None:
+            robot_spec["backup_cbf"]["T_horizon"] = float(occ_T_horizon)
+        if vref_scenario_softmax_kappa is not None:
+            robot_spec["backup_cbf"]["vref_scenario_softmax_kappa"] = float(
+                vref_scenario_softmax_kappa
+            )
+
+        if pos_name == "oa_mpc":
             oa_cfg = robot_spec.setdefault("oa_mpc", {})
             oa_cfg.setdefault("paper_mode", True)
             oa_cfg.setdefault("N", 10)

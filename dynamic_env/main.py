@@ -341,6 +341,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         requested_pos_type = str(
             (controller_type or {}).get("pos", "cbf_qp")
         ).strip().lower() or "cbf_qp"
+        if requested_pos_type in {"occlusion_cbf", "occlusion_cbf_qp"}:
+            from position_control.ocbf.defaults import apply_ocbf_best_parameters
+
+            apply_ocbf_best_parameters(robot_spec)
         # Build the shared tracking state with the in-tree baseline controller,
         # then replace it with the explicitly requested project controller.
         bootstrap_controller_type = dict(controller_type or {})

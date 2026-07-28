@@ -1017,7 +1017,7 @@ def run_crowd_scenario(
     vref_mode_occ=None,
     vref_front_mode_occ=None,
     occ_visible_scale=None,
-    occ_enable_visible_hocbf=False,
+    occ_enable_visible_hocbf=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
@@ -1165,7 +1165,14 @@ def main():
     parser.add_argument("--forced-require-corridor-conflict", type=crowd_narrow._str2bool, nargs="?", const=True, default=True)
     parser.add_argument("--static-occluders", type=crowd_narrow._str2bool, nargs="?", const=True, default=True)
     parser.add_argument("--occ-visible-scale", type=float, default=None)
-    parser.add_argument("--occ-enable-visible-hocbf", type=crowd_narrow._str2bool, nargs="?", const=True, default=False)
+    parser.add_argument(
+        "--occ-enable-visible-hocbf",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override the tuned Occlusion-CBF visible-obstacle HOCBF setting.",
+    )
     parser.add_argument("--oa-dynamic-occluders", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oa-allow-solver-fallback", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oa-dsafe", type=float, default=None)

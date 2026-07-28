@@ -1,0 +1,30 @@
+model: Unicycle2D
+
+backup_cbf:
+  T_horizon: 2.0
+  dt_backup: 0.05
+  max_active_occlusions: 5
+  vref_scenario_softmax_kappa: 5.0
+  k_theta_occ_uni_p: 1.0783765065946995
+  k_theta_occ_uni_d: 0.15000000000000002
+  k_v_occ_uni_p: 1.4500000000000002
+  k_v_occ_uni_d: 0.24
+  k_turn_boost_occ_uni: 0.9
+  turn_boost_angle_occ_uni: 0.34007262580098474
+  rho_T: 0.0
+  vref_tracking_mode_occ_uni: gated
+  vref_scenario_weight_mode: barrier_unexpand
+  qp_failure_fallback_mode: state_safe
+  vref_front_mode_occ: los
+  vref_mode_occ: strict
+  occ_selection_mode: h_tilde
+  occ_rollout_mode: common
+  terminal_mode: all
+  terminal_residual_mode: "off"
+  terminal_slack_weight: 0.0
+
+robot_spec:
+  occ_kappa: 10.0
+  fov_angle: 360.0
+  enable_visible_hocbf_in_occ: true
+  v_min: 0.0

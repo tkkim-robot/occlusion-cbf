@@ -5,6 +5,16 @@ Scenario-specific wrappers such as ``examples/test_crowd.py`` can apply the
 paper benchmark defaults through the helpers in this module.
 """
 
+from __future__ import annotations
+
+from collections.abc import Mapping
+from copy import deepcopy
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
+
+
 OCBF_VREF_FRONT_MODES = ("default", "los")
 OCBF_DEFAULT_VREF_FRONT_MODE = "los"
 
@@ -35,6 +45,22 @@ OCBF_DEFAULT_ROLLOUT_MODE = "common"
 
 CROWD_ENABLE_VISIBLE_HOCBF_DEFAULT = True
 
+OCBF_PARAMETER_DIR = Path(__file__).resolve().parent / "config"
+OCBF_BEST_PARAMETER_FILES = {
+    "DoubleIntegrator2D": OCBF_PARAMETER_DIR / "occlusion_cbf_di_params.yaml",
+    "Unicycle2D": OCBF_PARAMETER_DIR / "occlusion_cbf_unicycle_params.yaml",
+}
+
+_OCBF_MODEL_ALIASES = {
+    "di": "DoubleIntegrator2D",
+    "doubleintegrator": "DoubleIntegrator2D",
+    "doubleintegrator2d": "DoubleIntegrator2D",
+    "uni": "Unicycle2D",
+    "un": "Unicycle2D",
+    "unicycle": "Unicycle2D",
+    "unicycle2d": "Unicycle2D",
+}
+
 
 def normalize_choice(value, choices, default):
     """Return a normalized string choice, falling back to ``default``."""
@@ -57,6 +83,113 @@ def apply_crowd_ocbf_defaults(backup_cbf_overrides):
         OCBF_CROWD_VREF_SCENARIO_WEIGHT_MODE,
     )
     return cfg
+
+
+def _canonical_tuned_model(model_key):
+    normalized = (
+        str(model_key)
+        .strip()
+        .lower()
+        .replace("_", "")
+        .replace("-", "")
+        .replace(" ", "")
+    )
+    return _OCBF_MODEL_ALIASES.get(normalized)
+
+
+@lru_cache(maxsize=None)
+def _load_ocbf_best_parameters_cached(model_name):
+    path = OCBF_BEST_PARAMETER_FILES[model_name]
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            payload = yaml.safe_load(stream)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"Missing Occlusion-CBF parameter file for {model_name}: {path}"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in Occlusion-CBF parameter file {path}") from exc
+
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Occlusion-CBF parameter file must contain a mapping: {path}")
+    if payload.get("model") != model_name:
+        raise ValueError(
+            f"Occlusion-CBF parameter file {path} declares model "
+            f"{payload.get('model')!r}, expected {model_name!r}"
+        )
+
+    normalized = {"model": model_name}
+    for section in ("backup_cbf", "robot_spec"):
+        values = payload.get(section)
+        if not isinstance(values, Mapping):
+            raise ValueError(
+                f"Occlusion-CBF parameter file section `{section}` must be a mapping: {path}"
+            )
+        normalized[section] = dict(values)
+    return normalized
+
+
+def load_ocbf_best_parameters(model_key):
+    """Load a copy of the tuned DI or Unicycle parameters.
+
+    Dynamic Unicycle has no tuned study yet, so unsupported dynamics return
+    ``None`` and retain their existing defaults.
+    """
+    model_name = _canonical_tuned_model(model_key)
+    if model_name is None:
+        return None
+    return deepcopy(_load_ocbf_best_parameters_cached(model_name))
+
+
+def merge_ocbf_best_parameters(
+    model_key,
+    *,
+    backup_defaults=None,
+    robot_defaults=None,
+    backup_overrides=None,
+    robot_overrides=None,
+):
+    """Merge OCBF configuration with explicit values taking precedence.
+
+    Precedence is scenario defaults, tuned YAML parameters, then explicit
+    command-line or programmatic overrides.
+    """
+    backup_cfg = dict(backup_defaults or {})
+    robot_cfg = dict(robot_defaults or {})
+    parameters = load_ocbf_best_parameters(model_key)
+    if parameters is not None:
+        backup_cfg.update(parameters["backup_cbf"])
+        robot_cfg.update(parameters["robot_spec"])
+    if backup_overrides:
+        backup_cfg.update(dict(backup_overrides))
+    if robot_overrides:
+        robot_cfg.update(dict(robot_overrides))
+    return backup_cfg, robot_cfg
+
+
+def apply_ocbf_best_parameters(robot_spec, *, overwrite=False):
+    """Apply tuned parameters to a robot specification before construction.
+
+    The shared tracking controller uses this as a safety net for future entry
+    points. Maintained scenarios use :func:`merge_ocbf_best_parameters` so
+    their built-in defaults are replaced while explicit user overrides remain
+    authoritative.
+    """
+    parameters = load_ocbf_best_parameters(robot_spec.get("model"))
+    if parameters is None:
+        return robot_spec
+
+    for key, value in parameters["robot_spec"].items():
+        if overwrite or key not in robot_spec:
+            robot_spec[key] = deepcopy(value)
+
+    backup_cfg = robot_spec.setdefault("backup_cbf", {})
+    if not isinstance(backup_cfg, dict):
+        raise TypeError("robot_spec['backup_cbf'] must be a dictionary")
+    for key, value in parameters["backup_cbf"].items():
+        if overwrite or key not in backup_cfg:
+            backup_cfg[key] = deepcopy(value)
+    return robot_spec
 
 
 # Compatibility aliases retained for external scripts using the former Crowd2 names.

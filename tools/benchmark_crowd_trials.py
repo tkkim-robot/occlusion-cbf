@@ -216,7 +216,7 @@ def _run_baseline_sweep(
     ts: str,
 ) -> dict[str, Any]:
     _, scenario_label = _load_run_crowd_scenario(scenario_name)
-    if occ_enable_visible_hocbf is None:
+    if occ_enable_visible_hocbf is None and not _is_ocbf_baseline(str(baseline_alias)):
         occ_enable_visible_hocbf = default_visible_hocbf_for_scenario(scenario_label)
     if str(scenario_label).strip().lower() == "crowd" and _is_ocbf_baseline(str(baseline_alias)):
         backup_cbf_overrides = apply_crowd_ocbf_defaults(backup_cbf_overrides)
