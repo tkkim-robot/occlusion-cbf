@@ -158,9 +158,9 @@ class OptunaTuningTests(unittest.TestCase):
                 if model == "uni":
                     self.assertEqual(
                         FIXED_OCBF_CONFIG["unicycle_v_min"],
-                        -1.0,
+                        0.0,
                     )
-                    self.assertEqual(robot["v_min"], -1.0)
+                    self.assertEqual(robot["v_min"], 0.0)
                     self.assertEqual(
                         backup["vref_tracking_mode_occ_uni"],
                         "gated",

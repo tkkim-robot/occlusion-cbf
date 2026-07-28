@@ -84,7 +84,7 @@ class ControlTreeMPC(MPCCommonUtils):
             else float(
                 robot_spec.get(
                     "v_min",
-                    -float(robot_spec.get("v_max", 1.0)),
+                    0.0,
                 )
             )
         )

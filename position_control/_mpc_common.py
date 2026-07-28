@@ -27,14 +27,21 @@ class MPCCommonUtils:
 
     def _speed_bounds(self):
         v_max = float(self.robot_spec.get("v_max", 1.0))
-        if self._model_name() == "DoubleIntegrator2D":
+        model = self._model_name()
+        if model == "DoubleIntegrator2D":
             return 0.0, float(v_max)
+        default_v_min = (
+            0.0
+            if model == "Unicycle2D"
+            or bool(getattr(self, "forward_only", False))
+            else -v_max
+        )
         if "v_min" in self.robot_spec:
             v_min = float(self.robot_spec.get("v_min", 0.0))
         else:
-            v_min = 0.0 if bool(getattr(self, "forward_only", False)) else -v_max
+            v_min = default_v_min
         if (not np.isfinite(v_min)) or v_min > v_max:
-            v_min = 0.0 if bool(getattr(self, "forward_only", False)) else -v_max
+            v_min = default_v_min
         return float(v_min), float(v_max)
 
     def _input_bounds(self):

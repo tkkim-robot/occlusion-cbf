@@ -436,6 +436,7 @@ def crosswalk_scenario_v3(
                 {
                     "model": "Unicycle2D",
                     "v_max": 2.0,
+                    "v_min": 0.0,
                     "w_max": 1.2,
                 }
             )

@@ -62,9 +62,9 @@ class OAMPC:
         self.sensing_range = float(robot_spec.get("sensing_range", 10.0))
 
         cfg = robot_spec.setdefault("oa_mpc", {})
-        # Keep OA-MPC in paper-faithful mode for horizon/cost/safety defaults,
-        # while allowing reverse motion by default for fairness-matched
-        # benchmark comparisons in this codebase.
+        # Keep OA-MPC in paper-faithful mode for horizon/cost/safety defaults.
+        # The shared robot specification supplies the comparison-wide speed
+        # bounds, including the forward-only Unicycle default.
         self.paper_mode = True
         self.N = int(cfg.get("N", 10))
         # Paper setting uses N=10 at dt=0.1 (~1.0 s horizon).
@@ -261,15 +261,9 @@ class OAMPC:
         if self.model == "Unicycle2D":
             v_max = float(self.robot_spec.get("v_max", 1.0))
             w_max = float(self.robot_spec.get("w_max", 0.8))
-            # The original paper uses forward speed bound v in [0, v_max].
-            # In this benchmark codebase we allow reverse motion by default
-            # unless `v_min` is explicitly provided in `robot_spec`.
-            if "v_min" in self.robot_spec:
-                v_min = float(self.robot_spec.get("v_min", 0.0))
-            else:
-                v_min = -v_max
+            v_min = float(self.robot_spec.get("v_min", 0.0))
             if (not np.isfinite(v_min)) or v_min > v_max:
-                v_min = -v_max
+                v_min = 0.0
             lb = np.array([v_min, -w_max], dtype=float)
             ub = np.array([v_max, w_max], dtype=float)
             return lb, ub

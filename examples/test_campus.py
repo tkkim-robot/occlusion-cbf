@@ -140,6 +140,7 @@ def _build_campus_model_defaults(model_key, controller_type=None, vref_mode_occ=
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": 1.0,
+            "v_min": 0.0,
             "w_max": uni_wmax,
             "radius": 0.25,
             "debug_backup_qp": False,

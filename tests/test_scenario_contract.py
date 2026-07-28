@@ -157,7 +157,7 @@ class ScenarioContractTests(unittest.TestCase):
             OACP_BENCHMARK_DEFAULTS,
         )
 
-    def test_unicycle_benchmark_does_not_force_forward_only(self):
+    def test_unicycle_benchmark_relies_on_shared_forward_only_profile(self):
         with (
             mock.patch(
                 "sys.argv",

@@ -40,6 +40,7 @@ class Unicycle2D:
         self.k2 = 1.8 #0.5
 
         self.robot_spec.setdefault('v_max', 1.0)
+        self.robot_spec.setdefault('v_min', 0.0)
         self.robot_spec.setdefault('w_max', 0.5)
 
     def f(self, X, casadi=False):

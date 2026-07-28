@@ -148,7 +148,7 @@ def _apply_control_tree_defaults(robot_spec):
     if robot_spec.get("model") == "Unicycle2D":
         ct_cfg.setdefault(
             "v_plan_min",
-            float(robot_spec.get("v_min", -float(robot_spec.get("v_max", 1.0)))),
+            float(robot_spec.get("v_min", 0.0)),
         )
     else:
         ct_cfg.setdefault("v_plan_min", 0.0)
@@ -1198,7 +1198,7 @@ def _prepare_crowd_runtime(
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": uni_vmax,
-            "v_min": -uni_vmax,
+            "v_min": 0.0,
             "w_max": uni_wmax,
             "radius": 0.25,
             "debug_backup_qp": False,
@@ -1978,7 +1978,7 @@ def main(argv=None):
     parser.add_argument("--uni-reverse-gate-angle", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_angle_occ_uni.")
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_power_occ_uni.")
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None, help="Override backup_cbf.v_min_cmd_rev_occ_uni.")
-    parser.add_argument("--uni-allow-reverse", type=_str2bool, nargs="?", const=True, default=None, help="Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. Default is true for Unicycle2D.")
+    parser.add_argument("--uni-allow-reverse", type=_str2bool, nargs="?", const=True, default=None, help="Explicitly allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. Forward-only is the default.")
     parser.add_argument("--uni-forward-only", type=_str2bool, nargs="?", const=True, default=False, help="Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given.")
     parser.add_argument("--uni-v-min", type=float, default=None, help="Override Unicycle2D input lower speed bound.")
     parser.add_argument("--uni-vref-tracking-mode", type=str, choices=["gated", "projected"], default=None)

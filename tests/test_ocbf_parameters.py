@@ -75,7 +75,7 @@ class OCBFParameterTests(unittest.TestCase):
         self.assertEqual(backup["vref_scenario_weight_mode"], "barrier_unexpand")
         self.assertEqual(
             parameters["shared_robot_spec"],
-            {"fov_angle": 360.0, "v_min": -1.0},
+            {"fov_angle": 360.0, "v_min": 0.0},
         )
 
     def test_dynamic_unicycle_remains_untuned(self):
@@ -96,14 +96,14 @@ class OCBFParameterTests(unittest.TestCase):
         )
         self.assertEqual(
             load_shared_robot_parameters("uni"),
-            {"fov_angle": 360.0, "v_min": -1.0},
+            {"fov_angle": 360.0, "v_min": 0.0},
         )
 
         robot = merge_shared_robot_parameters(
             "uni",
             robot_defaults={
                 "fov_angle": 70.0,
-                "v_min": -1.0,
+                "v_min": 0.0,
                 "radius": 0.25,
             },
             robot_overrides={"v_min": -0.25},
@@ -182,7 +182,7 @@ class OCBFParameterTests(unittest.TestCase):
         uni_backup = uni_runtime["robot_spec"]["backup_cbf"]
         self.assertEqual(uni_backup["T_horizon"], 2.0)
         self.assertEqual(uni_backup["max_active_occlusions"], 5)
-        self.assertEqual(uni_runtime["robot_spec"]["v_min"], -1.0)
+        self.assertEqual(uni_runtime["robot_spec"]["v_min"], 0.0)
 
         cbf_runtime = test_crowd_narrow._prepare_crowd_runtime(
             controller_type={"pos": "cbf_qp"},
@@ -233,7 +233,7 @@ class OCBFParameterTests(unittest.TestCase):
                 )
                 robot_spec = runtime["robot_spec"]
                 self.assertEqual(robot_spec["fov_angle"], 360.0)
-                self.assertEqual(robot_spec["v_min"], -1.0)
+                self.assertEqual(robot_spec["v_min"], 0.0)
                 self.assertNotIn("occ_kappa", robot_spec)
                 self.assertNotIn(
                     "k_theta_occ_uni_p",
@@ -277,7 +277,7 @@ class OCBFParameterTests(unittest.TestCase):
             control_tree_runtime["robot_spec"]["control_tree_mpc"][
                 "v_plan_min"
             ],
-            -1.0,
+            0.0,
         )
 
         forward_only_runtime = test_crowd_narrow._prepare_crowd_runtime(
@@ -297,6 +297,20 @@ class OCBFParameterTests(unittest.TestCase):
                 "v_plan_min"
             ],
             0.0,
+        )
+
+        reverse_runtime = test_crowd_narrow._prepare_crowd_runtime(
+            controller_type={"pos": "control_tree_mpc"},
+            model_key="uni",
+            robot_spec_overrides={"_uni_allow_reverse": True},
+            **common,
+        )
+        self.assertEqual(reverse_runtime["robot_spec"]["v_min"], -1.0)
+        self.assertEqual(
+            reverse_runtime["robot_spec"]["control_tree_mpc"][
+                "v_plan_min"
+            ],
+            -1.0,
         )
 
         explicit_runtime = test_crowd_narrow._prepare_crowd_runtime(
@@ -367,7 +381,7 @@ class OCBFParameterTests(unittest.TestCase):
         uni_spec, di_spec = captured_specs
         self.assertEqual(uni_spec["backup_cbf"]["T_horizon"], 2.0)
         self.assertEqual(uni_spec["backup_cbf"]["max_active_occlusions"], 5)
-        self.assertEqual(uni_spec["v_min"], -1.0)
+        self.assertEqual(uni_spec["v_min"], 0.0)
         self.assertEqual(di_spec["backup_cbf"]["T_horizon"], 0.75)
         self.assertEqual(di_spec["backup_cbf"]["max_active_occlusions"], 10)
 

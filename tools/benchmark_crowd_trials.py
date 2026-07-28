@@ -14,8 +14,8 @@ All runs force:
     - show_animation = False
     - save_animation = False
 
-Unicycle2D uses the shared reverse-capable speed bound by default. Pass
---uni-forward-only true or --uni-v-min to override it.
+Unicycle2D uses the shared forward-only speed bound by default. Pass
+--uni-allow-reverse true or --uni-v-min to override it.
 
 With no arguments, this runs the canonical OACP crowd profile. Shared
 scenario defaults also apply unchanged when another baseline or suite is chosen.
@@ -952,8 +952,8 @@ def main() -> int:
         const=True,
         default=None,
         help=(
-            "Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. "
-            "Reverse is already the default for Unicycle2D."
+            "Explicitly allow Uni reverse by setting v_min=-v_max unless "
+            "--uni-v-min is given. Forward-only is the default."
         ),
     )
     p.add_argument(
