@@ -9,7 +9,7 @@ This scenario keeps the same controller stack/FOV/visibility pipeline as
 - background clutter is kept sparse and away from the route corridor
 
 Run:
-    uv run python examples/test_crowd.py --baseline occlusion_cbf --model uni
+    uv run python -m examples.run_scenario --model uni --idx 1
 """
 
 import argparse
@@ -960,10 +960,11 @@ def main(argv=None):
     )
     parser.add_argument(
         "--baseline",
+        "--method",
         type=str,
         default=None,
         choices=CROWD_BASELINE_CHOICES,
-        help="Baseline alias. If provided, overrides --algo.",
+        help="Method alias. If provided, overrides --algo; Occlusion-CBF is the default.",
     )
     parser.add_argument(
         "--tf",
@@ -1199,8 +1200,44 @@ def main(argv=None):
     parser.add_argument("--wmax", type=str, choices=["default", "pi"], default="default")
     parser.add_argument("--oa-dt", type=float, default=None)
     parser.add_argument("--static-occluders", type=crowd_narrow._str2bool, nargs="?", const=True, default=False)
-    parser.add_argument("--save_ani", "--save-ani", "--save-anim", "--save-animation", dest="save_anim", type=crowd_narrow._str2bool, nargs="?", const=True, default=False)
+    parser.add_argument(
+        "--save_ani",
+        "--save-ani",
+        "--save-anim",
+        "--save-animation",
+        dest="save_anim",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Save case frames and export tracking.mp4.",
+    )
+    parser.add_argument(
+        "--animation-subdir",
+        type=str,
+        default=None,
+        help=(
+            "Relative output directory under output/animations. When omitted, "
+            "a case-specific crowd/<method>/<model>_n<N>_seed<S>_idx<I> path is used."
+        ),
+    )
+    parser.add_argument(
+        "--animation-frame-stride",
+        type=int,
+        default=5,
+        help="Save one animation frame every N rendered controller steps.",
+    )
+    parser.add_argument(
+        "--animation-frame-dpi",
+        type=int,
+        default=150,
+        help="DPI used for saved PNG frames before video export.",
+    )
     args = parser.parse_args(argv)
+    if args.animation_frame_stride < 1:
+        parser.error("--animation-frame-stride must be >= 1")
+    if args.animation_frame_dpi < 1:
+        parser.error("--animation-frame-dpi must be >= 1")
 
     pos_algo = resolve_baseline_alias(args.baseline, args.algo, CROWD_BASELINE_MAP)
     controller_type = {"pos": pos_algo}
@@ -1280,6 +1317,15 @@ def main(argv=None):
     if args.uni_allow_reverse is not None:
         robot_spec_overrides["_uni_allow_reverse"] = bool(args.uni_allow_reverse)
     if args.uni_forward_only:
+        robot_spec_overrides["_uni_forward_only"] = True
+    elif (
+        args.model == "uni"
+        and _is_ocbf_controller(controller_type)
+        and args.uni_allow_reverse is None
+        and args.uni_v_min is None
+    ):
+        # Match the paper benchmark even if a future tuned profile no longer
+        # carries the same nonnegative-speed bound.
         robot_spec_overrides["_uni_forward_only"] = True
     if args.uni_v_min is not None:
         robot_spec_overrides["v_min"] = float(args.uni_v_min)
@@ -1364,7 +1410,31 @@ def main(argv=None):
         oacp_cfg["branch_clearance_gate_tol"] = float(args.oacp_branch_clearance_gate_tol)
     if oacp_cfg:
         robot_spec_overrides["oacp_mpc"] = oacp_cfg
-    run_crowd_scenario(
+    animation_subdir = args.animation_subdir
+    if args.save_anim:
+        if animation_subdir is None:
+            method_label = next(
+                (
+                    alias
+                    for alias, controller_name in CROWD_BASELINE_MAP.items()
+                    if controller_name == pos_algo
+                ),
+                str(pos_algo).strip().lower(),
+            )
+            animation_subdir = (
+                f"crowd/{method_label}/"
+                f"{args.model}_n{args.n_rand}_seed{args.seed}_idx{args.case_idx}"
+            )
+        animation_path = Path(animation_subdir)
+        if animation_path.is_absolute() or ".." in animation_path.parts:
+            parser.error("--animation-subdir must be a relative path under output/animations")
+        robot_spec_overrides["animation_subdir"] = animation_path.as_posix()
+        robot_spec_overrides["animation_frame_dpi"] = int(args.animation_frame_dpi)
+        robot_spec_overrides["animation_frame_stride"] = int(
+            args.animation_frame_stride
+        )
+
+    metrics = run_crowd_scenario(
         controller_type=controller_type,
         model_key=args.model,
         show_animation=not args.disable_plot,
@@ -1404,7 +1474,26 @@ def main(argv=None):
         static_occluders=args.static_occluders,
         backup_cbf_overrides=(backup_cbf_overrides or None),
         robot_spec_overrides=(robot_spec_overrides or None),
+        return_metrics=True,
     )
+    if isinstance(metrics, dict):
+        case_seed = crowd_narrow._compute_case_seed(args.seed, args.case_idx)
+        print(
+            f"[CASE] base_seed={args.seed} idx={args.case_idx} "
+            f"derived_case_seed={case_seed}"
+        )
+        print(
+            f"[RESULT] outcome={metrics.get('outcome', 'unknown')} "
+            f"steps={metrics.get('total_steps', 0)} "
+            f"sim_time_s={metrics.get('total_sim_time', None)} "
+            f"final_goal_distance={metrics.get('final_goal_distance', None)}"
+        )
+        if args.save_anim and animation_subdir is not None:
+            print(
+                "[ANIMATION] Case output directory: "
+                f"output/animations/{Path(animation_subdir).as_posix()}"
+            )
+    return 0
 
 
 if __name__ == "__main__":

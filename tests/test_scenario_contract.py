@@ -12,6 +12,7 @@ from examples import test_crowd1
 from examples import test_crowd2
 from examples import test_crowd_narrow
 from examples import test_multi_crowd
+from examples import run_scenario
 from examples._baseline_defs import (
     CROWD_BENCHMARK_DEFAULTS,
     OACP_BENCHMARK_DEFAULTS,
@@ -26,6 +27,52 @@ from tools.benchmark_crowd_trials import _load_run_crowd_scenario
 
 
 class ScenarioContractTests(unittest.TestCase):
+    def test_shared_launcher_defaults_to_exact_crowd_replay(self):
+        scenario_module = mock.Mock()
+        scenario_module.main.return_value = 0
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(
+                run_scenario.importlib,
+                "import_module",
+                return_value=scenario_module,
+            ) as import_module,
+        ):
+            self.assertEqual(
+                run_scenario.main(
+                    [
+                        "--model",
+                        "uni",
+                        "--idx",
+                        "28",
+                        "--n-rand",
+                        "10",
+                        "--save-animation",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                {
+                    key: run_scenario.os.environ.get(key)
+                    for key in run_scenario.BENCHMARK_CPU_ENVIRONMENT
+                },
+                run_scenario.BENCHMARK_CPU_ENVIRONMENT,
+            )
+
+        import_module.assert_called_once_with("examples.test_crowd")
+        scenario_module.main.assert_called_once_with(
+            [
+                "--model",
+                "uni",
+                "--idx",
+                "28",
+                "--n-rand",
+                "10",
+                "--save-animation",
+            ]
+        )
+
     def test_crowd_ocbf_defaults_use_parkcart_scenario_weighting(self):
         defaults = apply_crowd_ocbf_defaults(None)
         self.assertEqual(
@@ -117,6 +164,7 @@ class ScenarioContractTests(unittest.TestCase):
         single_kwargs = run_single.call_args.kwargs
         self.assertEqual(single_kwargs["model_key"], CROWD_BENCHMARK_DEFAULTS["model"])
         self.assertEqual(single_kwargs["case_idx"], CROWD_BENCHMARK_DEFAULTS["idx_start"])
+        self.assertTrue(single_kwargs["return_metrics"])
         for key in (
             "tf",
             "seed",
@@ -158,6 +206,142 @@ class ScenarioContractTests(unittest.TestCase):
         self.assertEqual(multi_args.oacp_dynamic_occluders, True)
         self.assertEqual(multi_args.oacp_visible_reach_mode, "constant_velocity")
         self.assertEqual(multi_args.oacp_branch_safety_gate, False)
+
+    def test_no_argument_single_case_defaults_to_tuned_occlusion_cbf(self):
+        with mock.patch.object(test_crowd, "run_crowd_scenario") as run_single:
+            self.assertEqual(test_crowd.main([]), 0)
+
+        kwargs = run_single.call_args.kwargs
+        self.assertEqual(
+            kwargs["controller_type"],
+            {"pos": "occlusion_cbf_qp"},
+        )
+        self.assertEqual(kwargs["model_key"], "di")
+        self.assertEqual(kwargs["seed"], 42)
+        self.assertEqual(kwargs["case_idx"], 1)
+        self.assertEqual(kwargs["n_rand"], 10)
+        self.assertEqual(kwargs["tf"], 500.0)
+        self.assertEqual(kwargs["crowd_mode"], "forced_emergence")
+        self.assertEqual(kwargs["rand_obs_setting"], "v2")
+        self.assertEqual(kwargs["forced_events"], 6)
+        self.assertEqual(kwargs["forced_hidden_speed"], 1.0)
+        self.assertEqual(kwargs["forced_occluder_radius_min"], 0.8)
+        self.assertEqual(kwargs["forced_occluder_radius_max"], 1.0)
+        self.assertTrue(kwargs["forced_validate_occlusion"])
+        self.assertTrue(kwargs["forced_require_corridor_conflict"])
+        self.assertTrue(kwargs["occ_enable_visible_hocbf"])
+
+    def test_method_alias_selects_an_explicit_comparison_controller(self):
+        with mock.patch.object(test_crowd, "run_crowd_scenario") as run_single:
+            self.assertEqual(
+                test_crowd.main(["--method", "cbf_qp", "--disable-plot"]),
+                0,
+            )
+
+        self.assertEqual(
+            run_single.call_args.kwargs["controller_type"],
+            {"pos": "cbf_qp"},
+        )
+
+    def test_single_case_cli_forwards_reproducible_animation_settings(self):
+        metrics = {
+            "outcome": "collision",
+            "total_steps": 2561,
+            "total_sim_time": 128.05,
+            "final_goal_distance": 1.0,
+        }
+        with (
+            mock.patch.object(
+                test_crowd,
+                "run_crowd_scenario",
+                return_value=metrics,
+            ) as run_single,
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(
+                test_crowd.main(
+                    [
+                        "--model",
+                        "uni",
+                        "--idx",
+                        "28",
+                        "--n-rand",
+                        "10",
+                        "--disable-plot",
+                        "--save-animation",
+                        "true",
+                    ]
+                ),
+                0,
+            )
+
+        kwargs = run_single.call_args.kwargs
+        self.assertFalse(kwargs["show_animation"])
+        self.assertTrue(kwargs["save_animation"])
+        self.assertTrue(kwargs["return_metrics"])
+        self.assertEqual(kwargs["seed"], 42)
+        self.assertEqual(kwargs["case_idx"], 28)
+        self.assertEqual(kwargs["n_rand"], 10)
+        self.assertEqual(
+            kwargs["robot_spec_overrides"]["animation_subdir"],
+            "crowd/occlusion_cbf/uni_n10_seed42_idx28",
+        )
+        self.assertEqual(
+            kwargs["robot_spec_overrides"]["animation_frame_stride"],
+            5,
+        )
+        self.assertEqual(
+            kwargs["robot_spec_overrides"]["animation_frame_dpi"],
+            150,
+        )
+        self.assertTrue(
+            kwargs["robot_spec_overrides"]["_uni_forward_only"],
+        )
+
+    def test_case_seed_is_the_one_based_rng_draw(self):
+        self.assertEqual(test_crowd_narrow._compute_case_seed(42, 1), 191664963)
+        self.assertEqual(test_crowd_narrow._compute_case_seed(42, 2), 1662057957)
+        self.assertEqual(test_crowd_narrow._compute_case_seed(42, 3), 1405681631)
+
+    def test_headless_animation_export_overwrites_video_and_cleans_on_success(self):
+        controller = object.__new__(test_crowd_narrow.LocalTrackingControllerDyn_OCC)
+        controller.show_animation = False
+        controller.save_animation = True
+        controller.save_frame_ext = "png"
+        controller.animation_export_video = True
+        controller.save_folder = "/tmp/ocbf-animation-test"
+
+        with (
+            mock.patch(
+                "dynamic_env.main.subprocess.run",
+                return_value=mock.Mock(returncode=0),
+            ) as run_ffmpeg,
+            mock.patch(
+                "dynamic_env.main.glob.glob",
+                return_value=["/tmp/ocbf-animation-test/t_step_0001.png"],
+            ) as glob_frames,
+            mock.patch("dynamic_env.main.os.remove") as remove,
+            mock.patch("dynamic_env.main.os.replace") as replace,
+            mock.patch("builtins.print"),
+        ):
+            controller.export_video()
+
+        command = run_ffmpeg.call_args.args[0]
+        self.assertIn("-y", command)
+        self.assertEqual(
+            command[-1],
+            "/tmp/ocbf-animation-test/tracking.tmp.mp4",
+        )
+        replace.assert_called_once_with(
+            "/tmp/ocbf-animation-test/tracking.tmp.mp4",
+            "/tmp/ocbf-animation-test/tracking.mp4",
+        )
+        glob_frames.assert_called_once_with(
+            "/tmp/ocbf-animation-test/t_step_*.png"
+        )
+        remove.assert_called_once_with(
+            "/tmp/ocbf-animation-test/t_step_0001.png"
+        )
 
     def test_required_corridor_conflict_is_enforced_for_every_forced_event(self):
         case_seed = test_crowd_narrow._compute_case_seed(

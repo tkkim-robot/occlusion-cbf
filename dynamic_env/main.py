@@ -319,7 +319,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             self.ax = plt.axes()
         if self.fig is None:
             self.fig = plt.figure()
-        plt.ion()
+        if self.show_animation:
+            plt.ion()
+        else:
+            plt.ioff()
         self.ax.set_xlabel("X [m]")
         if self.robot_spec['model'] in ['Quad2D', 'VTOL2D']:
             self.ax.set_ylabel("Z [m]")
@@ -395,7 +398,12 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.plot_dyn_obs_visible_color = self.robot_spec.get('plot_dyn_obs_visible_color', 'gray')
         self.plot_dyn_obs_hidden_color = self.robot_spec.get('plot_dyn_obs_hidden_color', 'orange')
         self.plot_dyn_obs_arrow_color = self.robot_spec.get('plot_dyn_obs_arrow_color', 'deepskyblue')
-        self.plot_occ_polygons = bool(self.robot_spec.get('plot_occ_polygons', self.show_animation))
+        self.plot_occ_polygons = bool(
+            self.robot_spec.get(
+                'plot_occ_polygons',
+                self.show_animation or self.save_animation,
+            )
+        )
         self.continue_on_infeasible = bool(self.robot_spec.get('continue_on_infeasible', False))
         self._infeasible_active = False
         self._infeasible_text = None
@@ -426,7 +434,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.tracking_view_window_size = float(tracking_view_window_size) if tracking_view_window_size is not None else 5.0
         if self.tracking_view_window_size <= 0.0:
             self.tracking_view_window_size = 5.0
-        self.tracking_view_enabled = bool(self.show_animation and (self.tracking_view_ax is not None))
+        self.tracking_view_enabled = bool(
+            (self.show_animation or self.save_animation)
+            and (self.tracking_view_ax is not None)
+        )
         self.tracking_view_waypoints_scatter = None
         self.tracking_view_robot_patch = None
         self.tracking_view_heading_line = None
@@ -479,11 +490,23 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
             os.makedirs(save_root)
         self.save_folder = save_root
         self.save_frame_ext = frame_ext
+        for stale_frame in glob.glob(
+            os.path.join(self.save_folder, f"t_step_*.{self.save_frame_ext}")
+        ):
+            os.remove(stale_frame)
+        for stale_video_name in ("tracking.mp4", "tracking.tmp.mp4"):
+            stale_video_path = os.path.join(self.save_folder, stale_video_name)
+            if os.path.isfile(stale_video_path):
+                os.remove(stale_video_path)
         self.save_frame_dpi = int(self.robot_spec.get("animation_frame_dpi", 300))
         self.animation_export_video = bool(
             self.robot_spec.get("animation_export_video", self.save_frame_ext == "png")
         )
-        self.save_per_frame = 1
+        self.save_per_frame = int(
+            self.robot_spec.get("animation_frame_stride", 1)
+        )
+        if self.save_per_frame < 1:
+            self.save_per_frame = 1
         self.ani_idx = 0
 
     def _frame_output_path(self, frame_idx):
@@ -493,21 +516,41 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         )
 
     def export_video(self):
-        if not (self.show_animation and self.save_animation):
+        if not self.save_animation:
             return
         if self.save_frame_ext != "png" or not self.animation_export_video:
             return
-        subprocess.call([
+        video_path = os.path.join(self.save_folder, 'tracking.mp4')
+        temporary_video_path = os.path.join(
+            self.save_folder, 'tracking.tmp.mp4'
+        )
+        command = [
             'ffmpeg',
+            '-y',
             '-framerate', '30',
             '-i', os.path.join(self.save_folder, 't_step_%04d.png'),
             '-vf', 'scale=1920:982,fps=60',
             '-pix_fmt', 'yuv420p',
-            os.path.join(self.save_folder, 'tracking.mp4'),
-        ])
+            temporary_video_path,
+        ]
+        try:
+            completed = subprocess.run(command, check=False)
+        except OSError as exc:
+            print(f"[ANIMATION] ffmpeg could not run; PNG frames were kept: {exc}")
+            return
+        if completed.returncode != 0:
+            if os.path.isfile(temporary_video_path):
+                os.remove(temporary_video_path)
+            print(
+                f"[ANIMATION] ffmpeg exited with code {completed.returncode}; "
+                f"PNG frames were kept in {self.save_folder}"
+            )
+            return
 
-        for file_name in glob.glob(os.path.join(self.save_folder, "*.png")):
+        os.replace(temporary_video_path, video_path)
+        for file_name in glob.glob(os.path.join(self.save_folder, "t_step_*.png")):
             os.remove(file_name)
+        print(f"[ANIMATION] Saved video: {video_path}")
 
     @staticmethod
     def _wrap_angle(theta):
@@ -1797,7 +1840,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.draw_plot(pause=pause, force_save=True)
 
     def _update_backup_rollout_plot(self):
-        if not self.show_animation or not self.show_backup_rollout:
+        if not (self.show_animation or self.save_animation) or not self.show_backup_rollout:
             return
         pos_controller = getattr(self, "pos_controller", None)
         if pos_controller is None:
@@ -1891,7 +1934,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         # Safe-harbor contour is intentionally disabled for now.
 
     def _update_qp_stats_text(self):
-        if not self.show_animation:
+        if not (self.show_animation or self.save_animation):
             return
         if not bool(self.robot_spec.get("show_qp_stats_text", True)):
             if self.qp_stats_text is not None:
@@ -2075,7 +2118,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         except Exception:
             pass
 
-        if self.show_animation and self.fig is not None:
+        if (self.show_animation or self.save_animation) and self.fig is not None:
             plt.figure(self.fig.number)
 
         # 6. Draw collision cones/parabolas for C3BF/DPCBF
@@ -2161,7 +2204,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
                 grid_res=0.05,
             )
 
-        if self.show_animation:
+        if self.show_animation or self.save_animation:
             self.robot.render_plot()
 
         # 10. Update sensing information
@@ -2246,7 +2289,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
 
         print("=====   Tracking finished    =====")
         print("===================================\n")
-        if self.show_animation:
+        if self.show_animation or self.save_animation:
             plt.ioff()
             plt.close()
 

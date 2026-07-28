@@ -1445,7 +1445,7 @@ def run_crowd_scenario(
 
     x_init = waypoints[0]
 
-    if show_animation:
+    if show_animation or save_animation:
         plot_handler = plotting.Plotting(width=env_width, height=env_height, known_obs=known_obs)
         if bool(hide_env_boundary):
             plot_handler.obs_bound = []
@@ -1759,6 +1759,13 @@ def run_crowd_scenario(
         )
 
     avg_compute_time_ms = (None if len(compute_ms) == 0 else float(np.mean(compute_ms)))
+
+    tracking_controller.export_video()
+    if show_animation or save_animation:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        plt.close(fig)
 
     return {
         "status": status,

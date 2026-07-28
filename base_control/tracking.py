@@ -113,7 +113,7 @@ class LocalTrackingController:
         self.known_obs = np.array([])
         self.unknown_obs = np.array([])
 
-        if show_animation:
+        if show_animation or save_animation:
             self.setup_animation_plot()
         else:
             self.ax = plt.axes()  # dummy placeholder
@@ -163,7 +163,10 @@ class LocalTrackingController:
             self.ax = plt.axes()
         if self.fig is None:
             self.fig = plt.figure()
-        plt.ion()
+        if self.show_animation:
+            plt.ion()
+        else:
+            plt.ioff()
         self.ax.set_xlabel("X [m]")
         if self.robot_spec['model'] in ['Quad2D', 'VTOL2D']:
             self.ax.set_ylabel("Z [m]")
@@ -200,7 +203,7 @@ class LocalTrackingController:
             else:
                 self.state_machine = 'track'
 
-        if self.show_animation:
+        if self.show_animation or self.save_animation:
             self.waypoints_scatter.set_offsets(self.waypoints[:, :2])
 
     def filter_waypoints(self, waypoints):
