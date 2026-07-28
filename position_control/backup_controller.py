@@ -1970,7 +1970,7 @@ class OcclusionController(BackupController):
         if v_max is None:
             v_max = float(self.robot_spec.get("v_max", 1.0))
         if v_min is None:
-            v_min = float(self.robot_spec.get("v_min", -v_max))
+            v_min = float(self.robot_spec.get("v_min", 0.0))
         if w_max is None:
             w_max = float(self.robot_spec.get("w_max", 0.8))
 
@@ -2714,7 +2714,7 @@ class OcclusionController(BackupController):
                 x0 = np.zeros((3,), dtype=np.float32)
                 ug = self._uni_occ_gains()
                 v_max = float(self.robot_spec.get("v_max", 1.0))
-                v_min = float(self.robot_spec.get("v_min", -v_max))
+                v_min = float(self.robot_spec.get("v_min", 0.0))
                 scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, _, _, _ = _jax_rollout_kernel_uni(
                     jnp.asarray(x0),
@@ -2921,7 +2921,7 @@ class OcclusionController(BackupController):
                 x0_vec = np.asarray(x0, dtype=np.float32).reshape(3,)
                 ug = self._uni_occ_gains()
                 v_max = float(self.robot_spec.get("v_max", 1.0))
-                v_min = float(self.robot_spec.get("v_min", -v_max))
+                v_min = float(self.robot_spec.get("v_min", 0.0))
                 scenario_kappa = np.float32(self._occ_vref_scenario_softmax_kappa())
                 traj, stm, t_grid, fcl = _jax_rollout_kernel_uni(
                     jnp.asarray(x0_vec),

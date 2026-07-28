@@ -39,6 +39,8 @@ except ImportError:
 
     import test_crowd_narrow as crowd1
 
+from position_control.ocbf.defaults import merge_ocbf_best_parameters
+
 
 ENV_WIDTH = 15.0
 ENV_HEIGHT = 40.0
@@ -138,6 +140,7 @@ def _build_campus_model_defaults(model_key, controller_type=None, vref_mode_occ=
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": 1.0,
+            "v_min": 0.0,
             "w_max": uni_wmax,
             "radius": 0.25,
             "debug_backup_qp": False,
@@ -372,6 +375,9 @@ def run_campus_scenario(
     backup_cbf_overrides=None,
     robot_spec_overrides=None,
 ):
+    if controller_type is None:
+        controller_type = {"pos": "occlusion_cbf_qp"}
+
     known_obs, obs_meta, scenario_diag = _build_random_pedestrians(
         seed=seed,
         case_idx=case_idx,
@@ -381,20 +387,31 @@ def run_campus_scenario(
         ped_radius=ped_radius,
     )
 
-    _, campus_backup_defaults, campus_robot_defaults = _build_campus_model_defaults(
+    model_name, campus_backup_defaults, campus_robot_defaults = _build_campus_model_defaults(
         model_key=model_key,
         controller_type=controller_type,
         vref_mode_occ=vref_mode_occ,
         oa_wmax=oa_wmax,
     )
 
-    merged_backup_overrides = dict(campus_backup_defaults)
-    if backup_cbf_overrides:
-        merged_backup_overrides.update(dict(backup_cbf_overrides))
-
-    merged_robot_overrides = dict(campus_robot_defaults)
-    if robot_spec_overrides:
-        merged_robot_overrides.update(dict(robot_spec_overrides))
+    pos_name = str((controller_type or {}).get("pos", "")).strip().lower()
+    if pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}:
+        merged_backup_overrides, merged_robot_overrides = (
+            merge_ocbf_best_parameters(
+                model_name,
+                backup_defaults=campus_backup_defaults,
+                robot_defaults=campus_robot_defaults,
+                backup_overrides=backup_cbf_overrides,
+                robot_overrides=robot_spec_overrides,
+            )
+        )
+    else:
+        merged_backup_overrides = dict(campus_backup_defaults)
+        if backup_cbf_overrides:
+            merged_backup_overrides.update(dict(backup_cbf_overrides))
+        merged_robot_overrides = dict(campus_robot_defaults)
+        if robot_spec_overrides:
+            merged_robot_overrides.update(dict(robot_spec_overrides))
     merged_robot_overrides["reached_threshold"] = float(goal_threshold)
     merged_robot_overrides["sensing_range"] = float(sensing_range)
     merged_robot_overrides.setdefault("v_adv_max_occ", float(hidden_obs_velocity))

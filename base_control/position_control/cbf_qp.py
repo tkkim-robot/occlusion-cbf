@@ -48,8 +48,11 @@ class CBFQP:
                            cp.abs(self.u[0]) <=  self.robot_spec['v_max'],
                            cp.abs(self.u[1]) <=  self.robot_spec['v_max']]
         elif self.robot_spec['model'] == 'Unicycle2D':
+            v_max = float(self.robot_spec['v_max'])
+            v_min = float(self.robot_spec.get('v_min', 0.0))
             constraints = [self.A1 @ self.u + self.b1 >= 0,
-                           cp.abs(self.u[0]) <= self.robot_spec['v_max'],
+                           self.u[0] >= v_min,
+                           self.u[0] <= v_max,
                            cp.abs(self.u[1]) <= self.robot_spec['w_max']]
         elif self.robot_spec['model'] == 'DynamicUnicycle2D':
             constraints = [self.A1 @ self.u + self.b1 >= 0,

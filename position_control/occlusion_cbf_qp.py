@@ -559,9 +559,9 @@ class OcclusionCBFQP:
             model_name = str(self.robot_spec.get("model", "")).strip()
             if model_name == "Unicycle2D" and u_dim == 2:
                 v_max = float(self.robot_spec.get("v_max", 1.0))
-                v_min = float(self.robot_spec.get("v_min", -v_max))
+                v_min = float(self.robot_spec.get("v_min", 0.0))
                 if (not np.isfinite(v_min)) or v_min > v_max:
-                    v_min = -v_max
+                    v_min = 0.0
                 constraints.extend(
                     [
                         self.u[0] >= v_min,
@@ -1246,9 +1246,9 @@ class OcclusionCBFQP:
 
         if model_name == "Unicycle2D":
             v_max = float(self.robot_spec.get("v_max", 1.0))
-            v_min = float(self.robot_spec.get("v_min", -v_max))
+            v_min = float(self.robot_spec.get("v_min", 0.0))
             if not np.isfinite(v_min):
-                v_min = -v_max
+                v_min = 0.0
             if v_min > v_max:
                 v_min = v_max
             w_max = float(self.robot_spec.get("w_max", 0.5))
@@ -1704,9 +1704,9 @@ class OcclusionCBFQP:
             u_flat = np.asarray(u_ref, dtype=float).reshape(-1)
             if model_name == "Unicycle2D" and u_flat.size >= 2:
                 v_max = float(self.robot_spec.get("v_max", np.inf))
-                v_min = float(self.robot_spec.get("v_min", -v_max))
+                v_min = float(self.robot_spec.get("v_min", 0.0))
                 if (not np.isfinite(v_min)) or v_min > v_max:
-                    v_min = -v_max
+                    v_min = 0.0
                 w_max = float(self.robot_spec.get("w_max", np.inf))
                 input_ok = bool((v_min - tol) <= float(u_flat[0]) <= (v_max + tol) and abs(u_flat[1]) <= w_max + tol)
             elif model_name == "DynamicUnicycle2D" and u_flat.size >= 2:

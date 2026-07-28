@@ -78,7 +78,17 @@ class ControlTreeMPC(MPCCommonUtils):
         self.tail_horizon = int(self.N - self.n_split)
 
         self.forward_only = bool(cfg.get("forward_only", False))
-        self.v_plan_min = float(cfg.get("v_plan_min", 0.15 if self.forward_only else 0.0))
+        default_v_plan_min = (
+            0.15
+            if self.forward_only
+            else float(
+                robot_spec.get(
+                    "v_min",
+                    0.0,
+                )
+            )
+        )
+        self.v_plan_min = float(cfg.get("v_plan_min", default_v_plan_min))
         self.max_visible_obs = int(cfg.get("max_visible_obs", self.num_obs))
         self.max_visible_obs = max(1, self.max_visible_obs)
         self.margin_obs = float(cfg.get("margin_obs", 0.05))

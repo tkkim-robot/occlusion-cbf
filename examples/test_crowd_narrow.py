@@ -39,6 +39,8 @@ from position_control.ocbf.defaults import (
     OCBF_VREF_FRONT_MODES,
     OCBF_VREF_SCENARIO_WEIGHT_MODES,
     OCBF_VREF_TRACKING_MODES,
+    merge_shared_robot_parameters,
+    merge_ocbf_best_parameters,
 )
 from base_control.utils import env, plotting
 
@@ -143,7 +145,13 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("Th", 1.0)
     ct_cfg.setdefault("N", 20)
     ct_cfg.setdefault("forward_only", False)
-    ct_cfg.setdefault("v_plan_min", 0.0)
+    if robot_spec.get("model") == "Unicycle2D":
+        ct_cfg.setdefault(
+            "v_plan_min",
+            float(robot_spec.get("v_min", 0.0)),
+        )
+    else:
+        ct_cfg.setdefault("v_plan_min", 0.0)
     ct_cfg.setdefault("n_split", 3)
     ct_cfg.setdefault("max_active_occlusions", 2)
     ct_cfg.setdefault("n_occ_hypotheses", 2)
@@ -994,7 +1002,7 @@ def _prepare_crowd_runtime(
     vref_mode_occ=None,
     vref_front_mode_occ=None,
     occ_visible_scale=None,
-    occ_enable_visible_hocbf=False,
+    occ_enable_visible_hocbf=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
@@ -1025,7 +1033,9 @@ def _prepare_crowd_runtime(
     if controller_type is None:
         controller_type = {"pos": "occlusion_cbf_qp"}
 
-    is_oa_mpc = str(controller_type.get("pos", "")).strip().lower() == "oa_mpc"
+    requested_pos_name = str(controller_type.get("pos", "")).strip().lower()
+    is_oa_mpc = requested_pos_name == "oa_mpc"
+    is_ocbf = requested_pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}
 
     mk = str(model_key).strip().lower()
     if mk in {"di", "doubleintegrator2d"}:
@@ -1188,7 +1198,7 @@ def _prepare_crowd_runtime(
         robot_spec = {
             "model": "Unicycle2D",
             "v_max": uni_vmax,
-            "v_min": -uni_vmax,
+            "v_min": 0.0,
             "w_max": uni_wmax,
             "radius": 0.25,
             "debug_backup_qp": False,
@@ -1202,6 +1212,23 @@ def _prepare_crowd_runtime(
         }
     else:
         raise ValueError(f"Unsupported resolved model `{model}`.")
+
+    # Apply only the model-wide values explicitly marked as shared in the
+    # committed profiles. OCBF-only backup and barrier parameters stay isolated.
+    robot_spec = merge_shared_robot_parameters(
+        model,
+        robot_defaults=robot_spec,
+    )
+
+    if is_ocbf:
+        tuned_backup, tuned_robot = merge_ocbf_best_parameters(
+            model,
+            backup_defaults=robot_spec["backup_cbf"],
+            robot_defaults=robot_spec,
+            backup_overrides=backup_cbf_overrides,
+        )
+        robot_spec = tuned_robot
+        robot_spec["backup_cbf"] = tuned_backup
 
     if robot_spec_overrides:
         robot_spec.update(robot_spec_overrides)
@@ -1335,7 +1362,7 @@ def run_crowd_scenario(
     vref_mode_occ=None,
     vref_front_mode_occ=None,
     occ_visible_scale=None,
-    occ_enable_visible_hocbf=False,
+    occ_enable_visible_hocbf=None,
     oa_dynamic_occluders=None,
     oa_allow_solver_fallback=None,
     oa_dsafe=None,
@@ -1432,7 +1459,7 @@ def run_crowd_scenario(
 
     x_init = waypoints[0]
 
-    if show_animation:
+    if show_animation or save_animation:
         plot_handler = plotting.Plotting(width=env_width, height=env_height, known_obs=known_obs)
         if bool(hide_env_boundary):
             plot_handler.obs_bound = []
@@ -1747,6 +1774,13 @@ def run_crowd_scenario(
 
     avg_compute_time_ms = (None if len(compute_ms) == 0 else float(np.mean(compute_ms)))
 
+    tracking_controller.export_video()
+    if show_animation or save_animation:
+        import matplotlib.pyplot as plt
+
+        plt.ioff()
+        plt.close(fig)
+
     return {
         "status": status,
         "ret": int(ret_last),
@@ -1944,7 +1978,7 @@ def main(argv=None):
     parser.add_argument("--uni-reverse-gate-angle", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_angle_occ_uni.")
     parser.add_argument("--uni-reverse-gate-power", type=float, default=None, help="Override backup_cbf.reverse_speed_gate_power_occ_uni.")
     parser.add_argument("--uni-v-min-cmd-rev", type=float, default=None, help="Override backup_cbf.v_min_cmd_rev_occ_uni.")
-    parser.add_argument("--uni-allow-reverse", type=_str2bool, nargs="?", const=True, default=None, help="Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. Default is true for Unicycle2D.")
+    parser.add_argument("--uni-allow-reverse", type=_str2bool, nargs="?", const=True, default=None, help="Explicitly allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. Forward-only is the default.")
     parser.add_argument("--uni-forward-only", type=_str2bool, nargs="?", const=True, default=False, help="Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given.")
     parser.add_argument("--uni-v-min", type=float, default=None, help="Override Unicycle2D input lower speed bound.")
     parser.add_argument("--uni-vref-tracking-mode", type=str, choices=["gated", "projected"], default=None)
@@ -2066,8 +2100,11 @@ def main(argv=None):
         type=_str2bool,
         nargs="?",
         const=True,
-        default=False,
-        help="Occlusion-CBF only: also add visible-obstacle CBF/HOCBF rows in the stacked QP.",
+        default=None,
+        help=(
+            "Occlusion-CBF only: override whether visible-obstacle CBF/HOCBF rows "
+            "are added. The tuned YAML parameter is used when omitted."
+        ),
     )
     parser.add_argument(
         "--oa-dynamic-occluders",

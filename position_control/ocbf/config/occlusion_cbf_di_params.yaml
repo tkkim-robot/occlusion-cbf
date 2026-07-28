@@ -1,0 +1,27 @@
+model: DoubleIntegrator2D
+
+# Canonical model-wide values shared by every crowd comparison method.
+shared_robot_spec:
+  fov_angle: 360.0
+
+backup_cbf:
+  T_horizon: 0.25
+  dt_backup: 0.05
+  max_active_occlusions: 10
+  vref_scenario_softmax_kappa: 20.0
+  k_p_occ_di: 2.7134037493952947
+  k_d_occ_di: 1.0553275095919081
+  rho_T: auto
+  vref_scenario_weight_mode: barrier_unexpand
+  qp_failure_fallback_mode: state_safe
+  vref_front_mode_occ: los
+  vref_mode_occ: strict
+  occ_selection_mode: h_tilde
+  occ_rollout_mode: common
+  terminal_mode: all
+  terminal_residual_mode: "off"
+  terminal_slack_weight: 0.0
+
+robot_spec:
+  occ_kappa: 10.0
+  enable_visible_hocbf_in_occ: true

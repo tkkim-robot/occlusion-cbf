@@ -31,6 +31,8 @@ try:
     from examples._baseline_defs import (
         CROWD_BASELINE_CHOICES,
         CROWD_BASELINE_MAP,
+        CROWD_BENCHMARK_DEFAULTS,
+        OACP_BENCHMARK_DEFAULTS,
         resolve_baseline_alias,
     )
     from examples import test_crowd_narrow as crowd_narrow
@@ -39,6 +41,8 @@ except ImportError:
     from _baseline_defs import (
         CROWD_BASELINE_CHOICES,
         CROWD_BASELINE_MAP,
+        CROWD_BENCHMARK_DEFAULTS,
+        OACP_BENCHMARK_DEFAULTS,
         resolve_baseline_alias,
     )
 
@@ -587,8 +591,16 @@ def _build_runtime_for_baseline(args, baseline_alias, known_obs, obs_meta, scena
         robot_spec_overrides["occ_kappa"] = float(args.occ_kappa)
     if args.occ_enable_visible_hocbf is not None:
         robot_spec_overrides["enable_visible_hocbf_in_occ"] = bool(args.occ_enable_visible_hocbf)
-    if algo == "oacp_mpc" and args.oacp_backend is not None:
-        robot_spec_overrides["oacp_mpc"] = {"backend": str(args.oacp_backend).strip().lower()}
+    if algo == "oacp_mpc":
+        oacp_cfg = {
+            "allow_solver_fallback": bool(args.oacp_allow_solver_fallback),
+            "dynamic_occluders": bool(args.oacp_dynamic_occluders),
+            "visible_reach_mode": str(args.oacp_visible_reach_mode).strip().lower(),
+            "branch_safety_gate": bool(args.oacp_branch_safety_gate),
+        }
+        if args.oacp_backend is not None:
+            oacp_cfg["backend"] = str(args.oacp_backend).strip().lower()
+        robot_spec_overrides["oacp_mpc"] = oacp_cfg
 
     return crowd_narrow._prepare_crowd_runtime(
         controller_type=controller_type,
@@ -841,8 +853,16 @@ def run_multi_crowd(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run a multi-baseline crowd replay.")
-    parser.add_argument("--model", type=str, default="di", choices=["di", "du", "uni"])
+    parser = argparse.ArgumentParser(
+        description="Run a multi-baseline crowd replay.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=CROWD_BENCHMARK_DEFAULTS["model"],
+        choices=["di", "du", "uni"],
+    )
     parser.add_argument(
         "--baselines",
         nargs="+",
@@ -850,10 +870,10 @@ def main(argv=None):
         choices=CROWD_BASELINE_CHOICES,
         help="Baseline aliases to replay together.",
     )
-    parser.add_argument("--tf", type=float, default=500.0)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--idx", type=int, default=13)
-    parser.add_argument("--n-rand", type=int, default=50)
+    parser.add_argument("--tf", type=float, default=CROWD_BENCHMARK_DEFAULTS["tf"])
+    parser.add_argument("--seed", type=int, default=CROWD_BENCHMARK_DEFAULTS["seed"])
+    parser.add_argument("--idx", type=int, default=CROWD_BENCHMARK_DEFAULTS["idx_start"])
+    parser.add_argument("--n-rand", type=int, default=CROWD_BENCHMARK_DEFAULTS["n_rand"])
     parser.add_argument(
         "--rand-obs-setting",
         type=str,
@@ -873,25 +893,46 @@ def main(argv=None):
     )
     parser.add_argument("--plot-pause", type=float, default=0.001)
 
-    parser.add_argument("--crowd-mode", type=str, default="forced_emergence", choices=["random", "forced_emergence"])
-    parser.add_argument("--forced-events", type=int, default=crowd.DEFAULT_FORCED_EVENTS)
+    parser.add_argument(
+        "--crowd-mode",
+        type=str,
+        default=CROWD_BENCHMARK_DEFAULTS["crowd_mode"],
+        choices=["random", "forced_emergence"],
+    )
+    parser.add_argument(
+        "--forced-events",
+        type=int,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_events"],
+    )
     parser.add_argument("--forced-bg-rand", type=int, default=None)
-    parser.add_argument("--forced-hidden-speed", type=float, default=1.0)
-    parser.add_argument("--forced-occluder-radius-min", type=float, default=crowd.DEFAULT_FORCED_OCCLUDER_RADIUS_MIN)
-    parser.add_argument("--forced-occluder-radius-max", type=float, default=crowd.DEFAULT_FORCED_OCCLUDER_RADIUS_MAX)
+    parser.add_argument(
+        "--forced-hidden-speed",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_hidden_speed"],
+    )
+    parser.add_argument(
+        "--forced-occluder-radius-min",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_min"],
+    )
+    parser.add_argument(
+        "--forced-occluder-radius-max",
+        type=float,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_max"],
+    )
     parser.add_argument(
         "--forced-validate-occlusion",
         type=crowd_narrow._str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_validate_occlusion"],
     )
     parser.add_argument(
         "--forced-require-corridor-conflict",
         type=crowd_narrow._str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=CROWD_BENCHMARK_DEFAULTS["forced_require_corridor_conflict"],
     )
 
     parser.add_argument("--occ-visible-scale", type=float, default=0.7)
@@ -945,6 +986,33 @@ def main(argv=None):
     parser.add_argument("--oa-dt", type=float, default=None)
     parser.add_argument("--wmax", type=str, choices=["default", "pi"], default="default")
     parser.add_argument("--oacp-backend", type=str, choices=["coupled_nlp", "admm_lowdim"], default=None)
+    parser.add_argument(
+        "--oacp-allow-solver-fallback",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=OACP_BENCHMARK_DEFAULTS["allow_solver_fallback"],
+    )
+    parser.add_argument(
+        "--oacp-dynamic-occluders",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=OACP_BENCHMARK_DEFAULTS["dynamic_occluders"],
+    )
+    parser.add_argument(
+        "--oacp-visible-reach-mode",
+        type=str,
+        choices=["constant_velocity", "worst_case"],
+        default=OACP_BENCHMARK_DEFAULTS["visible_reach_mode"],
+    )
+    parser.add_argument(
+        "--oacp-branch-safety-gate",
+        type=crowd_narrow._str2bool,
+        nargs="?",
+        const=True,
+        default=OACP_BENCHMARK_DEFAULTS["branch_safety_gate"],
+    )
 
     args = parser.parse_args(argv)
     run_multi_crowd(args)

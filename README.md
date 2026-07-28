@@ -3,10 +3,9 @@
 Research code for evaluating Occlusion Control Barrier Functions (OCBFs) with
 double-integrator, dynamic-unicycle, and unicycle robot models.
 
-The repository is self-contained. The small portion of implementation formerly
-supplied by `safe_control` now lives in `base_control/`; there is no runtime
-dependency, Git submodule, or private repository. Its source revision and scope
-are recorded in [`base_control/UPSTREAM.md`](base_control/UPSTREAM.md).
+The repository is self-contained. Shared robot models, tracking utilities, and
+the baseline CBF-QP live in `base_control/`; project controllers live in
+`position_control/`. There is no runtime dependency or Git submodule.
 
 ## Install
 
@@ -64,4 +63,10 @@ dh_dt = dh_ds = -sum(lambda_l * nu_l)
 
 Questions about degenerate QP rows and solver-fallback semantics are
 intentionally deferred; this refactor does not claim to resolve them.
-Automated Optuna tuning is also future work and is not configured here.
+
+Occlusion-CBF has separate Optuna studies for Double Integrator and Unicycle.
+Their selected profiles are stored in trial-number-independent YAML files
+under `position_control/ocbf/config/` and load automatically in maintained test
+and benchmark scripts. Explicit parameter flags continue to override the
+committed profiles. Dynamic Unicycle is unchanged because it has not been
+tuned.
