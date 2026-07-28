@@ -9,6 +9,13 @@ seed `42`, generated from source commit
 `80eb3dc05565690e192da1f6f4e9f76ade12f96b`. Every finalized CSV contained
 100 unique indices and no exception rows.
 
+> **Unicycle compatibility note:** the saved Unicycle catalog was generated
+> with the former forward-only bound `v_min=0`. The current canonical profile
+> is reverse-capable with `v_min=-1`. Add `--uni-forward-only true` to replay
+> the old Unicycle rows exactly. The Double Integrator catalog is unaffected.
+> Reverse-capable Unicycle tuning and result regeneration are intentionally
+> deferred.
+
 ## Setup
 
 Create the locked environment from the repository root:
@@ -32,9 +39,9 @@ uv run python -m examples.run_scenario
 
 The launcher and crowd runner supply the paper configuration internally:
 base seed `42`, final time `500`, forced-emergence `v2`, six emergence events,
-the validated occluder geometry, visible-obstacle HOCBF, forward-only
+the validated occluder geometry, visible-obstacle HOCBF, reverse-capable
 Unicycle motion, and the benchmark CPU/JAX environment. Users do not need to
-pass any of those options.
+pass any of those options for a current run.
 
 ## Seed and case-index semantics
 
@@ -89,7 +96,8 @@ Use obstacle count `10`, `30`, or `50`. Occlusion-CBF is already the default;
 
 ## Reproduce one Unicycle case
 
-Forward-only motion and the tuned Unicycle profile load automatically:
+The tuned Unicycle controller profile and the reverse-capable `v_min=-1`
+robot bound load automatically:
 
 ```bash
 uv run python -m examples.run_scenario \
@@ -99,6 +107,17 @@ uv run python -m examples.run_scenario \
 ```
 
 Use obstacle count `10`, `20`, or `30`.
+
+To reproduce an entry in the legacy Unicycle outcome catalog below, add the
+former actuation assumption explicitly:
+
+```bash
+uv run python -m examples.run_scenario \
+  --model uni \
+  --n-rand 10 \
+  --idx 28 \
+  --uni-forward-only true
+```
 
 `--n-rand` is the only additional benchmark selector that cannot be inferred
 from `--model` and `--idx`: every dynamics has three obstacle-count
@@ -163,7 +182,7 @@ These public-CLI checks were compared with the finalized benchmark rows:
 |---|---:|---:|---:|---|---:|---|
 | DI | 10 | 1 | 191664963 | success | 1944 | exact |
 | DI | 50 | 1 | 191664963 | infeasible | 522 | exact |
-| Unicycle | 10 | 28 | 1766867109 | collision | 2561 | exact |
+| Unicycle | 10 | 28 | 1766867109 | collision | 2561 | exact with `--uni-forward-only true` |
 
 ## Benchmark summary
 
@@ -180,6 +199,8 @@ Each outcome entry below is a case count out of 100, not a percentage.
 
 DI with 50 obstacles exactly reproduced the selected Optuna trial 95.
 Unicycle with 30 obstacles exactly reproduced the selected Optuna trial 100.
+The Unicycle summary and index partitions below describe the legacy
+forward-only run, not the current reverse-capable default.
 
 ## Complete outcome index catalog
 

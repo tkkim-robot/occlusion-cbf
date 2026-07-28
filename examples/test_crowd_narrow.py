@@ -39,6 +39,7 @@ from position_control.ocbf.defaults import (
     OCBF_VREF_FRONT_MODES,
     OCBF_VREF_SCENARIO_WEIGHT_MODES,
     OCBF_VREF_TRACKING_MODES,
+    merge_shared_robot_parameters,
     merge_ocbf_best_parameters,
 )
 from base_control.utils import env, plotting
@@ -144,7 +145,13 @@ def _apply_control_tree_defaults(robot_spec):
     ct_cfg.setdefault("Th", 1.0)
     ct_cfg.setdefault("N", 20)
     ct_cfg.setdefault("forward_only", False)
-    ct_cfg.setdefault("v_plan_min", 0.0)
+    if robot_spec.get("model") == "Unicycle2D":
+        ct_cfg.setdefault(
+            "v_plan_min",
+            float(robot_spec.get("v_min", -float(robot_spec.get("v_max", 1.0)))),
+        )
+    else:
+        ct_cfg.setdefault("v_plan_min", 0.0)
     ct_cfg.setdefault("n_split", 3)
     ct_cfg.setdefault("max_active_occlusions", 2)
     ct_cfg.setdefault("n_occ_hypotheses", 2)
@@ -1205,6 +1212,13 @@ def _prepare_crowd_runtime(
         }
     else:
         raise ValueError(f"Unsupported resolved model `{model}`.")
+
+    # Apply only the model-wide values explicitly marked as shared in the
+    # committed profiles. OCBF-only backup and barrier parameters stay isolated.
+    robot_spec = merge_shared_robot_parameters(
+        model,
+        robot_defaults=robot_spec,
+    )
 
     if is_ocbf:
         tuned_backup, tuned_robot = merge_ocbf_best_parameters(

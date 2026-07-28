@@ -157,6 +157,30 @@ class ScenarioContractTests(unittest.TestCase):
             OACP_BENCHMARK_DEFAULTS,
         )
 
+    def test_unicycle_benchmark_does_not_force_forward_only(self):
+        with (
+            mock.patch(
+                "sys.argv",
+                [
+                    "benchmark_crowd_trials.py",
+                    "--model",
+                    "uni",
+                    "--baseline",
+                    "cbf_qp",
+                ],
+            ),
+            mock.patch.object(benchmark_crowd_trials.Path, "mkdir"),
+            mock.patch.object(
+                benchmark_crowd_trials,
+                "_run_baseline_sweep",
+            ) as run_sweep,
+        ):
+            self.assertEqual(benchmark_crowd_trials.main(), 0)
+
+        overrides = run_sweep.call_args.kwargs["robot_spec_overrides"]
+        self.assertNotIn("_uni_forward_only", overrides)
+        self.assertNotIn("v_min", overrides)
+
     def test_single_and_multi_cli_share_canonical_scenario_defaults(self):
         with mock.patch.object(test_crowd, "run_crowd_scenario") as run_single:
             test_crowd.main(["--baseline", "oacp_mpc", "--disable-plot"])
@@ -294,8 +318,9 @@ class ScenarioContractTests(unittest.TestCase):
             kwargs["robot_spec_overrides"]["animation_frame_dpi"],
             150,
         )
-        self.assertTrue(
-            kwargs["robot_spec_overrides"]["_uni_forward_only"],
+        self.assertNotIn(
+            "_uni_forward_only",
+            kwargs["robot_spec_overrides"],
         )
 
     def test_case_seed_is_the_one_based_rng_draw(self):

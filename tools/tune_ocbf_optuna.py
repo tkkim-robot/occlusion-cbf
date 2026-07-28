@@ -57,11 +57,9 @@ from position_control.ocbf.defaults import (
     OCBF_CROWD_QP_FAILURE_FALLBACK_MODE,
     OCBF_CROWD_VREF_SCENARIO_WEIGHT_MODE,
     apply_crowd_ocbf_defaults,
+    load_shared_robot_parameters,
 )
-from tools.benchmark_crowd_trials import (
-    _default_uni_forward_only,
-    _run_one_idx_job,
-)
+from tools.benchmark_crowd_trials import _run_one_idx_job
 
 
 WANDB_PROJECT_DEFAULT = "occlusion-cbf-tuning"
@@ -222,7 +220,7 @@ FIXED_OCBF_CONFIG: dict[str, Any] = {
     "terminal_residual_mode": "off",
     "terminal_slack_weight": 0.0,
     "enable_visible_hocbf_in_occ": True,
-    "unicycle_forward_only": True,
+    "unicycle_v_min": float(load_shared_robot_parameters("uni")["v_min"]),
     "rho_T_di": "auto",
     "vref_tracking_mode_occ_uni": "gated",
 }
@@ -416,12 +414,9 @@ def build_controller_overrides(
 
     backup = apply_crowd_ocbf_defaults(backup)
     robot = {"occ_kappa": FIXED_OCBF_CONFIG["barrier_kappa"]}
-    robot = _default_uni_forward_only(
-        model=model,
-        baseline_alias="occlusion_cbf",
-        robot_spec_overrides=robot,
-    )
-    return backup, dict(robot or {})
+    if model == "uni":
+        robot["v_min"] = FIXED_OCBF_CONFIG["unicycle_v_min"]
+    return backup, robot
 
 
 def lexicographic_score(

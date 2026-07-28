@@ -14,8 +14,8 @@ All runs force:
     - show_animation = False
     - save_animation = False
 
-For Unicycle2D paper benchmark sweeps, all planners default to forward-only
-actuation. Pass --uni-allow-reverse true or --uni-v-min to override.
+Unicycle2D uses the shared reverse-capable speed bound by default. Pass
+--uni-forward-only true or --uni-v-min to override it.
 
 With no arguments, this runs the canonical OACP crowd profile. Shared
 scenario defaults also apply unchanged when another baseline or suite is chosen.
@@ -66,28 +66,6 @@ SUITE_NON_OCC_5 = [
 
 def _is_ocbf_baseline(baseline_alias: str) -> bool:
     return str(BASELINE_MAP.get(str(baseline_alias), baseline_alias)).strip().lower() == "occlusion_cbf_qp"
-
-
-def _default_uni_forward_only(
-    *,
-    model: str,
-    baseline_alias: str,
-    robot_spec_overrides: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """Use forward-only Uni actuation by default for paper benchmark sweeps.
-
-    The scenario runners keep their historical Uni default for direct
-    visualization. This benchmark tool defaults all Uni benchmark runs to
-    forward-only unless the caller explicitly sets a Uni speed-bound option.
-    """
-    if str(model).strip().lower() != "uni":
-        return robot_spec_overrides
-
-    out = dict(robot_spec_overrides or {})
-    has_explicit_uni_bound = any(k in out for k in ("_uni_forward_only", "_uni_allow_reverse", "v_min"))
-    if not has_explicit_uni_bound:
-        out["_uni_forward_only"] = True
-    return out
 
 
 def _load_run_crowd_scenario(scenario_name: str):
@@ -221,11 +199,6 @@ def _run_baseline_sweep(
     if str(scenario_label).strip().lower() == "crowd" and _is_ocbf_baseline(str(baseline_alias)):
         backup_cbf_overrides = apply_crowd_ocbf_defaults(backup_cbf_overrides)
     controller_pos = BASELINE_MAP[str(baseline_alias)]
-    robot_spec_overrides = _default_uni_forward_only(
-        model=str(model),
-        baseline_alias=str(baseline_alias),
-        robot_spec_overrides=robot_spec_overrides,
-    )
     stem = f"crowd_trials_{run_label}_{seed}_{idx_start}_{idx_end}_{ts}"
     rows_path = out_dir / f"{stem}.csv"
     summary_path = out_dir / f"{stem}.json"
@@ -980,7 +953,7 @@ def main() -> int:
         default=None,
         help=(
             "Allow Uni reverse by setting v_min=-v_max unless --uni-v-min is given. "
-            "This overrides the benchmark-tool default forward-only mode for Uni paper sweeps."
+            "Reverse is already the default for Unicycle2D."
         ),
     )
     p.add_argument(
@@ -990,8 +963,7 @@ def main() -> int:
         const=True,
         default=False,
         help=(
-            "Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given. "
-            "This is already the default for Uni paper sweeps in this benchmark tool."
+            "Force Unicycle2D forward-only by setting v_min=0 unless --uni-v-min is given."
         ),
     )
     p.add_argument(

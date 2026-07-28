@@ -1318,15 +1318,6 @@ def main(argv=None):
         robot_spec_overrides["_uni_allow_reverse"] = bool(args.uni_allow_reverse)
     if args.uni_forward_only:
         robot_spec_overrides["_uni_forward_only"] = True
-    elif (
-        args.model == "uni"
-        and _is_ocbf_controller(controller_type)
-        and args.uni_allow_reverse is None
-        and args.uni_v_min is None
-    ):
-        # Match the paper benchmark even if a future tuned profile no longer
-        # carries the same nonnegative-speed bound.
-        robot_spec_overrides["_uni_forward_only"] = True
     if args.uni_v_min is not None:
         robot_spec_overrides["v_min"] = float(args.uni_v_min)
     if args.occ_kappa is not None:

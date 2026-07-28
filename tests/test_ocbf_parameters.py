@@ -14,6 +14,8 @@ from examples import test_vis_ocbf
 from position_control.ocbf.defaults import (
     apply_ocbf_best_parameters,
     load_ocbf_best_parameters,
+    load_shared_robot_parameters,
+    merge_shared_robot_parameters,
     merge_ocbf_best_parameters,
 )
 
@@ -44,13 +46,16 @@ class OCBFParameterTests(unittest.TestCase):
                 "terminal_slack_weight": 0.0,
             },
         )
+        self.assertEqual(
+            parameters["shared_robot_spec"],
+            {"fov_angle": 360.0},
+        )
         self.assertEqual(parameters["robot_spec"]["occ_kappa"], 10.0)
-        self.assertEqual(parameters["robot_spec"]["fov_angle"], 360.0)
         self.assertTrue(
             parameters["robot_spec"]["enable_visible_hocbf_in_occ"]
         )
 
-    def test_unicycle_profile_matches_tuning_result(self):
+    def test_unicycle_profile_combines_tuned_and_shared_values(self):
         parameters = load_ocbf_best_parameters("Unicycle2D")
         backup = parameters["backup_cbf"]
 
@@ -68,7 +73,10 @@ class OCBFParameterTests(unittest.TestCase):
             0.34007262580098474,
         )
         self.assertEqual(backup["vref_scenario_weight_mode"], "barrier_unexpand")
-        self.assertEqual(parameters["robot_spec"]["v_min"], 0.0)
+        self.assertEqual(
+            parameters["shared_robot_spec"],
+            {"fov_angle": 360.0, "v_min": -1.0},
+        )
 
     def test_dynamic_unicycle_remains_untuned(self):
         self.assertIsNone(load_ocbf_best_parameters("du"))
@@ -79,6 +87,35 @@ class OCBFParameterTests(unittest.TestCase):
         )
         self.assertEqual(backup, {"T_horizon": 1.0})
         self.assertEqual(robot, {"w_max": 0.8})
+        self.assertIsNone(load_shared_robot_parameters("du"))
+
+    def test_shared_profile_merge_preserves_explicit_overrides(self):
+        self.assertEqual(
+            load_shared_robot_parameters("di"),
+            {"fov_angle": 360.0},
+        )
+        self.assertEqual(
+            load_shared_robot_parameters("uni"),
+            {"fov_angle": 360.0, "v_min": -1.0},
+        )
+
+        robot = merge_shared_robot_parameters(
+            "uni",
+            robot_defaults={
+                "fov_angle": 70.0,
+                "v_min": -1.0,
+                "radius": 0.25,
+            },
+            robot_overrides={"v_min": -0.25},
+        )
+        self.assertEqual(
+            robot,
+            {
+                "fov_angle": 360.0,
+                "v_min": -0.25,
+                "radius": 0.25,
+            },
+        )
 
     def test_explicit_overrides_win_over_yaml(self):
         backup, robot = merge_ocbf_best_parameters(
@@ -115,7 +152,7 @@ class OCBFParameterTests(unittest.TestCase):
         self.assertEqual(robot_spec["backup_cbf"]["T_horizon"], 0.5)
         self.assertEqual(robot_spec["backup_cbf"]["max_active_occlusions"], 10)
 
-    def test_crowd_runtime_uses_yaml_for_ocbf_only(self):
+    def test_crowd_runtime_uses_full_yaml_only_for_ocbf(self):
         common = {
             "rand_obs": False,
             "n_rand": 0,
@@ -145,7 +182,7 @@ class OCBFParameterTests(unittest.TestCase):
         uni_backup = uni_runtime["robot_spec"]["backup_cbf"]
         self.assertEqual(uni_backup["T_horizon"], 2.0)
         self.assertEqual(uni_backup["max_active_occlusions"], 5)
-        self.assertEqual(uni_runtime["robot_spec"]["v_min"], 0.0)
+        self.assertEqual(uni_runtime["robot_spec"]["v_min"], -1.0)
 
         cbf_runtime = test_crowd_narrow._prepare_crowd_runtime(
             controller_type={"pos": "cbf_qp"},
@@ -155,6 +192,120 @@ class OCBFParameterTests(unittest.TestCase):
         cbf_backup = cbf_runtime["robot_spec"]["backup_cbf"]
         self.assertEqual(cbf_backup["T_horizon"], 0.5)
         self.assertNotIn("k_p_occ_di", cbf_backup)
+
+    def test_crowd_runtime_shares_only_canonical_model_values(self):
+        common = {
+            "rand_obs": False,
+            "n_rand": 0,
+            "known_obs_override": np.empty((0, 8), dtype=float),
+            "obs_meta_override": [],
+            "scenario_diag_override": {},
+            "occ_enable_visible_hocbf": None,
+        }
+        comparison_controllers = (
+            "cbf_qp",
+            "oa_mpc",
+            "single_risk_mpc",
+            "control_tree_mpc",
+            "oacp_mpc",
+        )
+
+        for controller_name in comparison_controllers:
+            with self.subTest(controller=controller_name, model="di"):
+                runtime = test_crowd_narrow._prepare_crowd_runtime(
+                    controller_type={"pos": controller_name},
+                    model_key="di",
+                    **common,
+                )
+                robot_spec = runtime["robot_spec"]
+                self.assertEqual(robot_spec["fov_angle"], 360.0)
+                self.assertNotIn("occ_kappa", robot_spec)
+                self.assertNotIn(
+                    "k_p_occ_di",
+                    robot_spec["backup_cbf"],
+                )
+
+            with self.subTest(controller=controller_name, model="uni"):
+                runtime = test_crowd_narrow._prepare_crowd_runtime(
+                    controller_type={"pos": controller_name},
+                    model_key="uni",
+                    **common,
+                )
+                robot_spec = runtime["robot_spec"]
+                self.assertEqual(robot_spec["fov_angle"], 360.0)
+                self.assertEqual(robot_spec["v_min"], -1.0)
+                self.assertNotIn("occ_kappa", robot_spec)
+                self.assertNotIn(
+                    "k_theta_occ_uni_p",
+                    robot_spec["backup_cbf"],
+                )
+
+        for controller_name, config_name in (
+            ("single_risk_mpc", "single_risk_mpc"),
+            ("control_tree_mpc", "control_tree_mpc"),
+            ("oacp_mpc", "oacp_mpc"),
+        ):
+            for model_key in ("di", "uni"):
+                with self.subTest(
+                    controller=controller_name,
+                    model=model_key,
+                    parameter="max_active_occlusions",
+                ):
+                    runtime = test_crowd_narrow._prepare_crowd_runtime(
+                        controller_type={"pos": controller_name},
+                        model_key=model_key,
+                        **common,
+                    )
+                    self.assertEqual(
+                        runtime["robot_spec"][config_name][
+                            "max_active_occlusions"
+                        ],
+                        2,
+                    )
+
+        control_tree_runtime = test_crowd_narrow._prepare_crowd_runtime(
+            controller_type={"pos": "control_tree_mpc"},
+            model_key="uni",
+            **common,
+        )
+        self.assertFalse(
+            control_tree_runtime["robot_spec"]["control_tree_mpc"][
+                "forward_only"
+            ]
+        )
+        self.assertEqual(
+            control_tree_runtime["robot_spec"]["control_tree_mpc"][
+                "v_plan_min"
+            ],
+            -1.0,
+        )
+
+        forward_only_runtime = test_crowd_narrow._prepare_crowd_runtime(
+            controller_type={"pos": "control_tree_mpc"},
+            model_key="uni",
+            robot_spec_overrides={"_uni_forward_only": True},
+            **common,
+        )
+        self.assertEqual(forward_only_runtime["robot_spec"]["v_min"], 0.0)
+        self.assertTrue(
+            forward_only_runtime["robot_spec"]["control_tree_mpc"][
+                "forward_only"
+            ]
+        )
+        self.assertEqual(
+            forward_only_runtime["robot_spec"]["control_tree_mpc"][
+                "v_plan_min"
+            ],
+            0.0,
+        )
+
+        explicit_runtime = test_crowd_narrow._prepare_crowd_runtime(
+            controller_type={"pos": "cbf_qp"},
+            model_key="uni",
+            robot_spec_overrides={"v_min": -0.25},
+            **common,
+        )
+        self.assertEqual(explicit_runtime["robot_spec"]["v_min"], -0.25)
 
     def test_campus_default_controller_uses_yaml(self):
         with (
@@ -216,7 +367,7 @@ class OCBFParameterTests(unittest.TestCase):
         uni_spec, di_spec = captured_specs
         self.assertEqual(uni_spec["backup_cbf"]["T_horizon"], 2.0)
         self.assertEqual(uni_spec["backup_cbf"]["max_active_occlusions"], 5)
-        self.assertEqual(uni_spec["v_min"], 0.0)
+        self.assertEqual(uni_spec["v_min"], -1.0)
         self.assertEqual(di_spec["backup_cbf"]["T_horizon"], 0.75)
         self.assertEqual(di_spec["backup_cbf"]["max_active_occlusions"], 10)
 
