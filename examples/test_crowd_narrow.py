@@ -1274,7 +1274,10 @@ def _prepare_crowd_runtime(
         # Keep visible dynamic obstacles in the same no-prediction,
         # forward-reachable-set spirit used by the OA-MPC paper.
         oa_cfg["visible_reach_mode"] = "worst_case"
-        oa_cfg.setdefault("di_terminal_stop_mode", "brake_reachable")
+        # OA-MPC Eq. (2f): z_N = z_{N-1}. For the Euler-discretized double
+        # integrator, the controller's exact mode enforces the equivalent
+        # terminal zero velocity and zero acceleration conditions.
+        oa_cfg.setdefault("di_terminal_stop_mode", "exact")
         robot_spec["occlusion_types"] = [0, 1]
         if oa_dynamic_occluders is not None:
             oa_cfg["dynamic_occluders"] = bool(oa_dynamic_occluders)
