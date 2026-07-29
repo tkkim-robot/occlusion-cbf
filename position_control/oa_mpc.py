@@ -160,7 +160,7 @@ class OAMPC:
         self.max_occ_boundaries = int(cfg.get("max_occ_boundaries", default_max_occ_boundaries))
         self.min_occ_boundary_len = float(cfg.get("min_occ_boundary_len", 0.08))
         self.max_occ_boundary_len = float(
-            cfg.get("max_occ_boundary_len", max(1.0, 0.35 * self.sensing_range))
+            cfg.get("max_occ_boundary_len", max(1.0, self.sensing_range))
         )
         default_static_downsample = 8 if self.paper_mode else 3
         self.static_pc_downsample = int(cfg.get("static_pc_downsample", default_static_downsample))
@@ -524,54 +524,51 @@ class OAMPC:
         if (not np.isfinite(max_len)) or max_len <= 0.0:
             max_len = float("inf")
 
-        # Build contiguous hit-runs. Each run approximates a visible obstacle
-        # silhouette; use the two run edges as one occlusion-boundary segment.
-        hit_idx = np.flatnonzero(hit)
-        if hit_idx.size == 0:
-            return []
-
-        runs = []
-        run_start = int(hit_idx[0])
-        prev = int(hit_idx[0])
-        for idx in hit_idx[1:]:
-            idx = int(idx)
-            if idx == prev + 1:
-                prev = idx
+        # The OA-MPC boundary is the line segment between two consecutive
+        # LiDAR returns whose ranges have a sufficiently large discontinuity.
+        # In particular, it is not the chord joining the two hit edges of an
+        # obstacle silhouette. Iterate over adjacent ray pairs directly so
+        # near/far jumps are also detected when both rays hit different
+        # surfaces. Only wrap the final ray to the first for a 360-degree scan.
+        pair_count = n if full_circle else (n - 1)
+        for i in range(pair_count):
+            j = (i + 1) % n
+            if not (bool(hit[i]) or bool(hit[j])):
                 continue
-            runs.append((run_start, prev))
-            run_start = idx
-            prev = idx
-        runs.append((run_start, prev))
 
-        # Merge wrap-around run for 360-degree scans.
-        if full_circle and len(runs) >= 2 and runs[0][0] == 0 and runs[-1][1] == (n - 1):
-            merged = (runs[-1][0], runs[0][1] + n)
-            runs = [merged] + runs[1:-1]
-
-        for rs, re in runs:
-            i = int(rs % n)
-            j = int(re % n)
-            # Require jump evidence at both run edges.
-            i_prev = (i - 1) % n
-            j_next = (j + 1) % n
-            left_jump = abs(float(ranges[i]) - float(ranges[i_prev])) >= jump_thr
-            right_jump = abs(float(ranges[j]) - float(ranges[j_next])) >= jump_thr
-            if not (left_jump or right_jump):
+            range_i = float(ranges[i])
+            range_j = float(ranges[j])
+            if not (np.isfinite(range_i) and np.isfinite(range_j)):
                 continue
-            p1 = np.asarray(points[i], dtype=float).reshape(2)
-            p2 = np.asarray(points[j], dtype=float).reshape(2)
-            seg_len = float(np.linalg.norm(p2 - p1))
+            if abs(range_i - range_j) < jump_thr:
+                continue
+
+            near_idx, far_idx = (i, j) if range_i < range_j else (j, i)
+            near_point = np.asarray(points[near_idx], dtype=float).reshape(2)
+            far_point = np.asarray(points[far_idx], dtype=float).reshape(2)
+            if not (np.all(np.isfinite(near_point)) and np.all(np.isfinite(far_point))):
+                continue
+
+            seg_vec = far_point - near_point
+            seg_len = float(np.linalg.norm(seg_vec))
             if seg_len < self.min_occ_boundary_len or seg_len > max_len:
                 continue
-            d1 = p1 - origin
-            d2 = p2 - origin
-            n1 = float(np.linalg.norm(d1))
-            n2 = float(np.linalg.norm(d2))
-            if n1 <= 1e-9 or n2 <= 1e-9:
-                continue
-            far1 = origin + (float(self.sensing_range) / n1) * d1
-            far2 = origin + (float(self.sensing_range) / n2) * d2
-            poly = np.vstack([p1, p2, far2, far1])
+
+            # OA-MPC propagates the jump segment itself as a capsule. Keep a
+            # numerically thin support polygon only for existing visualization
+            # metadata; optimization uses t1/t2 below and is therefore based on
+            # the exact near-to-far segment.
+            tangent = seg_vec / seg_len
+            normal = np.array([-tangent[1], tangent[0]], dtype=float)
+            support_half_width = max(1e-6 * float(self.sensing_range), 1e-6)
+            poly = np.vstack(
+                [
+                    near_point + support_half_width * normal,
+                    far_point + support_half_width * normal,
+                    far_point - support_half_width * normal,
+                    near_point - support_half_width * normal,
+                ]
+            )
             try:
                 A, b0 = self._occ_utils._polygon_to_halfspaces(poly)
             except Exception:
@@ -579,10 +576,6 @@ class OAMPC:
             if A is None or b0 is None:
                 continue
             v_expand_vec = np.full((len(b0),), float(self.v_hidden_max_default), dtype=float)
-            if v_expand_vec.size > 0:
-                # The boundary segment itself is the immediate visible frontier.
-                # Keep only the "behind the frontier" facets expanding over time.
-                v_expand_vec[0] = 0.0
             scenarios.append(
                 {
                     "poly": poly,
@@ -590,14 +583,17 @@ class OAMPC:
                     "b0": b0,
                     "v_expand_vec": v_expand_vec,
                     "robot_pos": origin.copy(),
-                    "obs_center": 0.5 * (p1 + p2),
+                    "obs_center": 0.5 * (near_point + far_point),
                     "obs_radius": 0.5 * seg_len,
-                    "front1": p1,
-                    "front2": p2,
-                    "t1": p1,
-                    "t2": p2,
+                    "front1": near_point,
+                    "front2": far_point,
+                    "t1": near_point,
+                    "t2": far_point,
                     "v_adv_max": float(self.v_hidden_max_default),
-                    "source": "lidar_jump_run",
+                    "source": "lidar_range_jump",
+                    "jump_indices": (int(i), int(j)),
+                    "near_index": int(near_idx),
+                    "far_index": int(far_idx),
                 }
             )
             if len(scenarios) >= self.max_occ_boundaries:
