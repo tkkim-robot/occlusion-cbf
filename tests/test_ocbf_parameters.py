@@ -329,7 +329,7 @@ class OCBFParameterTests(unittest.TestCase):
                 return_value=(np.empty((0, 8), dtype=float), [], {}),
             ),
             mock.patch.object(
-                test_campus.crowd1,
+                test_campus.crowd_narrow,
                 "run_crowd_scenario",
                 side_effect=lambda **kwargs: kwargs,
             ),

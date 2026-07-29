@@ -32,8 +32,8 @@ class OcclusionCBFQP:
     """Backup-CBF QP with time-expanded occlusion constraints.
 
     The class is scenario-agnostic. Paper benchmark defaults that are specific
-    to crowd2, such as state-safe QP fallback, are applied by the example and
-    benchmark wrappers before this class is instantiated.
+    to the canonical crowd scenario are applied by the example and benchmark
+    wrappers before this class is instantiated.
     """
 
     def __init__(self, robot, robot_spec, num_obs=10, kappa=OCBF_DEFAULT_BARRIER_KAPPA, ax=None):
@@ -997,7 +997,7 @@ class OcclusionCBFQP:
         return False
 
     def _visible_obstacle_barrier(self, robot_state, obs):
-        """Evaluate retained eight-column circle rows without submodule APIs."""
+        """Evaluate an eight-column visible-obstacle circle row."""
         row = np.asarray(obs, dtype=float).reshape(-1)
         dynamic_barrier = getattr(self.robot.robot, "dynamic_agent_barrier", None)
         if row.size >= 8 and callable(dynamic_barrier):

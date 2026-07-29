@@ -72,7 +72,7 @@ def normalize_choice(value, choices, default):
 def default_visible_hocbf_for_scenario(scenario_label):
     """Visible-obstacle HOCBF is part of the canonical crowd benchmark default."""
     scenario = str(scenario_label).strip().lower()
-    return CROWD_ENABLE_VISIBLE_HOCBF_DEFAULT if scenario in {"crowd", "crowd2", "test_crowd", "test_crowd2"} else False
+    return CROWD_ENABLE_VISIBLE_HOCBF_DEFAULT if scenario == "crowd" else False
 
 
 def apply_crowd_ocbf_defaults(backup_cbf_overrides):
@@ -239,9 +239,3 @@ def apply_ocbf_best_parameters(robot_spec, *, overwrite=False):
         if overwrite or key not in backup_cfg:
             backup_cfg[key] = deepcopy(value)
     return robot_spec
-
-
-# Compatibility aliases retained for external scripts using the former Crowd2 names.
-OCBF_CROWD2_QP_FAILURE_FALLBACK_MODE = OCBF_CROWD_QP_FAILURE_FALLBACK_MODE
-CROWD2_ENABLE_VISIBLE_HOCBF_DEFAULT = CROWD_ENABLE_VISIBLE_HOCBF_DEFAULT
-apply_crowd2_ocbf_defaults = apply_crowd_ocbf_defaults

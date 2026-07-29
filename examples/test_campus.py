@@ -24,7 +24,7 @@ try:
         CROWD_BASELINE_MAP,
         resolve_baseline_alias,
     )
-    from examples import test_crowd_narrow as crowd1
+    from examples import test_crowd_narrow as crowd_narrow
 except ImportError:
     from _baseline_defs import (
         CROWD_ALGO_CHOICES,
@@ -37,7 +37,7 @@ except ImportError:
     if str(THIS_DIR) not in sys.path:
         sys.path.insert(0, str(THIS_DIR))
 
-    import test_crowd_narrow as crowd1
+    import test_crowd_narrow as crowd_narrow
 
 from position_control.ocbf.defaults import merge_ocbf_best_parameters
 
@@ -260,7 +260,7 @@ def _build_random_pedestrians(
     ped_speed_max=PEDESTRIAN_SPEED_MAX,
     ped_radius=PEDESTRIAN_RADIUS,
 ):
-    case_seed = crowd1._compute_case_seed(seed, case_idx)
+    case_seed = crowd_narrow._compute_case_seed(seed, case_idx)
     rng = np.random.default_rng(case_seed)
     y_min, y_max = (float(PEDESTRIAN_Y_RANGE[0]), float(PEDESTRIAN_Y_RANGE[1]))
     x_min, x_max = (float(PEDESTRIAN_X_BOUNDS[0]), float(PEDESTRIAN_X_BOUNDS[1]))
@@ -299,10 +299,10 @@ def _build_random_pedestrians(
                 continue
             if np.linalg.norm(np.array([px, py], dtype=float) - goal_xy) < start_goal_clearance:
                 continue
-            if crowd1._rows_overlap((px, py), ped_radius, rows, margin=pair_margin):
+            if crowd_narrow._rows_overlap((px, py), ped_radius, rows, margin=pair_margin):
                 continue
 
-            dist_to_path = crowd1._point_polyline_distance((px, py), waypoints_xy)
+            dist_to_path = crowd_narrow._point_polyline_distance((px, py), waypoints_xy)
             near_start_end = (py <= route_y_min + endpoint_band) or (py >= route_y_max - endpoint_band)
             if near_start_end and dist_to_path < centerline_guard:
                 continue
@@ -425,7 +425,7 @@ def run_campus_scenario(
     merged_robot_overrides["crowd_dyn_obs"] = crowd_dyn_cfg
 
     with plt.rc_context({"figure.figsize": PLOT_FIGSIZE}):
-        return crowd1.run_crowd_scenario(
+        return crowd_narrow.run_crowd_scenario(
             controller_type=controller_type,
             model_key=model_key,
             show_animation=show_animation,
@@ -480,7 +480,7 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=0, help="Base random seed for pedestrian heading initialization.")
     parser.add_argument("--idx", "--case-idx", dest="case_idx", type=int, default=None, help="Case index (1-based). Changes the random obstacle layout.")
     parser.add_argument("--disable-plot", action="store_true", help="Disable animation plotting.")
-    parser.add_argument("--save_ani", "--save-ani", "--save-anim", "--save-animation", dest="save_anim", type=crowd1._str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--save_ani", "--save-ani", "--save-anim", "--save-animation", dest="save_anim", type=crowd_narrow._str2bool, nargs="?", const=True, default=False)
     parser.add_argument("--n-rand", type=int, default=DEFAULT_N_RAND, help="Number of random campus pedestrians.")
     parser.add_argument(
         "--ped-speed",
@@ -533,17 +533,17 @@ def main(argv=None):
     )
     parser.add_argument(
         "--occ-enable-visible-hocbf",
-        type=crowd1._str2bool,
+        type=crowd_narrow._str2bool,
         nargs="?",
         const=True,
         default=None,
         help="Occlusion-CBF only: also add visible-obstacle CBF/HOCBF rows in the stacked QP.",
     )
-    parser.add_argument("--oa-dynamic-occluders", type=crowd1._str2bool, nargs="?", const=True, default=None)
-    parser.add_argument("--oa-allow-solver-fallback", type=crowd1._str2bool, nargs="?", const=True, default=None)
+    parser.add_argument("--oa-dynamic-occluders", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
+    parser.add_argument("--oa-allow-solver-fallback", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oa-dsafe", type=float, default=None)
     parser.add_argument("--oa-visible-reach-mode", type=str, choices=["worst_case", "constant_velocity"], default=None)
-    parser.add_argument("--oa-use-nominal-tracking-cost", type=crowd1._str2bool, nargs="?", const=True, default=None)
+    parser.add_argument("--oa-use-nominal-tracking-cost", type=crowd_narrow._str2bool, nargs="?", const=True, default=None)
     parser.add_argument("--oacp-dt-plan", type=float, default=None, help="Override oacp_mpc.dt_plan.")
     parser.add_argument("--oacp-Th", type=float, default=None, help="Override oacp_mpc.Th.")
     parser.add_argument("--oacp-N", type=int, default=None, help="Override oacp_mpc.N.")
@@ -554,7 +554,7 @@ def main(argv=None):
     parser.add_argument("--oacp-fallback-speed-scale", type=float, default=None, help="Override oacp_mpc.fallback_speed_scale.")
     parser.add_argument(
         "--oacp-use-nominal-tracking-cost",
-        type=crowd1._str2bool,
+        type=crowd_narrow._str2bool,
         nargs="?",
         const=True,
         default=None,
@@ -562,7 +562,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--oacp-allow-solver-fallback",
-        type=crowd1._str2bool,
+        type=crowd_narrow._str2bool,
         nargs="?",
         const=True,
         default=None,
@@ -570,7 +570,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--oacp-dynamic-occluders",
-        type=crowd1._str2bool,
+        type=crowd_narrow._str2bool,
         nargs="?",
         const=True,
         default=None,

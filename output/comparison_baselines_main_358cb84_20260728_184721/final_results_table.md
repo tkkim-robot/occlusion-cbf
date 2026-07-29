@@ -2,7 +2,7 @@
 
 Updated: 2026-07-29
 
-Each configuration contains 100 deterministic trials (seed 42, trial indices
+Each configuration contains 100 deterministic cases (seed 42, case indices
 1–100) in the `crowd` forced-emergence scenario. Therefore, every integer count
 below is also the corresponding percentage.
 
@@ -19,7 +19,7 @@ Each cell is `Success / Collision / Infeasible`.
 | OA-MPC | 0 / 1 / 99 | 0 / 1 / 99 | 0 / 3 / 97 | 0 / 15 / 85 | 0 / 7 / 93 | 0 / 6 / 94 |
 | **Occlusion-CBF (ours)** | **97 / 0 / 3** | **87 / 0 / 13** | **67 / 0 / 33** | **84 / 1 / 15** | **73 / 0 / 27** | **69 / 0 / 31** |
 
-## Controller compute time
+## Full-sweep diagnostic compute time
 
 Average controller compute time in milliseconds per control step, as recorded
 by each full benchmark JSON:

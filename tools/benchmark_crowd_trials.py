@@ -70,11 +70,11 @@ def _is_ocbf_baseline(baseline_alias: str) -> bool:
 
 def _load_run_crowd_scenario(scenario_name: str):
     scenario_key = str(scenario_name).strip().lower()
-    if scenario_key in {"crowd", "crowd2", "test_crowd", "test_crowd2"}:
+    if scenario_key == "crowd":
         from examples.test_crowd import run_crowd_scenario as runner
 
         return runner, "crowd"
-    if scenario_key in {"crowd_narrow", "crowd1", "test_crowd_narrow", "test_crowd1"}:
+    if scenario_key == "crowd_narrow":
         from examples.test_crowd_narrow import run_crowd_scenario as runner
 
         return runner, "crowd_narrow"
@@ -689,11 +689,8 @@ def main() -> int:
         "--scenario",
         type=str,
         default=CROWD_BENCHMARK_DEFAULTS["scenario"],
-        choices=["crowd", "crowd_narrow", "crowd2", "crowd1"],
-        help=(
-            "Select the canonical crowd benchmark or the legacy narrow layout. "
-            "The former crowd2/crowd1 values remain accepted as aliases."
-        ),
+        choices=["crowd", "crowd_narrow"],
+        help="Select the canonical crowd benchmark or the compact narrow layout.",
     )
     p.add_argument(
         "--baseline",

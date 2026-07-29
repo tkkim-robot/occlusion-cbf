@@ -13,8 +13,8 @@ baselines.
   `oa_mpc.py`: comparison planners.
 - `_mpc_common.py`: shared MPC utilities.
 
-The shared robot, tracking, environment, and baseline CBF-QP pieces used by
-these controllers live in the in-tree `base_control` package.
+Shared robot models, tracking, environments, and the CBF-QP baseline are
+provided by `base_control/`.
 
 ## Controller selection
 
@@ -35,13 +35,19 @@ Use scenario help for the supported model/controller combinations:
 uv run python -m examples.run_scenario --scenario crowd -- --help
 ```
 
-## Current review boundary
+## Controller behavior
 
-The OCBF temporal/gradient expression is accepted for the pure
-facet-propagation model used by this code. The NumPy and JAX paths both include
-`dh_dt - dh_ds`; under this model the two derivatives are equal and their
-residual is zero.
+Occlusion-CBF uses the pure facet-propagation model documented in
+[`ocbf/README.md`](ocbf/README.md). The NumPy and JAX paths both include
+`dh_dt - dh_ds`; the two derivatives are equal under this model, so their
+explicit residual is zero.
 
-The behavior of degenerate QP rows and the safety interpretation of solver
-fallbacks have not been changed in this refactor. Those questions remain a
-separate follow-up review.
+OA-MPC constructs occlusion boundaries from adjacent LiDAR discontinuities
+and avoids first/last-beam wraparound for partial-field-of-view scans.
+Dynamic reachable-set circles and hidden occlusion capsules use
+complementarity, while static point-cloud circles remain hard constraints.
+The Double Integrator crowd configuration uses the exact terminal stopping
+constraint.
+
+Zero-authority QP rows and solver fallback modes are implementation-level
+behaviors and do not provide a separate formal safety certificate.

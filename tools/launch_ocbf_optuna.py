@@ -10,6 +10,7 @@ import os
 import signal
 import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -38,7 +39,6 @@ def _snapshot_ignore(_path: str, names: list[str]) -> set[str]:
     ignored = {
         ".git",
         ".venv",
-        ".venv-optuna",
         "output",
         "tmp",
         "__pycache__",
@@ -169,7 +169,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--python",
         type=Path,
-        default=REPO_ROOT / ".venv-optuna" / "bin" / "python",
+        default=Path(sys.executable),
     )
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--trials", type=int, default=40)
@@ -193,8 +193,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    # Keep the virtual-environment path instead of resolving its Python symlink
-    # to the system interpreter, which would lose the venv package context.
+    # Keep the environment path instead of resolving its Python symlink, which
+    # would lose the active environment's package context.
     python = Path(os.path.abspath(args.python.expanduser()))
     if not python.exists():
         raise FileNotFoundError(f"Tuning Python not found: {python}")

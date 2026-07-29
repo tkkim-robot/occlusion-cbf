@@ -17,10 +17,6 @@ For each control step, the controller:
    obstacle CBF/HOCBF rows.
 6. Solves for the safety-filtered control.
 
-The canonical `crowd` benchmark is the route-focused layout formerly called
-`crowd2`. New configuration and documentation use `crowd`; old names remain
-only as compatibility aliases.
-
 ## Temporal derivative convention
 
 This project always uses pure facet propagation:
@@ -44,9 +40,8 @@ The implemented temporal term is therefore:
 c_occ = grad_h @ (Phi @ f(x) - f_backup(y)) + dh_dt - dh_ds
 ```
 
-The explicit residual is zero under the stated model. This temporal/gradient
-correction has been reviewed and is considered correct for that assumption in
-both the NumPy and JAX constraint paths.
+The explicit residual is zero under the stated model in both the NumPy and JAX
+constraint paths.
 
 ## Configuration
 
@@ -68,9 +63,9 @@ The optimized controller profiles are committed as:
 Every maintained test and benchmark runner loads the matching profile when
 Occlusion-CBF is selected. Built-in scenario values are replaced by the YAML
 profile, while explicit CLI and programmatic overrides still take precedence.
-Dynamic Unicycle keeps its existing defaults because it has not been tuned.
-The shared tracking-controller constructor also fills missing values from
-these files before creating the robot, which covers new scenario entry points.
+Dynamic Unicycle uses its model defaults. The shared tracking-controller
+constructor fills missing values from these profiles for every scenario entry
+point.
 
 Inspect the canonical runner for the exact current flags:
 
@@ -97,20 +92,21 @@ persisted in the selected output directory.
 Run one study directly:
 
 ```bash
-.venv-optuna/bin/python -m tools.tune_ocbf_optuna \
+uv run python -m tools.tune_ocbf_optuna \
   --model di --n-rand 50 --workers 4 --trials 40 \
   --output-dir output/optuna_di_n50 --wandb
 ```
 
-Launch both paper studies in detached, CPU-isolated sessions:
+On Linux with `taskset`, launch both studies in detached, CPU-isolated
+sessions:
 
 ```bash
-python -m tools.launch_ocbf_optuna
+uv run python -m tools.launch_ocbf_optuna
 ```
 
-## Deferred QP review
+## Model boundary
 
-This refactor does not change or certify the treatment of zero-authority
-(degenerate) constraint rows or the semantics of QP solver fallback modes.
-Those controller-level questions are intentionally deferred for a separate
-discussion.
+Pure facet propagation is the temporal model used by these kernels.
+Zero-authority constraint rows and QP solver fallback modes are
+implementation-level behaviors and do not provide a separate formal safety
+certificate.

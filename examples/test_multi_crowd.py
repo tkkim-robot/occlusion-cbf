@@ -1017,11 +1017,5 @@ def main(argv=None):
     args = parser.parse_args(argv)
     run_multi_crowd(args)
 
-
-# Compatibility aliases for callers that imported the former Crowd2 names.
-_build_crowd2_scenario = _build_crowd_scenario
-run_multi_crowd2 = run_multi_crowd
-
-
 if __name__ == "__main__":
     main()

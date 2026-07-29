@@ -1,4 +1,4 @@
-"""Scenario naming and compatibility-contract regression tests."""
+"""Scenario naming and launcher-contract regression tests."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from unittest import mock
 import numpy as np
 
 from examples import test_crowd
-from examples import test_crowd1
-from examples import test_crowd2
 from examples import test_crowd_narrow
 from examples import test_multi_crowd
 from examples import run_scenario
@@ -428,54 +426,33 @@ class ScenarioContractTests(unittest.TestCase):
         self.assertEqual(forwarded["env_width_override"], 30.0)
         self.assertEqual(forwarded["env_height_override"], 30.0)
 
-    def test_legacy_modules_forward_public_and_private_helpers(self):
-        self.assertIs(test_crowd2.run_crowd_scenario, test_crowd.run_crowd_scenario)
-        self.assertIs(
-            test_crowd2._route_point_at_distance,
-            test_crowd._route_point_at_distance,
-        )
-        self.assertIs(
-            test_crowd1.run_crowd_scenario,
-            test_crowd_narrow.run_crowd_scenario,
-        )
-        self.assertIs(
-            test_crowd1._safe_normalize,
-            test_crowd_narrow._safe_normalize,
+    def test_shared_launcher_exposes_current_scenarios(self):
+        self.assertEqual(
+            run_scenario.SCENARIO_MODULES,
+            {
+                "crowd": "examples.test_crowd",
+                "crowd_narrow": "examples.test_crowd_narrow",
+                "campus": "examples.test_campus",
+                "crosswalk": "examples.test_crosswalk",
+            },
         )
 
-    def test_benchmark_loader_normalizes_crowd_aliases(self):
-        for alias in ("crowd", "crowd2", "test_crowd", "test_crowd2"):
-            with self.subTest(alias=alias):
-                runner, canonical_name = _load_run_crowd_scenario(alias)
-                self.assertIs(runner, test_crowd.run_crowd_scenario)
-                self.assertEqual(canonical_name, "crowd")
+    def test_benchmark_loader_resolves_current_scenarios(self):
+        runner, scenario_name = _load_run_crowd_scenario("crowd")
+        self.assertIs(runner, test_crowd.run_crowd_scenario)
+        self.assertEqual(scenario_name, "crowd")
 
-        for alias in (
-            "crowd_narrow",
-            "crowd1",
-            "test_crowd_narrow",
-            "test_crowd1",
-        ):
-            with self.subTest(alias=alias):
-                runner, canonical_name = _load_run_crowd_scenario(alias)
-                self.assertIs(runner, test_crowd_narrow.run_crowd_scenario)
-                self.assertEqual(canonical_name, "crowd_narrow")
+        runner, scenario_name = _load_run_crowd_scenario("crowd_narrow")
+        self.assertIs(runner, test_crowd_narrow.run_crowd_scenario)
+        self.assertEqual(scenario_name, "crowd_narrow")
 
-    def test_visible_hocbf_default_is_limited_to_canonical_crowd_aliases(self):
-        for alias in ("crowd", "crowd2", "test_crowd", "test_crowd2"):
-            with self.subTest(alias=alias):
-                self.assertTrue(default_visible_hocbf_for_scenario(alias))
+        with self.assertRaises(ValueError):
+            _load_run_crowd_scenario("unknown")
 
-        for other in (
-            "crowd_narrow",
-            "crowd1",
-            "test_crowd_narrow",
-            "test_crowd1",
-            "campus",
-            "crosswalk",
-            "",
-            None,
-        ):
+    def test_visible_hocbf_default_is_limited_to_crowd(self):
+        self.assertTrue(default_visible_hocbf_for_scenario("crowd"))
+
+        for other in ("crowd_narrow", "campus", "crosswalk", "", None):
             with self.subTest(other=other):
                 self.assertFalse(default_visible_hocbf_for_scenario(other))
 

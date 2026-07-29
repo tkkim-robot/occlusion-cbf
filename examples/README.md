@@ -8,12 +8,10 @@ uv run python -m examples.run_scenario --scenario SCENARIO -- [scenario options]
 
 | Scenario | Purpose |
 | --- | --- |
-| `crowd` | Canonical route-focused crowd benchmark; formerly `crowd2`. |
-| `crowd_narrow` | Legacy small crowd layout; formerly `crowd`/`crowd1`. |
+| `crowd` | Route-focused forced-emergence benchmark. |
+| `crowd_narrow` | Compact narrow-crowd layout. |
 | `campus` | Long campus walkway with moving pedestrians. |
 | `crosswalk` | Crosswalk scene with an optional bus occluder. |
-
-The former hospital experiment is not maintained and has been removed.
 
 ## Examples
 
@@ -67,17 +65,23 @@ supports the subset shown by its `--help`.
 When `occlusion_cbf` is selected, Double Integrator and Unicycle automatically
 load their committed optimized YAML profiles from
 `position_control/ocbf/config/`. Explicit scenario flags still override those
-values. Dynamic Unicycle continues to use its existing untuned defaults.
+values. Dynamic Unicycle uses its model defaults.
 
-## Compatibility names
+## Benchmark sweeps
 
-New code should import `examples.test_crowd` or
-`examples.test_crowd_narrow`. For existing integrations:
+The benchmark tool runs deterministic case ranges for one controller or the
+predefined comparison suite:
 
-- `examples.test_crowd2` forwards to `examples.test_crowd`.
-- `examples.test_crowd1` forwards to `examples.test_crowd_narrow`.
-- The benchmark tool accepts `crowd2` and `crowd1` as aliases for `crowd` and
-  `crowd_narrow`, respectively.
+```bash
+uv run python -m tools.benchmark_crowd_trials \
+  --scenario crowd \
+  --baseline occlusion_cbf \
+  --model uni \
+  --n-rand 20 \
+  --seed 42 \
+  --idx-start 1 \
+  --idx-end 100
+```
 
-For multi-view evaluation, `examples.test_multi_crowd2` similarly forwards to
-`examples.test_multi_crowd`.
+Use `uv run python -m tools.benchmark_crowd_trials --help` for parallelism,
+output, controller, and scenario-generation options.

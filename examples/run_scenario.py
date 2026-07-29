@@ -15,10 +15,6 @@ SCENARIO_MODULES = {
     "campus": "examples.test_campus",
     "crosswalk": "examples.test_crosswalk",
 }
-SCENARIO_ALIASES = {
-    "crowd2": "crowd",
-    "crowd1": "crowd_narrow",
-}
 
 BENCHMARK_CPU_ENVIRONMENT = {
     "OMP_NUM_THREADS": "1",
@@ -52,7 +48,7 @@ def main(argv=None):
     parser.add_argument(
         "--scenario",
         default="crowd",
-        choices=tuple((*SCENARIO_MODULES, *SCENARIO_ALIASES)),
+        choices=tuple(SCENARIO_MODULES),
         help="Scenario to run; the canonical crowd benchmark is the default.",
     )
     benchmark_environment = parser.add_mutually_exclusive_group()
@@ -79,7 +75,7 @@ def main(argv=None):
     if scenario_argv[:1] == ["--"]:
         scenario_argv = scenario_argv[1:]
 
-    scenario_name = SCENARIO_ALIASES.get(args.scenario, args.scenario)
+    scenario_name = args.scenario
     use_benchmark_environment = args.benchmark_cpu_env
     if use_benchmark_environment is None:
         use_benchmark_environment = scenario_name == "crowd"

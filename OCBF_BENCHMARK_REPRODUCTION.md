@@ -289,13 +289,12 @@ Infeasible (31):
 
 ## Source artifacts
 
-The original full rows and summaries are under:
+The committed
+[Occlusion-CBF benchmark rows](output/ocbf_tuned_benchmark_20260728_145048/)
+contain the per-case CSV and JSON data. The
+[complete comparison report](output/comparison_baselines_main_358cb84_20260728_184721/final_results_table.md)
+combines all six controllers with the warmed sequential timing measurements.
 
-```text
-output/ocbf_tuned_benchmark_20260728_145048/
-```
-
-`output/` is intentionally gitignored, so this tracked guide is the durable
-record of the outcome partitions. See `examples/README.md` for general
-scenario usage and `position_control/ocbf/README.md` for controller and tuned
-profile details.
+See [`examples/README.md`](examples/README.md) for general scenario usage and
+[`position_control/ocbf/README.md`](position_control/ocbf/README.md) for
+controller and tuned-profile details.

@@ -1,5 +1,5 @@
 """
-Legacy narrow-crowd scenario migrated from dynamic_env/main.py::single_agent_main.
+Compact narrow-crowd scenario using the shared controller stack.
 
 Run:
     uv run python examples/test_crowd_narrow.py --model di
@@ -1859,7 +1859,7 @@ def run_crowd_scenario(
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run the legacy narrow-crowd scenario.")
+    parser = argparse.ArgumentParser(description="Run the compact narrow-crowd scenario.")
     parser.add_argument(
         "--model",
         type=str,
