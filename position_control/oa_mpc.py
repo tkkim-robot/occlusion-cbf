@@ -36,10 +36,10 @@ class OAMPC:
 
     Not implemented here:
       - theorem-exact recursive feasibility is not claimed in dense dynamic
-        crowd scenes; full complementarity handling for every collision row is
-        solver-fragile, so visible/static circle rows are hard constraints by
-        default and terminal complementarity is not forced for dynamic-occluder
-        crowd runs,
+        crowd scenes; all visible dynamic agents may act as occluders in this
+        benchmark adaptation, while genuinely static point-cloud rows remain
+        hard and dynamic reachable-set rows use the stopped-state
+        complementarity,
       - the full numerical Algorithm-2 fixed-point alternation is simplified by
         default to one projection-target construction followed by one NMPC solve
         per MPC step, though additional alternations can be enabled by config,
@@ -100,24 +100,25 @@ class OAMPC:
         self.allow_solver_fallback = bool(cfg.get("allow_solver_fallback", default_fallback))
         self.occluder_speed_max = float(cfg.get("occluder_speed_max", 1e-3))
         self.dynamic_occluders = bool(cfg.get("dynamic_occluders", False))
-        # Keep the paper's occlusion projected-set complementarity active by
-        # default. Visible/static circle rows remain hard distance constraints
-        # unless explicitly overridden, which is the crowd adaptation used here.
+        # Keep the paper's dynamic reachable-set complementarity active by
+        # default. Visible dynamic-agent circles and hidden-agent occlusion
+        # capsules use it; genuinely static point-cloud circles remain hard.
         default_use_comp = True
         self.use_complementarity = bool(cfg.get("use_complementarity", default_use_comp))
         self.complementarity_smax_kappa = float(cfg.get("complementarity_smax_kappa", 20.0))
         self.aggregate_complementarity = bool(cfg.get("aggregate_complementarity", False))
+        # Legacy override for callers that intentionally want every circle row
+        # (including static point-cloud circles) to use complementarity.
         self.complementarity_for_circles = bool(
             cfg.get("complementarity_for_circles", False)
         )
-        # Paper recursive-feasibility argument relies on a terminal stopping
-        # contingency. In practice, encoding bilinear complementarity at every
-        # step is solver-fragile in this benchmark. Instead, keep hard
-        # collision-avoidance rows over the horizon and realize the terminal
-        # complementarity only at the final prediction step by dropping the
-        # corresponding hard row there. Since X[:,N] == X[:,N-1] is enforced,
-        # this captures the intended "stopped => safe contingency" logic
-        # without introducing another nonconvex product term.
+        self.complementarity_for_visible_dynamic = bool(
+            cfg.get("complementarity_for_visible_dynamic", True)
+        )
+        # Legacy terminal-slack path used only when a row is not assigned the
+        # direct dynamic complementarity below. Dynamic crowd rows use the
+        # paper's product constraint directly, so this remains disabled by
+        # default for dynamic-occluder runs.
         default_terminal_comp = self.paper_mode and (not self.dynamic_occluders)
         self.use_terminal_complementarity = bool(
             cfg.get("use_terminal_complementarity", default_terminal_comp)
@@ -350,6 +351,18 @@ class OAMPC:
             xk[2] + dt * uk[1],
             xk[3] + dt * uk[0],
         )
+
+    @staticmethod
+    def _complementarity_motion_sq(X, k):
+        """Squared full-state change used by the OA-MPC stop complementarity."""
+        delta_state = X[:, k] - X[:, k - 1]
+        return ca.sumsqr(delta_state)
+
+    def _has_exact_terminal_stop(self):
+        """Whether the terminal dynamics enforce X[:, N] == X[:, N - 1]."""
+        if self.model in {"Unicycle2D", "DynamicUnicycle2D"}:
+            return True
+        return self.di_terminal_stop_mode == "exact"
 
     def _obs_array(self, obs_list):
         if obs_list is None:
@@ -718,11 +731,10 @@ class OAMPC:
         return v_ref_raw, schedule, mean_circle, mean_proj
 
     def _build_projection_targets(self, x_bar, visible_obs, occ_scenarios, static_pc_circles):
-        # targets[k] contains per-step collision constraints:
-        #   {"kind":"circle", "center": c_xy, "min_dist": d_min}
-        #     -> hard distance to circle center (paper-like static/visible handling)
-        #   {"kind":"proj", "point": z_proj_xy, "clear": clear, "use_comp": True}
-        #     -> complementarity-relaxed projected-point distance (occlusion capsules)
+        # targets[k] contains per-step collision constraints. Per-row source and
+        # use_comp tags keep genuinely static point-cloud circles hard while
+        # applying the stopped-state complementarity to visible-agent reachable
+        # circles and hidden-agent capsule projections.
         targets = [[] for _ in range(self.N + 1)]
         p0 = np.asarray(x_bar[0:2, 0], dtype=float).reshape(2,)
         dyn_types_cfg = self.robot_spec.get("dynamic_obs_types", [1])
@@ -756,6 +768,8 @@ class OAMPC:
                         "kind": "circle",
                         "center": c_pred,
                         "min_dist": float(r_pred + clear),
+                        "source": "static_pointcloud",
+                        "use_comp": bool(self.complementarity_for_circles),
                     }
                 )
 
@@ -797,6 +811,8 @@ class OAMPC:
                         "kind": "circle",
                         "center": c_pred,
                         "min_dist": float(r_pred + clear),
+                        "source": "visible_dynamic",
+                        "use_comp": bool(self.complementarity_for_visible_dynamic),
                     }
                 )
 
@@ -824,6 +840,7 @@ class OAMPC:
                         "point": z_proj,
                         "clear": float(clear),
                         "use_comp": bool(self.use_complementarity),
+                        "source": "occlusion_capsule",
                     }
                 )
 
@@ -1074,15 +1091,13 @@ class OAMPC:
         terminal_relaxed_constraints = 0
         terminal_relax_cost = 0
         for k in range(1, N + 1):
-            move_dx = X[0, k] - X[0, k - 1]
-            move_dy = X[1, k] - X[1, k - 1]
             # Paper-style complementarity:
             #   ||z_k-z_{k-1}|| * g_t(z_k) <= 0
-            # To preserve "stopped => zero multiplier" exactly (and avoid
-            # infeasibility caused by epsilon-bias), use squared norm:
+            # Use the full state difference from the paper rather than only
+            # translational position. Squaring the norm preserves its zero/sign
+            # logic while avoiding a square-root singularity at a full stop:
             #   (||z_k-z_{k-1}||^2) * g_t(z_k) <= 0
-            # This is equivalent for sign logic and numerically smoother.
-            move_sq = move_dx * move_dx + move_dy * move_dy
+            move_sq = self._complementarity_motion_sq(X, k)
             g_terms = []
             for cst in proj_targets[k]:
                 kind = str(cst.get("kind", "proj")).strip().lower()
@@ -1094,14 +1109,23 @@ class OAMPC:
                     dy = X[1, k] - float(cxy[1])
                     dist_sq = dx * dx + dy * dy
                     min_dist_sq = min_dist * min_dist
-                    if self.use_complementarity and self.complementarity_for_circles:
-                        # Paper complementarity condition can be applied to all
-                        # collision rows: if already inside safety margin, allow
-                        # only zero-motion at that prediction step.
+                    use_comp = bool(
+                        cst.get("use_comp", self.complementarity_for_circles)
+                    )
+                    if self.use_complementarity and use_comp:
+                        # Visible dynamic reachable sets use the same stopped
+                        # contingency as hidden dynamic reachable sets. Static
+                        # point-cloud circles carry use_comp=False and stay hard.
                         # Use squared-distance form for numerical robustness.
                         # sign(min_dist - dist) == sign(min_dist^2 - dist^2)
                         # for nonnegative distances.
-                        g_terms.append(min_dist_sq - dist_sq)
+                        # At an exact terminal stop, move_sq is identically
+                        # zero, so the product row is a redundant 0 <= 0 with
+                        # a zero Jacobian. Omit that tautology from the NLP.
+                        if not (
+                            is_terminal_step and self._has_exact_terminal_stop()
+                        ):
+                            g_terms.append(min_dist_sq - dist_sq)
                     elif (
                         is_terminal_step
                         and self.use_terminal_complementarity
@@ -1129,7 +1153,12 @@ class OAMPC:
                     # Complementarity relaxation for occlusion constraints.
                     # Use squared-distance form for numerical robustness.
                     g_violation = clear_sq - dist_sq
-                    g_terms.append(g_violation)
+                    # Exact terminal stopping already satisfies this product;
+                    # omitting the implied zero row avoids MPCC degeneracy.
+                    if not (
+                        is_terminal_step and self._has_exact_terminal_stop()
+                    ):
+                        g_terms.append(g_violation)
                 elif (
                     is_terminal_step
                     and self.use_terminal_complementarity
@@ -1150,16 +1179,13 @@ class OAMPC:
                     gk = ca.log(ca.sum1(ca.exp(kappa * stack)) + 1e-12) / kappa
                     opti.subject_to(move_sq * gk <= 0.0)
                 else:
-                    # Numerically stable complementarity:
-                    # g_pos = max(0, g_1, ..., g_m), then move_sq * g_pos <= 0
-                    # This preserves the intended logic:
-                    # - if all g_i <= 0 -> g_pos = 0 (free motion)
-                    # - if any g_i > 0 -> g_pos > 0 -> move_sq = 0 (stop)
-                    g_pos = opti.variable()
-                    opti.subject_to(g_pos >= 0.0)
+                    # Apply the paper's complementarity row by row. This has
+                    # the same feasible robot trajectories as the former
+                    # nonnegative epigraph variable, but safe rows remain
+                    # strictly inactive while moving and no flat auxiliary
+                    # direction is introduced at a stop.
                     for gk in g_terms:
-                        opti.subject_to(g_pos >= gk)
-                    opti.subject_to(move_sq * g_pos <= 0.0)
+                        opti.subject_to(move_sq * gk <= 0.0)
 
         opti.minimize(J + terminal_relax_cost)
 
