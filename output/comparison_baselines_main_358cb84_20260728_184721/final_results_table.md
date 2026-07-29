@@ -38,10 +38,42 @@ physical CPUs 0–9. They average all controller steps, include cold/JIT steps,
 and were collected while workers competed for compute resources. They should
 not be presented as isolated single-controller latency measurements.
 
-The separately recorded warmed, sequential Occlusion-CBF timing values are
-5.664, 12.238, 19.653, 14.572, 17.501, and 31.906 ms/step in the same column
-order. Those values exclude each trial's first 10 steps and should remain
-separate unless every baseline is measured with the same protocol.
+## Warmed sequential controller compute time
+
+The comparable warmed timing pass below was measured on a MacBook Air with an
+Apple M4 CPU (10 cores, 4 performance + 6 efficiency), 24 GB RAM, and native
+arm64 Python 3.11.13. JAX 0.7.1 ran on its CPU backend.
+
+| Method | DI-10 | DI-30 | DI-50 | Unicycle-10 | Unicycle-20 | Unicycle-30 |
+|---|---:|---:|---:|---:|---:|---:|
+| CBF-QP | 0.659 | 0.740 | 0.753 | 0.691 | 0.711 | 0.797 |
+| Single-Risk MPC | 12.990 | 13.757 | 15.356 | 7.249 | 8.138 | 8.676 |
+| Control-Tree MPC | 106.676 | 110.651 | 117.039 | 48.304 | 54.170 | 58.929 |
+| OACP-MPC | 87.368 | 89.434 | 88.830 | 80.533 | 76.900 | 78.478 |
+| OA-MPC | 93.822 | 151.444 | 186.946 | 69.225 | 101.502 | 117.458 |
+| **Occlusion-CBF (ours)** | **1.596** | **2.346** | **3.881** | **4.116** | **4.498** | **4.507** |
+
+Each cell is milliseconds per controller step, averaged equally over seed-42
+cases 1 and 2. Each case ran for 60 steps; the first 10 were excluded and the
+remaining 50 were timed, giving 100 warmed samples per cell and 3,600 samples
+overall. The 72 short cases ran strictly sequentially in one process with
+plotting disabled and the numerical/JAX runtime pinned to one thread. The host
+was on AC power with Low Power Mode off, no competing benchmark process, and no
+thermal or performance warning.
+
+These are intentionally short-run warmed estimates, not full-trajectory
+averages. The metric is each controller's reported
+`last_total_compute_time_ms` (with profile timing as a fallback), excluding
+plotting. Controller-internal timing boundaries differ: notably, CBF-QP
+performs visibility filtering outside its internal timer. The values should
+therefore be described as controller-reported compute time rather than uniform
+outer-loop latency.
+
+Raw warmed timing artifacts:
+
+- [`compute_times_20260729_162447.csv`](../sequential_compute_timing/compute_times_20260729_162447.csv)
+- [`compute_times_20260729_162447.json`](../sequential_compute_timing/compute_times_20260729_162447.json)
+- [`compute_times_20260729_162447.md`](../sequential_compute_timing/compute_times_20260729_162447.md)
 
 ## Provenance and validation
 
