@@ -54,14 +54,17 @@ arm64 Python 3.11.13. JAX 0.7.1 ran on its CPU backend.
 | OACP-MPC | 87.368 | 89.434 | 88.830 | 80.533 | 76.900 | 78.478 |
 | OA-MPC | 93.822 | 151.444 | 186.946 | 69.225 | 101.502 | 117.458 |
 | **Occlusion-CBF (ours)** | **1.596** | **2.346** | **3.881** | **4.116** | **4.498** | **4.507** |
+| **Occlusion-CBF, relaxed terminal (ours)** | **1.611** | **2.374** | **3.304** | — | — | — |
 
-Each cell is milliseconds per controller step, averaged equally over seed-42
-cases 1 and 2. Each case ran for 60 steps; the first 10 were excluded and the
-remaining 50 were timed, giving 100 warmed samples per cell and 3,600 samples
-overall. The 72 short cases ran strictly sequentially in one process with
-plotting disabled and the numerical/JAX runtime pinned to one thread. The host
-was on AC power with Low Power Mode off, no competing benchmark process, and no
-thermal or performance warning.
+Each populated cell is milliseconds per controller step, averaged equally over
+seed-42 cases 1 and 2. Each case ran for 60 steps; the first 10 were excluded
+and the remaining 50 were timed, giving 100 warmed samples per populated cell.
+Across the table, this is 3,900 warmed samples: 3,600 from the original 72-case
+pass and 300 from the targeted six-case relaxed-terminal pass. Each pass ran
+strictly sequentially in one process with plotting disabled and the
+numerical/JAX runtime pinned to one thread. The host was on AC power with Low
+Power Mode off, no competing benchmark process, and no thermal or performance
+warning.
 
 These are intentionally short-run warmed estimates, not full-trajectory
 averages. The metric is each controller's reported
@@ -76,6 +79,9 @@ Raw warmed timing artifacts:
 - [`compute_times_20260729_162447.csv`](../sequential_compute_timing/compute_times_20260729_162447.csv)
 - [`compute_times_20260729_162447.json`](../sequential_compute_timing/compute_times_20260729_162447.json)
 - [`compute_times_20260729_162447.md`](../sequential_compute_timing/compute_times_20260729_162447.md)
+- [`compute_times_20260730_003730.csv`](../sequential_compute_timing/compute_times_20260730_003730.csv)
+- [`compute_times_20260730_003730.json`](../sequential_compute_timing/compute_times_20260730_003730.json)
+- [`compute_times_20260730_003730.md`](../sequential_compute_timing/compute_times_20260730_003730.md)
 
 ## Provenance and validation
 
