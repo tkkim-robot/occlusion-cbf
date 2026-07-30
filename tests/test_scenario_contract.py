@@ -12,7 +12,10 @@ from examples import test_crowd_narrow
 from examples import test_multi_crowd
 from examples import run_scenario
 from examples._baseline_defs import (
+    CROWD_BASELINE_MAP,
     CROWD_BENCHMARK_DEFAULTS,
+    CROWD_PLANNER_LABELS,
+    CROSSWALK_BASELINE_MAP,
     OACP_BENCHMARK_DEFAULTS,
     default_benchmark_workers,
 )
@@ -85,6 +88,20 @@ class ScenarioContractTests(unittest.TestCase):
             explicit_override["vref_scenario_weight_mode"],
             "barrier_expand",
         )
+
+    def test_terminal_relax_method_is_registered_as_distinct_ocbf_variant(self):
+        method = "occlusion_cbf_terminal_relax"
+        self.assertEqual(CROWD_BASELINE_MAP[method], method)
+        self.assertIn("relaxed terminal", CROWD_PLANNER_LABELS[method].lower())
+        self.assertTrue(benchmark_crowd_trials._is_ocbf_baseline(method))
+        self.assertEqual(CROSSWALK_BASELINE_MAP[method], method)
+
+    def test_terminal_relax_benchmark_rejects_unsupported_dynamics_preflight(self):
+        with self.assertRaisesRegex(ValueError, "only.*DoubleIntegrator2D"):
+            benchmark_crowd_trials._resolve_controller_for_model(
+                "occlusion_cbf_terminal_relax",
+                "uni",
+            )
 
     def test_canonical_benchmark_profile_matches_reference_command(self):
         self.assertEqual(

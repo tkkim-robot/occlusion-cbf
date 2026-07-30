@@ -49,8 +49,8 @@ os.environ.setdefault(
 
 import numpy as np
 import optuna
-from optuna.pruners import MedianPruner, NopPruner
-from optuna.samplers import TPESampler
+from optuna.pruners import BasePruner, MedianPruner, NopPruner
+from optuna.samplers import GridSampler, TPESampler
 
 from examples._baseline_defs import CROWD_BENCHMARK_DEFAULTS, CROWD_BASELINE_MAP
 from position_control.ocbf.defaults import (
@@ -88,7 +88,13 @@ COMPATIBILITY_CONFIG_KEYS = (
     "pruner",
     "source_commit",
     "source_fingerprint",
+    "tuning_mode",
 )
+TUNING_MODES = ("controller", "terminal_relax")
+TERMINAL_RELAX_GRID = {
+    "terminal_slack_weight": [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0],
+    "terminal_slack_max": [0.25, 0.5, 1.0, 2.0],
+}
 
 MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
     "di": {
@@ -263,6 +269,63 @@ class TrialCaseError(RuntimeError):
     """A canonical benchmark case failed before producing valid metrics."""
 
 
+class LatestStepMedianPruner(BasePruner):
+    """Compare the current prefix against completed trials at the same prefix.
+
+    Optuna's built-in median pruner compares a trial's best intermediate
+    value. That is unsuitable for this cumulative count objective because a
+    shorter prefix nearly always has a numerically smaller score. This pruner
+    compares only equal-sized case prefixes.
+    """
+
+    def __init__(
+        self,
+        *,
+        n_startup_trials: int,
+        n_warmup_steps: int,
+        interval_steps: int,
+        n_min_trials: int,
+    ):
+        self.n_startup_trials = int(n_startup_trials)
+        self.n_warmup_steps = int(n_warmup_steps)
+        self.interval_steps = max(1, int(interval_steps))
+        self.n_min_trials = int(n_min_trials)
+
+    def prune(self, study, trial) -> bool:
+        completed = study.get_trials(
+            deepcopy=False,
+            states=(optuna.trial.TrialState.COMPLETE,),
+        )
+        if len(completed) < self.n_startup_trials:
+            return False
+
+        step = trial.last_step
+        if step is None or step < self.n_warmup_steps:
+            return False
+        if (step - self.n_warmup_steps) % self.interval_steps != 0:
+            return False
+
+        current = trial.intermediate_values.get(step)
+        if current is None:
+            return False
+        if not math.isfinite(float(current)):
+            return True
+
+        references = [
+            float(other.intermediate_values[step])
+            for other in completed
+            if step in other.intermediate_values
+            and math.isfinite(float(other.intermediate_values[step]))
+        ]
+        if len(references) < self.n_min_trials:
+            return False
+
+        median = float(np.median(references))
+        if study.direction == optuna.study.StudyDirection.MINIMIZE:
+            return float(current) > median
+        return float(current) < median
+
+
 def compatibility_fingerprint(config: dict[str, Any]) -> str:
     """Hash every setting that can affect trial values or artifact identity."""
     payload = {
@@ -296,8 +359,19 @@ def validate_case_rows(rows: Iterable[dict[str, Any]]) -> None:
         )
 
 
-def sample_hyperparameters(trial: optuna.Trial, model: str) -> dict[str, Any]:
+def sample_hyperparameters(
+    trial: optuna.Trial,
+    model: str,
+    tuning_mode: str = "controller",
+) -> dict[str, Any]:
     """Sample the model-specific, paper-safe search space."""
+    if tuning_mode == "terminal_relax":
+        if model != "di":
+            raise ValueError("Terminal-relax tuning is defined only for DI.")
+        return {
+            name: trial.suggest_categorical(name, choices)
+            for name, choices in TERMINAL_RELAX_GRID.items()
+        }
     if model == "di":
         max_active = trial.suggest_categorical(
             "max_active_occlusions", ACTIVE_OCCLUSION_CHOICES
@@ -358,8 +432,24 @@ def sample_hyperparameters(trial: optuna.Trial, model: str) -> dict[str, Any]:
 def build_controller_overrides(
     model: str,
     sampled: dict[str, Any],
+    tuning_mode: str = "controller",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Convert sampled parameters into canonical benchmark overrides."""
+    if tuning_mode == "terminal_relax":
+        if model != "di":
+            raise ValueError("Terminal-relax tuning is defined only for DI.")
+        backup = apply_crowd_ocbf_defaults(
+            {
+                "terminal_slack_weight": float(
+                    sampled["terminal_slack_weight"]
+                ),
+                "terminal_slack_max": float(sampled["terminal_slack_max"]),
+                "obs_hocbf_slack_max": 0.0,
+                "occ_rollout_slack_max": 0.0,
+            }
+        )
+        return backup, {}
+
     backup = {
         "T_horizon": float(sampled["T_horizon"]),
         "dt_backup": FIXED_OCBF_CONFIG["dt_backup"],
@@ -522,11 +612,12 @@ def _case_kwargs(
     backup_cbf_overrides: dict[str, Any],
     robot_spec_overrides: dict[str, Any],
     run_label: str,
+    baseline_alias: str = "occlusion_cbf",
 ) -> dict[str, Any]:
     return {
-        "baseline_alias": "occlusion_cbf",
+        "baseline_alias": baseline_alias,
         "scenario_name": "crowd",
-        "controller_pos": CROWD_BASELINE_MAP["occlusion_cbf"],
+        "controller_pos": CROWD_BASELINE_MAP[baseline_alias],
         "model": model,
         "seed": int(seed),
         "idx": int(idx),
@@ -690,17 +781,23 @@ def make_objective(
     output_dir: Path,
     wandb_run,
     fixed_run_config: dict[str, Any],
+    tuning_mode: str = "controller",
 ):
     """Build the sequential-trial objective around a shared case process pool."""
 
     def objective(trial: optuna.Trial) -> float:
-        params = sample_hyperparameters(trial, model)
+        params = sample_hyperparameters(trial, model, tuning_mode)
         trial.set_user_attr("effective_parameters", params)
         backup_overrides, robot_overrides = build_controller_overrides(
-            model, params
+            model, params, tuning_mode
         )
         rows: list[dict[str, Any]] = []
         run_label = f"optuna_trial_{trial.number:04d}"
+        baseline_alias = (
+            "occlusion_cbf_terminal_relax"
+            if tuning_mode == "terminal_relax"
+            else "occlusion_cbf"
+        )
 
         for start in range(0, len(indices), batch_size):
             batch_indices = indices[start : start + batch_size]
@@ -716,6 +813,7 @@ def make_objective(
                         backup_cbf_overrides=backup_overrides,
                         robot_spec_overrides=robot_overrides,
                         run_label=run_label,
+                        baseline_alias=baseline_alias,
                     ),
                 ): idx
                 for idx in batch_indices
@@ -1002,6 +1100,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--model", required=True, choices=["di", "uni"])
+    parser.add_argument(
+        "--tuning-mode",
+        choices=TUNING_MODES,
+        default="controller",
+        help=(
+            "Tune the full controller profile or only the DI terminal-relax "
+            "weight and cap while loading the committed hard-OCBF profile."
+        ),
+    )
     parser.add_argument("--trials", type=int, default=40)
     parser.add_argument(
         "--n-rand",
@@ -1054,6 +1161,8 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--idx-end must be >= --idx-start")
     if args.trials <= 0 or args.workers <= 0 or args.batch_size <= 0:
         raise ValueError("trials, workers, and batch-size must be positive")
+    if args.tuning_mode == "terminal_relax" and args.model != "di":
+        raise ValueError("--tuning-mode terminal_relax requires --model di")
 
     model_cfg = MODEL_DEFAULTS[args.model]
     n_rand = (
@@ -1066,8 +1175,13 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    study_prefix = (
+        "ocbf_terminal_relax"
+        if args.tuning_mode == "terminal_relax"
+        else "ocbf_crowd"
+    )
     study_name = args.study_name or (
-        f"ocbf_crowd_{args.model}_n{n_rand}_{timestamp}"
+        f"{study_prefix}_{args.model}_n{n_rand}_{timestamp}"
     )
     wandb_group = args.wandb_group or f"ocbf_crowd_{timestamp}"
     wandb_name = args.wandb_name or f"{args.model}_n{n_rand}"
@@ -1082,7 +1196,11 @@ def main(argv: list[str] | None = None) -> int:
 
     fixed_run_config = {
         "scenario": "crowd",
-        "baseline": "occlusion_cbf",
+        "baseline": (
+            "occlusion_cbf_terminal_relax"
+            if args.tuning_mode == "terminal_relax"
+            else "occlusion_cbf"
+        ),
         "model": args.model,
         "model_name": model_cfg["display_name"],
         "study_name": study_name,
@@ -1124,14 +1242,30 @@ def main(argv: list[str] | None = None) -> int:
             ],
             "enable_visible_hocbf_in_occ": True,
         },
-        "search_space": SEARCH_SPACE[args.model],
+        "search_space": (
+            TERMINAL_RELAX_GRID
+            if args.tuning_mode == "terminal_relax"
+            else SEARCH_SPACE[args.model]
+        ),
         "fixed_ocbf": FIXED_OCBF_CONFIG,
         "sampler": {
-            "name": "TPESampler",
+            "name": (
+                "GridSampler"
+                if args.tuning_mode == "terminal_relax"
+                else "TPESampler"
+            ),
             "seed": int(args.sampler_seed),
         },
         "pruner": {
-            "name": "NopPruner" if args.disable_pruning else "MedianPruner",
+            "name": (
+                "NopPruner"
+                if args.disable_pruning
+                else (
+                    "LatestStepMedianPruner"
+                    if args.tuning_mode == "terminal_relax"
+                    else "MedianPruner"
+                )
+            ),
             "startup_trials": int(args.pruner_startup_trials),
             "warmup_cases": int(args.pruner_warmup_cases),
             "interval_cases": int(args.pruner_interval_cases),
@@ -1139,6 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "source_commit": source_commit,
         "source_fingerprint": source_fingerprint,
+        "tuning_mode": args.tuning_mode,
         "source_dir": os.environ.get("OCBF_SOURCE_DIR", str(Path.cwd())),
         "command": sys.argv,
     }
@@ -1157,9 +1292,22 @@ def main(argv: list[str] | None = None) -> int:
                 f"{existing_fingerprint!r}, requested {config_fingerprint!r}"
             )
 
-    sampler = TPESampler(seed=int(args.sampler_seed))
+    if args.tuning_mode == "terminal_relax":
+        sampler = GridSampler(
+            TERMINAL_RELAX_GRID,
+            seed=int(args.sampler_seed),
+        )
+    else:
+        sampler = TPESampler(seed=int(args.sampler_seed))
     if args.disable_pruning:
         pruner = NopPruner()
+    elif args.tuning_mode == "terminal_relax":
+        pruner = LatestStepMedianPruner(
+            n_startup_trials=int(args.pruner_startup_trials),
+            n_warmup_steps=int(args.pruner_warmup_cases),
+            interval_steps=int(args.pruner_interval_cases),
+            n_min_trials=4,
+        )
     else:
         pruner = MedianPruner(
             n_startup_trials=int(args.pruner_startup_trials),
@@ -1226,7 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
         name=str(wandb_name),
         config=fixed_run_config,
     )
-    if len(study.trials) == 0:
+    if len(study.trials) == 0 and args.tuning_mode == "controller":
         for incumbent in model_cfg["incumbents"]:
             study.enqueue_trial(dict(incumbent))
 
@@ -1271,6 +1419,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=output_dir,
         wandb_run=wandb_run,
         fixed_run_config=fixed_run_config,
+        tuning_mode=args.tuning_mode,
     )
 
     try:

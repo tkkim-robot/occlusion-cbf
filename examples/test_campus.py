@@ -39,7 +39,11 @@ except ImportError:
 
     import test_crowd_narrow as crowd_narrow
 
-from position_control.ocbf.defaults import merge_ocbf_best_parameters
+from position_control.ocbf.defaults import (
+    apply_ocbf_method_defaults,
+    is_ocbf_controller_name,
+    merge_ocbf_best_parameters,
+)
 
 
 ENV_WIDTH = 15.0
@@ -395,7 +399,12 @@ def run_campus_scenario(
     )
 
     pos_name = str((controller_type or {}).get("pos", "")).strip().lower()
-    if pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}:
+    if is_ocbf_controller_name(pos_name):
+        backup_cbf_overrides = apply_ocbf_method_defaults(
+            pos_name,
+            model_name,
+            backup_cbf_overrides,
+        )
         merged_backup_overrides, merged_robot_overrides = (
             merge_ocbf_best_parameters(
                 model_name,

@@ -39,6 +39,7 @@ def default_benchmark_workers(cpu_count: int | None = None) -> int:
 
 CROWD_BASELINE_MAP = {
     "occlusion_cbf": "occlusion_cbf_qp",
+    "occlusion_cbf_terminal_relax": "occlusion_cbf_terminal_relax",
     "cbf_qp": "cbf_qp",
     "oa_mpc": "oa_mpc",
     "single_risk_mpc": "single_risk_mpc",
@@ -49,6 +50,7 @@ CROWD_BASELINE_MAP = {
 CROWD_ALGO_CHOICES = tuple(
     [
         "occlusion_cbf_qp",
+        "occlusion_cbf_terminal_relax",
         "cbf_qp",
         "oa_mpc",
         "single_risk_mpc",
@@ -60,6 +62,7 @@ CROWD_BASELINE_CHOICES = tuple(CROWD_BASELINE_MAP.keys())
 
 CROWD_PLANNER_LABELS = {
     "occlusion_cbf_qp": "Occlusion CBF-QP",
+    "occlusion_cbf_terminal_relax": "Occlusion CBF-QP (relaxed terminal)",
     "cbf_qp": "CBF-QP",
     "oa_mpc": "OA-MPC",
     "single_risk_mpc": "Single-Hypothesis MPC",
@@ -69,6 +72,7 @@ CROWD_PLANNER_LABELS = {
 
 CROSSWALK_BASELINE_MAP = {
     "occlusion_cbf": "occlusion_cbf_qp",
+    "occlusion_cbf_terminal_relax": "occlusion_cbf_terminal_relax",
     "cbf_qp": "cbf_qp",
     "oa_mpc": "oa_mpc",
 }

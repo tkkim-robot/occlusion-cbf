@@ -55,6 +55,7 @@ from position_control.ocbf.defaults import (
     OCBF_VREF_SCENARIO_WEIGHT_MODES,
     OCBF_VREF_TRACKING_MODES,
     apply_crowd_ocbf_defaults,
+    is_ocbf_controller_name,
 )
 
 ENV_WIDTH = 30.0
@@ -94,8 +95,7 @@ def _is_ocbf_controller(controller_type):
         name = controller_type.get("pos", "")
     else:
         name = controller_type
-    name = str(name).strip().lower()
-    return name in {"occlusion_cbf", "occlusion_cbf_qp"}
+    return is_ocbf_controller_name(name)
 
 
 def _sample_small_dyn_speed(rng, speed_max=SMALL_DYN_SPEED_MAX, speed_min=SMALL_DYN_SPEED_MIN):

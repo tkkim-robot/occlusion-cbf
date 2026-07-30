@@ -39,6 +39,8 @@ from position_control.ocbf.defaults import (
     OCBF_VREF_FRONT_MODES,
     OCBF_VREF_SCENARIO_WEIGHT_MODES,
     OCBF_VREF_TRACKING_MODES,
+    apply_ocbf_method_defaults,
+    is_ocbf_controller_name,
     merge_shared_robot_parameters,
     merge_ocbf_best_parameters,
 )
@@ -1035,7 +1037,7 @@ def _prepare_crowd_runtime(
 
     requested_pos_name = str(controller_type.get("pos", "")).strip().lower()
     is_oa_mpc = requested_pos_name == "oa_mpc"
-    is_ocbf = requested_pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}
+    is_ocbf = is_ocbf_controller_name(requested_pos_name)
 
     mk = str(model_key).strip().lower()
     if mk in {"di", "doubleintegrator2d"}:
@@ -1114,6 +1116,11 @@ def _prepare_crowd_runtime(
         backup_cbf_overrides = {}
     else:
         backup_cbf_overrides = dict(backup_cbf_overrides)
+    backup_cbf_overrides = apply_ocbf_method_defaults(
+        requested_pos_name,
+        model,
+        backup_cbf_overrides,
+    )
     if vref_front_mode_occ is not None:
         backup_cbf_overrides["vref_front_mode_occ"] = str(vref_front_mode_occ).strip().lower()
     if robot_spec_overrides is None:

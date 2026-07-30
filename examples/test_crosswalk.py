@@ -28,7 +28,11 @@ except ImportError:
 REPO_ROOT = ensure_repo_root()
 LocalTrackingControllerDyn_OCC = load_local_occ_controller("crosswalk")
 from base_control.utils import env, plotting
-from position_control.ocbf.defaults import merge_ocbf_best_parameters
+from position_control.ocbf.defaults import (
+    apply_ocbf_method_defaults,
+    is_ocbf_controller_name,
+    merge_ocbf_best_parameters,
+)
 
 BUS_TYPES = [0, 1]  # 0: bus occlusion off, 1: bus occlusion on
 
@@ -48,6 +52,8 @@ def _crosswalk_plot_title(controller_type):
     pos_name = str((controller_type or {}).get("pos", "")).strip().lower()
     if pos_name == "occlusion_cbf_qp":
         return "Occlusion-Aware CBF"
+    if pos_name == "occlusion_cbf_terminal_relax":
+        return "Occlusion-Aware CBF (Relaxed Terminal)"
     if pos_name == "cbf_qp":
         return "CBF-QP (Occlusion-agnostic)"
     if pos_name == "oa_mpc":
@@ -450,11 +456,16 @@ def crosswalk_scenario_v3(
                 }
             )
         pos_name = str(controller_type.get("pos", "")).strip().lower()
-        if pos_name in {"occlusion_cbf", "occlusion_cbf_qp"}:
+        if is_ocbf_controller_name(pos_name):
+            backup_overrides = apply_ocbf_method_defaults(
+                pos_name,
+                robot_spec["model"],
+            )
             tuned_backup, tuned_robot = merge_ocbf_best_parameters(
                 robot_spec["model"],
                 backup_defaults=robot_spec["backup_cbf"],
                 robot_defaults=robot_spec,
+                backup_overrides=backup_overrides,
             )
             robot_spec = tuned_robot
             robot_spec["backup_cbf"] = tuned_backup

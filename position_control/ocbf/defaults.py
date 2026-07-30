@@ -45,6 +45,17 @@ OCBF_DEFAULT_ROLLOUT_MODE = "common"
 
 CROWD_ENABLE_VISIBLE_HOCBF_DEFAULT = True
 
+OCBF_TERMINAL_RELAX_CONTROLLER = "occlusion_cbf_terminal_relax"
+OCBF_TERMINAL_RELAX_DEFAULTS = {
+    "terminal_slack_weight": 20.0,
+    "terminal_slack_max": 2.0,
+    "obs_hocbf_slack_max": 0.0,
+    "occ_rollout_slack_max": 0.0,
+}
+OCBF_CONTROLLER_NAMES = frozenset(
+    {"occlusion_cbf", "occlusion_cbf_qp", OCBF_TERMINAL_RELAX_CONTROLLER}
+)
+
 OCBF_PARAMETER_DIR = Path(__file__).resolve().parent / "config"
 OCBF_BEST_PARAMETER_FILES = {
     "DoubleIntegrator2D": OCBF_PARAMETER_DIR / "occlusion_cbf_di_params.yaml",
@@ -73,6 +84,39 @@ def default_visible_hocbf_for_scenario(scenario_label):
     """Visible-obstacle HOCBF is part of the canonical crowd benchmark default."""
     scenario = str(scenario_label).strip().lower()
     return CROWD_ENABLE_VISIBLE_HOCBF_DEFAULT if scenario == "crowd" else False
+
+
+def is_ocbf_controller_name(controller_name):
+    """Return whether a controller token selects an Occlusion-CBF variant."""
+    return str(controller_name).strip().lower() in OCBF_CONTROLLER_NAMES
+
+
+def apply_ocbf_method_defaults(controller_name, model_key, backup_overrides=None):
+    """Apply method-specific settings while keeping nonterminal rows hard."""
+    cfg = dict(backup_overrides or {})
+    controller = str(controller_name).strip().lower()
+    if controller != OCBF_TERMINAL_RELAX_CONTROLLER:
+        return cfg
+
+    model_name = _canonical_tuned_model(model_key)
+    if model_name != "DoubleIntegrator2D":
+        raise ValueError(
+            "occlusion_cbf_terminal_relax is defined only for the "
+            "DoubleIntegrator2D model."
+        )
+
+    cfg.setdefault(
+        "terminal_slack_weight",
+        OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_weight"],
+    )
+    cfg.setdefault(
+        "terminal_slack_max",
+        OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_max"],
+    )
+    # These are method invariants: only the predictive terminal rows may relax.
+    cfg["obs_hocbf_slack_max"] = 0.0
+    cfg["occ_rollout_slack_max"] = 0.0
+    return cfg
 
 
 def apply_crowd_ocbf_defaults(backup_cbf_overrides):
