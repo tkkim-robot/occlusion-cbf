@@ -1,6 +1,6 @@
 # Crowd Benchmark — Final Results
 
-Updated: 2026-07-29
+Updated: 2026-07-30
 
 Each configuration contains 100 deterministic cases (seed 42, case indices
 1–100) in the `crowd` forced-emergence scenario. Therefore, every integer count
@@ -18,6 +18,7 @@ Each cell is `Success / Collision / Infeasible`.
 | OACP-MPC | 46 / 2 / 52 | 17 / 6 / 77 | 5 / 6 / 89 | 56 / 43 / 1 | 30 / 70 / 0 | 14 / 86 / 0 |
 | OA-MPC | 0 / 1 / 99 | 0 / 1 / 99 | 0 / 3 / 97 | 0 / 15 / 85 | 0 / 7 / 93 | 0 / 6 / 94 |
 | **Occlusion-CBF (ours)** | **97 / 0 / 3** | **87 / 0 / 13** | **67 / 0 / 33** | **84 / 1 / 15** | **73 / 0 / 27** | **69 / 0 / 31** |
+| **Occlusion-CBF, relaxed terminal (ours)** | **98 / 0 / 2** | **88 / 0 / 12** | **72 / 0 / 28** | — | — | — |
 
 ## Full-sweep diagnostic compute time
 
@@ -32,6 +33,7 @@ by each full benchmark JSON:
 | OACP-MPC | 467.320 | 475.335 | 492.642 | 382.776 | 401.473 | 415.196 |
 | OA-MPC | 297.126 | 549.251 | 709.609 | 258.884 | 407.638 | 482.560 |
 | Occlusion-CBF (ours) | 9.467 | 15.645 | 22.254 | 21.861 | 28.049 | 33.594 |
+| Occlusion-CBF, relaxed terminal (ours) | 9.836 | 16.400 | 23.410 | — | — | — |
 
 These timings are diagnostic measurements from 10-worker full sweeps pinned to
 physical CPUs 0–9. They average all controller steps, include cold/JIT steps,
@@ -83,9 +85,13 @@ Raw warmed timing artifacts:
 - Occlusion-CBF results are under
   `../../ocbf_tuned_benchmark_20260728_145048/<case>/` and were produced from
   commit `80eb3dc05565690e192da1f6f4e9f76ade12f96b`.
+- Terminal-relaxed Occlusion-CBF results are under
+  `../../ocbf_terminal_relax_benchmark_20260729/<case>/` and were produced
+  from commit `821a4314104a2796628e8b760d706da6d2e17e26`. This method is
+  defined only for Double Integrator dynamics.
 - OA-MPC results are under `results/<case>/` and were rerun from the exact
   committed source snapshot `8481eb86fd9185a551c199c4a44a20fe712785af`.
-- All 36 method/configuration JSON summaries contain 100 trials. Their paired
+- All 39 method/configuration JSON summaries contain 100 trials. Their paired
   CSV files contain exactly the unique indices 1–100, summary counts agree with
   the row classifications, and no row contains an exception.
 
