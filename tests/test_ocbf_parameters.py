@@ -12,12 +12,16 @@ from examples import test_crowd_narrow
 from examples import test_crosswalk
 from examples import test_vis_ocbf
 from position_control.ocbf.defaults import (
+    OCBF_TERMINAL_RELAX_CONTROLLER,
+    OCBF_TERMINAL_RELAX_DEFAULTS,
     apply_ocbf_best_parameters,
+    apply_ocbf_method_defaults,
     load_ocbf_best_parameters,
     load_shared_robot_parameters,
     merge_shared_robot_parameters,
     merge_ocbf_best_parameters,
 )
+from position_control.occlusion_cbf_qp import OcclusionCBFQP
 
 
 class OCBFParameterTests(unittest.TestCase):
@@ -192,6 +196,95 @@ class OCBFParameterTests(unittest.TestCase):
         cbf_backup = cbf_runtime["robot_spec"]["backup_cbf"]
         self.assertEqual(cbf_backup["T_horizon"], 0.5)
         self.assertNotIn("k_p_occ_di", cbf_backup)
+
+    def test_terminal_relax_runtime_changes_only_terminal_slack_settings(self):
+        common = {
+            "rand_obs": False,
+            "n_rand": 0,
+            "known_obs_override": np.empty((0, 8), dtype=float),
+            "obs_meta_override": [],
+            "scenario_diag_override": {},
+            "occ_enable_visible_hocbf": None,
+        }
+        hard_runtime = test_crowd_narrow._prepare_crowd_runtime(
+            controller_type={"pos": "occlusion_cbf_qp"},
+            model_key="di",
+            **common,
+        )
+        relaxed_runtime = test_crowd_narrow._prepare_crowd_runtime(
+            controller_type={"pos": OCBF_TERMINAL_RELAX_CONTROLLER},
+            model_key="di",
+            **common,
+        )
+
+        hard = dict(hard_runtime["robot_spec"]["backup_cbf"])
+        relaxed = dict(relaxed_runtime["robot_spec"]["backup_cbf"])
+        ignored = {
+            "terminal_slack_weight",
+            "terminal_slack_max",
+            "obs_hocbf_slack_max",
+            "occ_rollout_slack_max",
+        }
+        self.assertEqual(
+            {key: value for key, value in hard.items() if key not in ignored},
+            {
+                key: value
+                for key, value in relaxed.items()
+                if key not in ignored
+            },
+        )
+        self.assertEqual(hard["terminal_slack_weight"], 0.0)
+        self.assertGreater(relaxed["terminal_slack_weight"], 0.0)
+        self.assertGreater(relaxed["terminal_slack_max"], 0.0)
+        self.assertEqual(relaxed["obs_hocbf_slack_max"], 0.0)
+        self.assertEqual(relaxed["occ_rollout_slack_max"], 0.0)
+        self.assertEqual(
+            relaxed["terminal_slack_weight"],
+            OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_weight"],
+        )
+        self.assertEqual(
+            relaxed["terminal_slack_max"],
+            OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_max"],
+        )
+
+    def test_terminal_relax_is_di_only_and_forces_nonterminal_caps_hard(self):
+        overrides = apply_ocbf_method_defaults(
+            OCBF_TERMINAL_RELAX_CONTROLLER,
+            "di",
+            {
+                "terminal_slack_weight": 20.0,
+                "terminal_slack_max": 2.0,
+                "obs_hocbf_slack_max": 3.0,
+                "occ_rollout_slack_max": 4.0,
+            },
+        )
+        self.assertEqual(overrides["terminal_slack_weight"], 20.0)
+        self.assertEqual(overrides["terminal_slack_max"], 2.0)
+        self.assertEqual(overrides["obs_hocbf_slack_max"], 0.0)
+        self.assertEqual(overrides["occ_rollout_slack_max"], 0.0)
+
+        with self.assertRaisesRegex(ValueError, "only.*DoubleIntegrator2D"):
+            apply_ocbf_method_defaults(
+                OCBF_TERMINAL_RELAX_CONTROLLER,
+                "uni",
+            )
+
+    def test_terminal_relax_slack_mask_only_opens_terminal_rows(self):
+        controller = object.__new__(OcclusionCBFQP)
+        controller._terminal_slack_enabled = True
+        controller.terminal_slack_max = 0.5
+        controller.obs_hocbf_slack_max = 0.0
+        controller.occ_rollout_slack_max = 0.0
+
+        bounds = controller._build_terminal_slack_ub(
+            [
+                {"kind": "obs_hocbf"},
+                {"kind": "occ"},
+                {"kind": "terminal"},
+                {"kind": "corridor"},
+            ]
+        )
+        np.testing.assert_allclose(bounds[:, 0], [0.0, 0.0, 0.5, 0.0])
 
     def test_crowd_runtime_shares_only_canonical_model_values(self):
         common = {
@@ -378,12 +471,27 @@ class OCBFParameterTests(unittest.TestCase):
                     occ_T_horizon=0.75,
                 )
 
-        uni_spec, di_spec = captured_specs
+            with self.assertRaisesRegex(RuntimeError, "configuration captured"):
+                test_crosswalk.crosswalk_scenario_v3(
+                    controller_type={"pos": OCBF_TERMINAL_RELAX_CONTROLLER},
+                    model_key="di",
+                    enable_plot=False,
+                )
+
+        uni_spec, di_spec, relaxed_di_spec = captured_specs
         self.assertEqual(uni_spec["backup_cbf"]["T_horizon"], 2.0)
         self.assertEqual(uni_spec["backup_cbf"]["max_active_occlusions"], 5)
         self.assertEqual(uni_spec["v_min"], 0.0)
         self.assertEqual(di_spec["backup_cbf"]["T_horizon"], 0.75)
         self.assertEqual(di_spec["backup_cbf"]["max_active_occlusions"], 10)
+        self.assertEqual(
+            relaxed_di_spec["backup_cbf"]["terminal_slack_weight"],
+            OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_weight"],
+        )
+        self.assertEqual(
+            relaxed_di_spec["backup_cbf"]["terminal_slack_max"],
+            OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_max"],
+        )
 
     def test_visualization_defaults_to_yaml(self):
         parser = test_vis_ocbf.build_arg_parser()

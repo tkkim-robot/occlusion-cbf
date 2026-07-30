@@ -347,9 +347,21 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         requested_pos_type = str(
             (controller_type or {}).get("pos", "cbf_qp")
         ).strip().lower() or "cbf_qp"
-        if requested_pos_type in {"occlusion_cbf", "occlusion_cbf_qp"}:
-            from position_control.ocbf.defaults import apply_ocbf_best_parameters
+        if requested_pos_type in {
+            "occlusion_cbf",
+            "occlusion_cbf_qp",
+            "occlusion_cbf_terminal_relax",
+        }:
+            from position_control.ocbf.defaults import (
+                apply_ocbf_best_parameters,
+                apply_ocbf_method_defaults,
+            )
 
+            robot_spec["backup_cbf"] = apply_ocbf_method_defaults(
+                requested_pos_type,
+                robot_spec.get("model"),
+                robot_spec.get("backup_cbf"),
+            )
             apply_ocbf_best_parameters(robot_spec)
         # Build the shared tracking state with the in-tree baseline controller,
         # then replace it with the explicitly requested project controller.
@@ -365,7 +377,10 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         self.pos_controller_type = requested_pos_type
         if requested_pos_type == 'cbf_qp':
             self.pos_controller = LocalCBFQP(self.robot, self.robot_spec, num_obs=self.num_constraints)
-        elif requested_pos_type == 'occlusion_cbf_qp':
+        elif requested_pos_type in {
+            "occlusion_cbf_qp",
+            "occlusion_cbf_terminal_relax",
+        }:
             from position_control.occlusion_cbf_qp import OcclusionCBFQP
             self.pos_controller = OcclusionCBFQP(self.robot, self.robot_spec, num_obs=30)
         elif requested_pos_type == 'oa_mpc':
@@ -1972,6 +1987,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         controller_type = str(getattr(self, "pos_controller_type", "")).strip().lower()
         controller_label_map = {
             "occlusion_cbf_qp": "Occlusion CBF-QP",
+            "occlusion_cbf_terminal_relax": "Occlusion CBF-QP (relaxed terminal)",
             "cbf_qp": "CBF-QP",
             "oa_mpc": "OA-MPC",
             "single_risk_mpc": "Single-Hypothesis MPC",
@@ -1983,7 +1999,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         if intervention == "u_ref":
             policy_text = "Nominal (u_ref)"
         elif intervention == "backup_qp":
-            if controller_type in {"occlusion_cbf_qp", "cbf_qp"}:
+            if controller_type in {"occlusion_cbf_qp", "occlusion_cbf_terminal_relax", "cbf_qp"}:
                 policy_text = f"Safety Filter ({controller_label})"
             elif controller_type in {"oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"}:
                 policy_text = f"MPC ({controller_label})"
@@ -1992,7 +2008,7 @@ class LocalTrackingControllerDyn_OCC(LocalTrackingControllerDyn):
         elif intervention == "backup_fallback":
             policy_text = f"Fallback ({controller_label})"
         elif intervention in controller_label_map:
-            if intervention in {"occlusion_cbf_qp", "cbf_qp"}:
+            if intervention in {"occlusion_cbf_qp", "occlusion_cbf_terminal_relax", "cbf_qp"}:
                 policy_text = f"Safety Filter ({controller_label_map.get(intervention, str(intervention))})"
             else:
                 policy_text = f"MPC ({controller_label_map.get(intervention, str(intervention))})"

@@ -84,6 +84,7 @@ TRAJ_CMAPS = [
 
 TRAJ_CMAPS_BY_BASELINE = {
     "occlusion_cbf_qp": "trajectory_red_pink",
+    "occlusion_cbf_terminal_relax": "trajectory_red_pink",
     "cbf_qp": "trajectory_yellow",
     "oa_mpc": "Greens",
     "single_risk_mpc": "Blues",
@@ -101,6 +102,7 @@ STATUS_COLORS = {
 
 TRACKING_LABELS = {
     "occlusion_cbf_qp": "Occlusion CBF-QP",
+    "occlusion_cbf_terminal_relax": "OCBF (relaxed terminal)",
     "cbf_qp": "CBF-QP",
     "oa_mpc": "OA-MPC",
     "single_risk_mpc": "Single-Hypothesis MPC",
@@ -109,7 +111,7 @@ TRACKING_LABELS = {
 }
 
 _MPC_BASELINES = {"oa_mpc", "single_risk_mpc", "control_tree_mpc", "oacp_mpc"}
-_QP_BASELINES = {"occlusion_cbf_qp", "cbf_qp"}
+_QP_BASELINES = {"occlusion_cbf_qp", "occlusion_cbf_terminal_relax", "cbf_qp"}
 
 
 def _copy_obs_meta(obs_meta):

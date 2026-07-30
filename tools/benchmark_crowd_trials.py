@@ -50,7 +50,9 @@ from position_control.ocbf.defaults import (
     OCBF_VREF_FRONT_MODES,
     OCBF_VREF_SCENARIO_WEIGHT_MODES,
     apply_crowd_ocbf_defaults,
+    apply_ocbf_method_defaults,
     default_visible_hocbf_for_scenario,
+    is_ocbf_controller_name,
 )
 
 BASELINE_MAP = dict(CROWD_BASELINE_MAP)
@@ -65,7 +67,16 @@ SUITE_NON_OCC_5 = [
 
 
 def _is_ocbf_baseline(baseline_alias: str) -> bool:
-    return str(BASELINE_MAP.get(str(baseline_alias), baseline_alias)).strip().lower() == "occlusion_cbf_qp"
+    return is_ocbf_controller_name(
+        BASELINE_MAP.get(str(baseline_alias), baseline_alias)
+    )
+
+
+def _resolve_controller_for_model(baseline_alias: str, model: str) -> str:
+    """Resolve a benchmark method and reject unsupported dynamics up front."""
+    controller_pos = BASELINE_MAP[str(baseline_alias)]
+    apply_ocbf_method_defaults(controller_pos, model)
+    return controller_pos
 
 
 def _load_run_crowd_scenario(scenario_name: str):
@@ -193,12 +204,12 @@ def _run_baseline_sweep(
     out_dir: Path,
     ts: str,
 ) -> dict[str, Any]:
+    controller_pos = _resolve_controller_for_model(baseline_alias, model)
     _, scenario_label = _load_run_crowd_scenario(scenario_name)
     if occ_enable_visible_hocbf is None and not _is_ocbf_baseline(str(baseline_alias)):
         occ_enable_visible_hocbf = default_visible_hocbf_for_scenario(scenario_label)
     if str(scenario_label).strip().lower() == "crowd" and _is_ocbf_baseline(str(baseline_alias)):
         backup_cbf_overrides = apply_crowd_ocbf_defaults(backup_cbf_overrides)
-    controller_pos = BASELINE_MAP[str(baseline_alias)]
     stem = f"crowd_trials_{run_label}_{seed}_{idx_start}_{idx_end}_{ts}"
     rows_path = out_dir / f"{stem}.csv"
     summary_path = out_dir / f"{stem}.json"
@@ -458,6 +469,10 @@ def _run_baseline_sweep(
             "forced_occluder_radius_max": float(forced_occluder_radius_max),
             "forced_validate_occlusion": bool(forced_validate_occlusion),
             "forced_require_corridor_conflict": bool(forced_require_corridor_conflict),
+            "ocbf_method_defaults": apply_ocbf_method_defaults(
+                controller_pos,
+                model,
+            ),
             "backup_cbf_overrides": backup_cbf_overrides,
             "robot_spec_overrides": robot_spec_overrides,
             "classification": {

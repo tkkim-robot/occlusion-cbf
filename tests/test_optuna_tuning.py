@@ -10,8 +10,10 @@ import optuna
 from tools.tune_ocbf_optuna import (
     ACTIVE_OCCLUSION_CHOICES,
     FIXED_OCBF_CONFIG,
+    LatestStepMedianPruner,
     MODEL_DEFAULTS,
     SEARCH_SPACE,
+    TERMINAL_RELAX_GRID,
     TrialCaseError,
     build_controller_overrides,
     compatibility_fingerprint,
@@ -165,6 +167,56 @@ class OptunaTuningTests(unittest.TestCase):
                         backup["vref_tracking_mode_occ_uni"],
                         "gated",
                     )
+
+    def test_terminal_relax_mode_samples_only_terminal_slack(self):
+        params = {
+            "terminal_slack_weight": 10.0,
+            "terminal_slack_max": 2.0,
+        }
+        sampled = sample_hyperparameters(
+            optuna.trial.FixedTrial(params),
+            "di",
+            "terminal_relax",
+        )
+        self.assertEqual(sampled, params)
+        self.assertEqual(
+            set(TERMINAL_RELAX_GRID),
+            {"terminal_slack_weight", "terminal_slack_max"},
+        )
+
+        backup, robot = build_controller_overrides(
+            "di",
+            sampled,
+            "terminal_relax",
+        )
+        self.assertEqual(backup["terminal_slack_weight"], 10.0)
+        self.assertEqual(backup["terminal_slack_max"], 2.0)
+        self.assertEqual(backup["obs_hocbf_slack_max"], 0.0)
+        self.assertEqual(backup["occ_rollout_slack_max"], 0.0)
+        self.assertEqual(robot, {})
+
+    def test_latest_step_pruner_compares_equal_case_prefixes(self):
+        pruner = LatestStepMedianPruner(
+            n_startup_trials=4,
+            n_warmup_steps=20,
+            interval_steps=10,
+            n_min_trials=4,
+        )
+        study = optuna.create_study(direction="minimize", pruner=pruner)
+        for value in (8000.0, 8500.0, 9000.0, 9500.0):
+            trial = study.ask()
+            trial.report(value, step=20)
+            study.tell(trial, value)
+
+        weak = study.ask()
+        weak.report(1000.0, step=10)
+        weak.report(10000.0, step=20)
+        self.assertTrue(weak.should_prune())
+
+        competitive = study.ask()
+        competitive.report(1000.0, step=10)
+        competitive.report(8000.0, step=20)
+        self.assertFalse(competitive.should_prune())
 
 
 if __name__ == "__main__":
