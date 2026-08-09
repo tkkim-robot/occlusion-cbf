@@ -1249,7 +1249,7 @@ def _prepare_crowd_runtime(
     if crowd_mode == "forced_emergence":
         robot_spec["v_adv_max_occ"] = 1.0
         dyn_cfg = robot_spec.setdefault("crowd_dyn_obs", {})
-        dyn_cfg["occluded_speed_boost_enable"] = True
+        dyn_cfg.setdefault("occluded_speed_boost_enable", False)
         dyn_cfg["occluded_speed_boost_vmax"] = float(robot_spec.get("v_obs_max", robot_spec["v_adv_max_occ"]))
         dyn_cfg["occluded_speed_boost_exact"] = True
         dyn_cfg["occluded_speed_boost_fov_only"] = True
