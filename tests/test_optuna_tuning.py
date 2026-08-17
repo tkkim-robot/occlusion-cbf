@@ -6,6 +6,9 @@ import unittest
 
 import numpy as np
 import optuna
+from optuna.pruners import NopPruner
+
+from position_control.ocbf.defaults import load_ocbf_best_parameters
 
 from tools.tune_ocbf_optuna import (
     ACTIVE_OCCLUSION_CHOICES,
@@ -16,9 +19,11 @@ from tools.tune_ocbf_optuna import (
     TERMINAL_RELAX_GRID,
     TrialCaseError,
     build_controller_overrides,
+    build_study_pruner,
     compatibility_fingerprint,
     lexicographic_score,
     sample_hyperparameters,
+    selected_profile_parameters,
     validate_case_rows,
 )
 
@@ -38,12 +43,12 @@ class OptunaTuningTests(unittest.TestCase):
             avg_compute_time_ms=999999.0,
         )
         self.assertLess(
-            slower_but_fewer_collisions,
             faster_but_more_collisions,
+            slower_but_fewer_collisions,
         )
 
         more_success = lexicographic_score(
-            collision_count=0,
+            collision_count=49,
             success_count=51,
             evaluated_count=100,
             avg_compute_time_ms=999999.0,
@@ -55,6 +60,20 @@ class OptunaTuningTests(unittest.TestCase):
             avg_compute_time_ms=0.0,
         )
         self.assertLess(more_success, less_success)
+
+        fewer_collisions = lexicographic_score(
+            collision_count=0,
+            success_count=50,
+            evaluated_count=100,
+            avg_compute_time_ms=999999.0,
+        )
+        more_collisions = lexicographic_score(
+            collision_count=1,
+            success_count=50,
+            evaluated_count=100,
+            avg_compute_time_ms=0.0,
+        )
+        self.assertLess(fewer_collisions, more_collisions)
 
         faster = lexicographic_score(
             collision_count=0,
@@ -88,22 +107,103 @@ class OptunaTuningTests(unittest.TestCase):
             "vref_tracking_mode_occ_uni",
             SEARCH_SPACE["uni"],
         )
+        self.assertEqual(
+            FIXED_OCBF_CONFIG["osqp_cache_update_guard"],
+            "checked_rebuild_on_rejection",
+        )
+        self.assertEqual(
+            FIXED_OCBF_CONFIG["qp_solution_certificate"],
+            "current_cbf_slack_input_post_clip",
+        )
 
     def test_model_profiles_use_requested_obstacle_counts(self):
         self.assertEqual(MODEL_DEFAULTS["di"]["n_rand"], 50)
         self.assertEqual(MODEL_DEFAULTS["uni"]["n_rand"], 30)
 
     def test_active_occlusion_choices_match_tuning_contract(self):
-        self.assertEqual(ACTIVE_OCCLUSION_CHOICES, [0, 3, 5, 10])
+        expected = {
+            "di": [3, 5, 10, 15, 20, 0],
+            "uni": [3, 5, 8, 10, 0],
+        }
+        self.assertEqual(ACTIVE_OCCLUSION_CHOICES, expected)
         for model in ("di", "uni"):
             self.assertEqual(
                 SEARCH_SPACE[model]["max_active_occlusions"]["choices"],
-                [0, 3, 5, 10],
+                expected[model],
             )
             for incumbent in MODEL_DEFAULTS[model]["incumbents"]:
                 self.assertIn(
                     incumbent["max_active_occlusions"],
-                    [0, 3, 5, 10],
+                    expected[model],
+                )
+
+    def test_search_spaces_match_controller_contract(self):
+        self.assertEqual(
+            SEARCH_SPACE["di"]["T_horizon"]["choices"],
+            [0.10, 0.15, 0.20, 0.25, 0.35, 0.50],
+        )
+        self.assertEqual(
+            SEARCH_SPACE["di"]["vref_scenario_softmax_kappa"]["choices"],
+            [5, 10, 15, 20, 30, 40],
+        )
+        self.assertEqual(
+            SEARCH_SPACE["di"]["k_p_occ_di"],
+            {"type": "float", "low": 1.0, "high": 6.0, "log": True},
+        )
+        self.assertEqual(
+            SEARCH_SPACE["di"]["k_d_occ_di"],
+            {"type": "float", "low": 0.35, "high": 2.5, "log": True},
+        )
+
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["T_horizon"]["choices"],
+            [1.0, 1.5, 2.0, 2.5, 3.0],
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["vref_scenario_softmax_kappa"]["choices"],
+            [0, 1, 2, 5, 10, 20],
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["k_theta_occ_uni_p"],
+            {"type": "float", "low": 0.25, "high": 2.5, "log": True},
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["k_theta_occ_uni_d"],
+            {"type": "float", "low": 0.0, "high": 0.5, "step": 0.025},
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["k_v_occ_uni_p"],
+            {"type": "float", "low": 0.8, "high": 2.5, "step": 0.05},
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["k_v_occ_uni_d"],
+            {"type": "float", "low": 0.1, "high": 0.4, "step": 0.02},
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["k_turn_boost_occ_uni"],
+            {"type": "float", "low": 0.3, "high": 1.8, "step": 0.1},
+        )
+        self.assertEqual(
+            SEARCH_SPACE["uni"]["turn_boost_angle_occ_uni"],
+            {
+                "type": "float",
+                "low": float(np.pi / 36.0),
+                "high": float(np.pi / 3.0),
+            },
+        )
+
+    def test_first_incumbents_are_derived_from_committed_profiles(self):
+        for model in ("di", "uni"):
+            with self.subTest(model=model):
+                backup = load_ocbf_best_parameters(model)["backup_cbf"]
+                expected = {
+                    name: backup[name]
+                    for name in SEARCH_SPACE[model]
+                }
+                self.assertEqual(selected_profile_parameters(model), expected)
+                self.assertEqual(
+                    MODEL_DEFAULTS[model]["incumbents"],
+                    [expected],
                 )
 
     def test_exception_rows_cannot_receive_an_objective(self):
@@ -117,7 +217,7 @@ class OptunaTuningTests(unittest.TestCase):
                 ]
             )
 
-    def test_compatibility_fingerprint_tracks_result_inputs_only(self):
+    def test_compatibility_fingerprint_makes_trial_target_immutable(self):
         base = {
             "model": "di",
             "study_name": "paper_di",
@@ -126,11 +226,13 @@ class OptunaTuningTests(unittest.TestCase):
             "timeout_s": 100,
         }
         fingerprint = compatibility_fingerprint(base)
+        self.assertNotEqual(
+            fingerprint,
+            compatibility_fingerprint({**base, "trials": 80}),
+        )
         self.assertEqual(
             fingerprint,
-            compatibility_fingerprint(
-                {**base, "trials": 80, "timeout_s": 200}
-            ),
+            compatibility_fingerprint({**base, "timeout_s": 200}),
         )
         self.assertNotEqual(
             fingerprint,
@@ -145,6 +247,7 @@ class OptunaTuningTests(unittest.TestCase):
                     optuna.trial.FixedTrial(params),
                     model,
                 )
+                self.assertEqual(sampled, params)
                 backup, robot = build_controller_overrides(model, sampled)
 
                 self.assertEqual(
@@ -217,6 +320,26 @@ class OptunaTuningTests(unittest.TestCase):
         competitive.report(1000.0, step=10)
         competitive.report(8000.0, step=20)
         self.assertFalse(competitive.should_prune())
+
+    def test_all_enabled_studies_use_equal_prefix_pruner(self):
+        enabled = build_study_pruner(
+            disable_pruning=False,
+            startup_trials=12,
+            warmup_cases=64,
+            interval_cases=32,
+        )
+        self.assertIsInstance(enabled, LatestStepMedianPruner)
+        self.assertEqual(enabled.n_startup_trials, 12)
+        self.assertEqual(enabled.n_warmup_steps, 64)
+        self.assertEqual(enabled.interval_steps, 32)
+
+        disabled = build_study_pruner(
+            disable_pruning=True,
+            startup_trials=12,
+            warmup_cases=64,
+            interval_cases=32,
+        )
+        self.assertIsInstance(disabled, NopPruner)
 
 
 if __name__ == "__main__":

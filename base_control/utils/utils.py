@@ -118,17 +118,17 @@ class Utils:
         return obs_list
 
     def is_intersect_rec(self, start, end, o, d, a, b):
-        v1 = [o[0] - a[0], o[1] - a[1]]
-        v2 = [b[0] - a[0], b[1] - a[1]]
-        v3 = [-d[1], d[0]]
+        offset = [o[0] - a[0], o[1] - a[1]]
+        edge = [b[0] - a[0], b[1] - a[1]]
+        ray_normal = [-d[1], d[0]]
 
-        div = np.dot(v2, v3)
+        div = np.dot(edge, ray_normal)
 
         if div == 0:
             return False
 
-        t1 = np.linalg.norm(np.cross(v2, v1)) / div
-        t2 = np.dot(v1, v3) / div
+        t1 = np.linalg.norm(np.cross(edge, offset)) / div
+        t2 = np.dot(offset, ray_normal) / div
 
         if t1 >= 0 and 0 <= t2 <= 1:
             shot = Node((o[0] + t1 * d[0], o[1] + t1 * d[1]))
@@ -161,14 +161,14 @@ class Utils:
         o, d = self.get_ray(start, end)
         obs_vertex = self.get_obs_vertex()
 
-        for (v1, v2, v3, v4) in obs_vertex:
-            if self.is_intersect_rec(start, end, o, d, v1, v2):
+        for (corner_a, corner_b, corner_c, corner_d) in obs_vertex:
+            if self.is_intersect_rec(start, end, o, d, corner_a, corner_b):
                 return True
-            if self.is_intersect_rec(start, end, o, d, v2, v3):
+            if self.is_intersect_rec(start, end, o, d, corner_b, corner_c):
                 return True
-            if self.is_intersect_rec(start, end, o, d, v3, v4):
+            if self.is_intersect_rec(start, end, o, d, corner_c, corner_d):
                 return True
-            if self.is_intersect_rec(start, end, o, d, v4, v1):
+            if self.is_intersect_rec(start, end, o, d, corner_d, corner_a):
                 return True
 
         for (x, y, r) in self.obs_circle:

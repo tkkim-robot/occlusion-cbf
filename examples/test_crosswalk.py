@@ -1,7 +1,7 @@
 """
 Crosswalk scenario test for the occlusion-aware CBF framework.
 
-This script ports the `crosswalk_scenario_v3` setup into this repo and keeps
+This script implements the crosswalk setup in this repo and keeps
 the scenario self-contained in this file.
 """
 
@@ -201,7 +201,7 @@ def _draw_crosswalk_scene(
     }
 
 
-def crosswalk_scenario_v3(
+def run_crosswalk_scenario(
     controller_type=None,
     model_key="di",
     enable_plot=True,
@@ -210,6 +210,7 @@ def crosswalk_scenario_v3(
     num_trials=100,
     seed=42,
     case_idx=None,
+    tf=400.0,
     save_animation=False,
     save_frame_ext="png",
     animation_subdir=None,
@@ -225,7 +226,6 @@ def crosswalk_scenario_v3(
     occ_T_horizon=None,
 ):
     """
-    [Scenario V3]
     1. Bus blocks lower-lane visibility (occlusion source)
     2. Opposite-lane cars move in a single lane without overlap
     3. Car speeds are randomized with a bounded maximum
@@ -983,7 +983,7 @@ def crosswalk_scenario_v3(
 
             tracking_controller.render_dyn_obs = types.MethodType(render_dyn_obs_with_bus, tracking_controller)
 
-        result = tracking_controller.run_all_steps(tf=400)
+        result = tracking_controller.run_all_steps(tf=float(tf))
         if trial_save_svg and fig is not None:
             svg_out = Path(trial_svg_path).expanduser() if trial_svg_path else _default_crosswalk_svg_path(
                 controller_type=controller_type,
@@ -1066,7 +1066,7 @@ def crosswalk_scenario_v3(
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run crosswalk_scenario_v3 in occlusion-cbf framework.")
+    parser = argparse.ArgumentParser(description="Run the crosswalk scenario.")
     parser.add_argument("--model", default="di", help="Model alias: di | uni | du")
     parser.add_argument("--controller", default="occlusion_cbf_qp", help="Position controller type.")
     parser.add_argument(
@@ -1089,6 +1089,12 @@ def main(argv=None):
     parser.add_argument("--batch-eval", action="store_true", help="Run batch search mode.")
     parser.add_argument("--num-trials", type=int, default=100, help="Number of batch trials.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument(
+        "--tf",
+        type=float,
+        default=400.0,
+        help="Maximum simulation time in seconds.",
+    )
     parser.add_argument(
         "--idx",
         "--case-idx",
@@ -1204,7 +1210,7 @@ def main(argv=None):
     # to save every animation frame as SVG rather than only the last snapshot.
     if args.save_animation and args.save_svg and save_frame_ext == "png":
         save_frame_ext = "svg"
-    crosswalk_scenario_v3(
+    run_crosswalk_scenario(
         controller_type=controller_type,
         model_key=model_key,
         enable_plot=not args.disable_plot,
@@ -1213,6 +1219,7 @@ def main(argv=None):
         num_trials=args.num_trials,
         seed=args.seed,
         case_idx=args.case_idx,
+        tf=args.tf,
         save_animation=args.save_animation,
         save_frame_ext=save_frame_ext,
         animation_subdir=args.animation_subdir,

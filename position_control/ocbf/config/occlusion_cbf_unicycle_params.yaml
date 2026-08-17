@@ -6,16 +6,16 @@ shared_robot_spec:
   v_min: 0.0
 
 backup_cbf:
-  T_horizon: 2.0
+  T_horizon: 3.0
   dt_backup: 0.05
-  max_active_occlusions: 5
-  vref_scenario_softmax_kappa: 5.0
-  k_theta_occ_uni_p: 1.0783765065946995
-  k_theta_occ_uni_d: 0.15000000000000002
-  k_v_occ_uni_p: 1.4500000000000002
-  k_v_occ_uni_d: 0.24
-  k_turn_boost_occ_uni: 0.9
-  turn_boost_angle_occ_uni: 0.34007262580098474
+  max_active_occlusions: 8
+  vref_scenario_softmax_kappa: 1
+  k_theta_occ_uni_p: 1.8927540185374787
+  k_theta_occ_uni_d: 0.375
+  k_v_occ_uni_p: 2.1500000000000004
+  k_v_occ_uni_d: 0.12000000000000001
+  k_turn_boost_occ_uni: 0.8
+  turn_boost_angle_occ_uni: 0.2004007382154965
   rho_T: 0.0
   vref_tracking_mode_occ_uni: gated
   vref_scenario_weight_mode: barrier_unexpand

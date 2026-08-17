@@ -917,7 +917,7 @@ def _build_occlusion_home_scenario(
         bg_v_obs_max, bg_v_obs_min = crowd_narrow._rand_obs_speed_window(
             static_occluders=False,
             rand_obs_setting=rand_obs_setting,
-            legacy_speed_max=crowd.LEGACY_ROUTE_DYN_SPEED_MAX,
+            fixed_speed=crowd.FIXED_ROUTE_DYN_SPEED,
         )
         keep_rows: list[np.ndarray] = []
         keep_meta: list[dict[str, Any]] = []
@@ -1053,13 +1053,11 @@ def run_crowd_scenario(
     else:
         forced_hidden_speed = float(forced_hidden_speed)
         if (
-            rand_obs_setting == crowd_narrow.CURRENT_RAND_OBS_SETTING
+            rand_obs_setting == crowd_narrow.DISTRIBUTED_SPEED_RAND_OBS_SETTING
             and abs(forced_hidden_speed - 0.5) <= 1e-9
         ):
-            # The shared benchmark wrapper defaults to 0.5 for historical
-            # crowd sweeps. Occlusion-home uses the current route-emergence
-            # default hidden speed unless the caller explicitly chooses
-            # something else.
+            # Occlusion-home uses the route-emergence default unless the
+            # caller explicitly chooses another hidden-agent speed.
             forced_hidden_speed = float(crowd.DEFAULT_FORCED_HIDDEN_SPEED)
 
     known_obs, obs_meta, scenario_diag = _build_occlusion_home_scenario(
@@ -1156,7 +1154,10 @@ def main():
         "--rand-obs-setting",
         type=str,
         default=crowd_narrow.DEFAULT_RAND_OBS_SETTING,
-        choices=[crowd_narrow.LEGACY_RAND_OBS_SETTING, crowd_narrow.CURRENT_RAND_OBS_SETTING],
+        choices=[
+            crowd_narrow.FIXED_SPEED_RAND_OBS_SETTING,
+            crowd_narrow.DISTRIBUTED_SPEED_RAND_OBS_SETTING,
+        ],
     )
     parser.add_argument("--forced-hidden-speed", type=float, default=None)
     parser.add_argument("--forced-occluder-radius-min", type=float, default=crowd.DEFAULT_FORCED_OCCLUDER_RADIUS_MIN)

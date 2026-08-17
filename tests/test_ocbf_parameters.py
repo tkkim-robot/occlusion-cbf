@@ -24,20 +24,36 @@ from position_control.ocbf.defaults import (
 from position_control.occlusion_cbf_qp import OcclusionCBFQP
 
 
+DI_TUNED_KEYS = {
+    "T_horizon",
+    "max_active_occlusions",
+    "vref_scenario_softmax_kappa",
+    "k_p_occ_di",
+    "k_d_occ_di",
+}
+UNI_TUNED_KEYS = {
+    "T_horizon",
+    "max_active_occlusions",
+    "vref_scenario_softmax_kappa",
+    "k_theta_occ_uni_p",
+    "k_theta_occ_uni_d",
+    "k_v_occ_uni_p",
+    "k_v_occ_uni_d",
+    "k_turn_boost_occ_uni",
+    "turn_boost_angle_occ_uni",
+}
+
+
 class OCBFParameterTests(unittest.TestCase):
     def test_double_integrator_profile_matches_tuning_result(self):
         parameters = load_ocbf_best_parameters("di")
+        backup = parameters["backup_cbf"]
 
         self.assertEqual(parameters["model"], "DoubleIntegrator2D")
         self.assertEqual(
-            parameters["backup_cbf"],
+            {key: value for key, value in backup.items() if key not in DI_TUNED_KEYS},
             {
-                "T_horizon": 0.25,
                 "dt_backup": 0.05,
-                "max_active_occlusions": 10,
-                "vref_scenario_softmax_kappa": 20.0,
-                "k_p_occ_di": 2.7134037493952947,
-                "k_d_occ_di": 1.0553275095919081,
                 "rho_T": "auto",
                 "vref_scenario_weight_mode": "barrier_unexpand",
                 "qp_failure_fallback_mode": "state_safe",
@@ -48,6 +64,16 @@ class OCBFParameterTests(unittest.TestCase):
                 "terminal_mode": "all",
                 "terminal_residual_mode": "off",
                 "terminal_slack_weight": 0.0,
+            },
+        )
+        self.assertEqual(
+            {key: backup[key] for key in DI_TUNED_KEYS},
+            {
+                "T_horizon": 0.25,
+                "max_active_occlusions": 15,
+                "vref_scenario_softmax_kappa": 10,
+                "k_p_occ_di": 5.724752905909391,
+                "k_d_occ_di": 0.44174267659711325,
             },
         )
         self.assertEqual(
@@ -64,19 +90,37 @@ class OCBFParameterTests(unittest.TestCase):
         backup = parameters["backup_cbf"]
 
         self.assertEqual(parameters["model"], "Unicycle2D")
-        self.assertEqual(backup["T_horizon"], 2.0)
-        self.assertEqual(backup["max_active_occlusions"], 5)
-        self.assertEqual(backup["vref_scenario_softmax_kappa"], 5.0)
-        self.assertEqual(backup["k_theta_occ_uni_p"], 1.0783765065946995)
-        self.assertEqual(backup["k_theta_occ_uni_d"], 0.15000000000000002)
-        self.assertEqual(backup["k_v_occ_uni_p"], 1.4500000000000002)
-        self.assertEqual(backup["k_v_occ_uni_d"], 0.24)
-        self.assertEqual(backup["k_turn_boost_occ_uni"], 0.9)
         self.assertEqual(
-            backup["turn_boost_angle_occ_uni"],
-            0.34007262580098474,
+            {key: value for key, value in backup.items() if key not in UNI_TUNED_KEYS},
+            {
+                "dt_backup": 0.05,
+                "rho_T": 0.0,
+                "vref_tracking_mode_occ_uni": "gated",
+                "vref_scenario_weight_mode": "barrier_unexpand",
+                "qp_failure_fallback_mode": "state_safe",
+                "vref_front_mode_occ": "los",
+                "vref_mode_occ": "strict",
+                "occ_selection_mode": "h_tilde",
+                "occ_rollout_mode": "common",
+                "terminal_mode": "all",
+                "terminal_residual_mode": "off",
+                "terminal_slack_weight": 0.0,
+            },
         )
-        self.assertEqual(backup["vref_scenario_weight_mode"], "barrier_unexpand")
+        self.assertEqual(
+            {key: backup[key] for key in UNI_TUNED_KEYS},
+            {
+                "T_horizon": 3.0,
+                "max_active_occlusions": 8,
+                "vref_scenario_softmax_kappa": 1,
+                "k_theta_occ_uni_p": 1.8927540185374787,
+                "k_theta_occ_uni_d": 0.375,
+                "k_v_occ_uni_p": 2.1500000000000004,
+                "k_v_occ_uni_d": 0.12000000000000001,
+                "k_turn_boost_occ_uni": 0.8,
+                "turn_boost_angle_occ_uni": 0.2004007382154965,
+            },
+        )
         self.assertEqual(
             parameters["shared_robot_spec"],
             {"fov_angle": 360.0, "v_min": 0.0},
@@ -122,6 +166,7 @@ class OCBFParameterTests(unittest.TestCase):
         )
 
     def test_explicit_overrides_win_over_yaml(self):
+        tuned = load_ocbf_best_parameters("di")["backup_cbf"]
         backup, robot = merge_ocbf_best_parameters(
             "di",
             backup_defaults={"T_horizon": 9.0, "alpha": 1.5},
@@ -132,18 +177,23 @@ class OCBFParameterTests(unittest.TestCase):
 
         self.assertEqual(backup["T_horizon"], 0.75)
         self.assertEqual(backup["alpha"], 1.5)
-        self.assertEqual(backup["max_active_occlusions"], 10)
+        self.assertEqual(
+            backup["max_active_occlusions"],
+            tuned["max_active_occlusions"],
+        )
         self.assertEqual(robot["occ_kappa"], 4.0)
         self.assertEqual(robot["radius"], 0.25)
 
     def test_loaded_parameters_are_independent_copies(self):
+        expected = load_ocbf_best_parameters("di")["backup_cbf"]["T_horizon"]
         first = load_ocbf_best_parameters("di")
         first["backup_cbf"]["T_horizon"] = 99.0
 
         second = load_ocbf_best_parameters("di")
-        self.assertEqual(second["backup_cbf"]["T_horizon"], 0.25)
+        self.assertEqual(second["backup_cbf"]["T_horizon"], expected)
 
     def test_controller_level_fallback_preserves_existing_values(self):
+        tuned = load_ocbf_best_parameters("di")["backup_cbf"]
         robot_spec = {
             "model": "DoubleIntegrator2D",
             "occ_kappa": 3.0,
@@ -154,9 +204,14 @@ class OCBFParameterTests(unittest.TestCase):
 
         self.assertEqual(robot_spec["occ_kappa"], 3.0)
         self.assertEqual(robot_spec["backup_cbf"]["T_horizon"], 0.5)
-        self.assertEqual(robot_spec["backup_cbf"]["max_active_occlusions"], 10)
+        self.assertEqual(
+            robot_spec["backup_cbf"]["max_active_occlusions"],
+            tuned["max_active_occlusions"],
+        )
 
     def test_crowd_runtime_uses_full_yaml_only_for_ocbf(self):
+        di_profile = load_ocbf_best_parameters("di")["backup_cbf"]
+        uni_profile = load_ocbf_best_parameters("uni")["backup_cbf"]
         common = {
             "rand_obs": False,
             "n_rand": 0,
@@ -172,8 +227,11 @@ class OCBFParameterTests(unittest.TestCase):
             **common,
         )
         di_backup = di_runtime["robot_spec"]["backup_cbf"]
-        self.assertEqual(di_backup["T_horizon"], 0.25)
-        self.assertEqual(di_backup["max_active_occlusions"], 10)
+        self.assertEqual(di_backup["T_horizon"], di_profile["T_horizon"])
+        self.assertEqual(
+            di_backup["max_active_occlusions"],
+            di_profile["max_active_occlusions"],
+        )
         self.assertTrue(
             di_runtime["robot_spec"]["enable_visible_hocbf_in_occ"]
         )
@@ -184,8 +242,11 @@ class OCBFParameterTests(unittest.TestCase):
             **common,
         )
         uni_backup = uni_runtime["robot_spec"]["backup_cbf"]
-        self.assertEqual(uni_backup["T_horizon"], 2.0)
-        self.assertEqual(uni_backup["max_active_occlusions"], 5)
+        self.assertEqual(uni_backup["T_horizon"], uni_profile["T_horizon"])
+        self.assertEqual(
+            uni_backup["max_active_occlusions"],
+            uni_profile["max_active_occlusions"],
+        )
         self.assertEqual(uni_runtime["robot_spec"]["v_min"], 0.0)
 
         cbf_runtime = test_crowd_narrow._prepare_crowd_runtime(
@@ -415,6 +476,7 @@ class OCBFParameterTests(unittest.TestCase):
         self.assertEqual(explicit_runtime["robot_spec"]["v_min"], -0.25)
 
     def test_campus_default_controller_uses_yaml(self):
+        tuned = load_ocbf_best_parameters("di")
         with (
             mock.patch.object(
                 test_campus,
@@ -438,14 +500,22 @@ class OCBFParameterTests(unittest.TestCase):
             forwarded["controller_type"],
             {"pos": "occlusion_cbf_qp"},
         )
-        self.assertEqual(forwarded["backup_cbf_overrides"]["T_horizon"], 0.25)
+        self.assertEqual(
+            forwarded["backup_cbf_overrides"]["T_horizon"],
+            tuned["backup_cbf"]["T_horizon"],
+        )
         self.assertEqual(
             forwarded["backup_cbf_overrides"]["max_active_occlusions"],
-            10,
+            tuned["backup_cbf"]["max_active_occlusions"],
         )
-        self.assertEqual(forwarded["robot_spec_overrides"]["occ_kappa"], 10.0)
+        self.assertEqual(
+            forwarded["robot_spec_overrides"]["occ_kappa"],
+            tuned["robot_spec"]["occ_kappa"],
+        )
 
     def test_crosswalk_uses_yaml_and_explicit_override(self):
+        di_profile = load_ocbf_best_parameters("di")["backup_cbf"]
+        uni_profile = load_ocbf_best_parameters("uni")["backup_cbf"]
         captured_specs = []
 
         def capture_controller(*args, **kwargs):
@@ -458,13 +528,13 @@ class OCBFParameterTests(unittest.TestCase):
             side_effect=capture_controller,
         ):
             with self.assertRaisesRegex(RuntimeError, "configuration captured"):
-                test_crosswalk.crosswalk_scenario_v3(
+                test_crosswalk.run_crosswalk_scenario(
                     controller_type={"pos": "occlusion_cbf_qp"},
                     model_key="uni",
                     enable_plot=False,
                 )
             with self.assertRaisesRegex(RuntimeError, "configuration captured"):
-                test_crosswalk.crosswalk_scenario_v3(
+                test_crosswalk.run_crosswalk_scenario(
                     controller_type={"pos": "occlusion_cbf_qp"},
                     model_key="di",
                     enable_plot=False,
@@ -472,18 +542,27 @@ class OCBFParameterTests(unittest.TestCase):
                 )
 
             with self.assertRaisesRegex(RuntimeError, "configuration captured"):
-                test_crosswalk.crosswalk_scenario_v3(
+                test_crosswalk.run_crosswalk_scenario(
                     controller_type={"pos": OCBF_TERMINAL_RELAX_CONTROLLER},
                     model_key="di",
                     enable_plot=False,
                 )
 
         uni_spec, di_spec, relaxed_di_spec = captured_specs
-        self.assertEqual(uni_spec["backup_cbf"]["T_horizon"], 2.0)
-        self.assertEqual(uni_spec["backup_cbf"]["max_active_occlusions"], 5)
+        self.assertEqual(
+            uni_spec["backup_cbf"]["T_horizon"],
+            uni_profile["T_horizon"],
+        )
+        self.assertEqual(
+            uni_spec["backup_cbf"]["max_active_occlusions"],
+            uni_profile["max_active_occlusions"],
+        )
         self.assertEqual(uni_spec["v_min"], 0.0)
         self.assertEqual(di_spec["backup_cbf"]["T_horizon"], 0.75)
-        self.assertEqual(di_spec["backup_cbf"]["max_active_occlusions"], 10)
+        self.assertEqual(
+            di_spec["backup_cbf"]["max_active_occlusions"],
+            di_profile["max_active_occlusions"],
+        )
         self.assertEqual(
             relaxed_di_spec["backup_cbf"]["terminal_slack_weight"],
             OCBF_TERMINAL_RELAX_DEFAULTS["terminal_slack_weight"],
@@ -494,16 +573,20 @@ class OCBFParameterTests(unittest.TestCase):
         )
 
     def test_visualization_defaults_to_yaml(self):
+        tuned = load_ocbf_best_parameters("di")
         parser = test_vis_ocbf.build_arg_parser()
         args = parser.parse_args([])
         robot_spec = test_vis_ocbf._make_robot_spec(args, sensing_range=8.0)
 
-        self.assertEqual(robot_spec["backup_cbf"]["T_horizon"], 0.25)
+        self.assertEqual(
+            robot_spec["backup_cbf"]["T_horizon"],
+            tuned["backup_cbf"]["T_horizon"],
+        )
         self.assertEqual(
             robot_spec["backup_cbf"]["vref_scenario_softmax_kappa"],
-            20.0,
+            tuned["backup_cbf"]["vref_scenario_softmax_kappa"],
         )
-        self.assertEqual(robot_spec["occ_kappa"], 10.0)
+        self.assertEqual(robot_spec["occ_kappa"], tuned["robot_spec"]["occ_kappa"])
 
         override_args = parser.parse_args(["--T-horizon", "0.75"])
         overridden = test_vis_ocbf._make_robot_spec(

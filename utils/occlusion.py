@@ -431,7 +431,6 @@ class OcclusionUtils:
 
         visible_obs = []
         occl_scenarios = []
-        visibility_scenarios = []
         visible_indices = []
 
         if obs_list is None:
@@ -471,48 +470,71 @@ class OcclusionUtils:
             vis_scale = 1.0
 
         dists = np.linalg.norm(obs_arr[:, :2] - p[None, :], axis=1)
+        radii = np.array([
+            float(o[2]) if np.asarray(o).shape[0] >= 3 else 0.0
+            for o in obs_arr
+        ])
+        surface_dists = dists - radii
         order = np.argsort(dists)
 
-        for idx in order:
-            obs = obs_arr[idx]
+        def _obs_type_and_static(obs):
+            if len(obs) >= 8:
+                obs_type = int(obs[7])
+                return obs_type, obs_type == 0
+            return None, False
+
+        def _can_cast_occlusion(obs):
+            obs_type, _ = _obs_type_and_static(obs)
+            if occ_types is None:
+                return True
+            return obs_type is not None and obs_type in occ_types
+
+        visibility_scenarios_by_idx = [None] * len(obs_arr)
+        for idx, obs in enumerate(obs_arr):
+            if not _can_cast_occlusion(obs):
+                continue
+            _, is_static_obs = _obs_type_and_static(obs)
+            visibility_scenarios_by_idx[idx] = self._build_visibility_occlusion_scenario(
+                robot_state,
+                obs,
+                is_static=is_static_obs,
+            )
+
+        occluded_mask = np.zeros(len(obs_arr), dtype=bool)
+        for idx, obs in enumerate(obs_arr):
             c = obs[:2]
             r_obs = float(obs[2]) if obs.shape[0] >= 3 else 0.0
             r_occ = r_obs * vis_scale
+            for occ_idx, vis_sc in enumerate(visibility_scenarios_by_idx):
+                if occ_idx == idx or vis_sc is None:
+                    continue
+                if surface_dists[occ_idx] > surface_dists[idx] + 1e-9:
+                    continue
+                if self._circle_fully_in_visibility_scenario(c, r_occ, vis_sc):
+                    occluded_mask[idx] = True
+                    break
 
-            occluded = any(
-                self._circle_fully_in_visibility_scenario(c, r_occ, sc)
-                for sc in visibility_scenarios
-            )
-            if occluded:
+        for idx in order:
+            if occluded_mask[idx]:
                 continue
 
+            obs = obs_arr[idx]
             visible_obs.append(obs)
             visible_local_idx = len(visible_obs) - 1
             if return_indices:
                 visible_indices.append(int(keep[int(idx)]))
 
-            # verify type flag
-            obs_type = None
-            if len(obs) >= 8:
-                obs_type = int(obs[7])
-                is_static_obs = (obs_type == 0) # 0: Static, 1: Dynamic
-            else:
-                is_static_obs = False
+            obs_type, is_static_obs = _obs_type_and_static(obs)
 
             if occ_types is not None:
                 if obs_type is None or obs_type not in occ_types:
                     continue
 
-            vis_sc = self._build_visibility_occlusion_scenario(
-                robot_state,
-                obs,
-                is_static=is_static_obs,
-            )
+            vis_sc = visibility_scenarios_by_idx[idx]
             if vis_sc is not None and vis_sc.get('poly') is not None:
                 vis_sc['source_visible_index'] = int(visible_local_idx)
                 if return_indices:
                     vis_sc['source_obs_index'] = int(keep[int(idx)])
-                visibility_scenarios.append(vis_sc)
 
             rollout_sc = self._build_occlusion_scenario(
                 robot_state,

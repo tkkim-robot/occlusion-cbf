@@ -103,12 +103,12 @@ class BaseRobotDyn_OCC(BaseRobotDyn):
                 return np.linspace(a1, a1 - cw, n)
 
         # directions from p through tangent points -> outer intersection
-        v1 = t1 - p
-        v2 = t2 - p
-        if norm(v1) < 1e-9 or norm(v2) < 1e-9:
+        direction_a = t1 - p
+        direction_b = t2 - p
+        if norm(direction_a) < 1e-9 or norm(direction_b) < 1e-9:
             return None
-        d1 = v1 / norm(v1)
-        d2 = v2 / norm(v2)
+        d1 = direction_a / norm(direction_a)
+        d2 = direction_b / norm(direction_b)
 
         f1 = p + R_s * d1
         f2 = p + R_s * d2
@@ -223,9 +223,11 @@ class BaseRobotDyn_OCC(BaseRobotDyn):
         cand21, cand22 = ints2
         # Pick the intersection most aligned with u_i
         def pick_dir(c1, c2, u):
-            v1 = c1 - p; v1 = v1 / (np.linalg.norm(v1) + 1e-12)
-            v2 = c2 - p; v2 = v2 / (np.linalg.norm(v2) + 1e-12)
-            return c1 if (v1 @ u) >= (v2 @ u) else c2
+            direction_a = c1 - p
+            direction_a = direction_a / (np.linalg.norm(direction_a) + 1e-12)
+            direction_b = c2 - p
+            direction_b = direction_b / (np.linalg.norm(direction_b) + 1e-12)
+            return c1 if (direction_a @ u) >= (direction_b @ u) else c2
 
         f1 = pick_dir(cand11, cand12, u1)  # Outer arc endpoint (L1')
         f2 = pick_dir(cand21, cand22, u2)  # Outer arc endpoint (L2')

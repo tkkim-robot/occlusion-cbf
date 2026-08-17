@@ -79,11 +79,11 @@ ROUTE_HIDDEN_ATTEMPTS = 36
 ROUTE_EXTRA_HIDDEN_ATTEMPTS = 24
 ROUTE_BG_BATCH_LIMIT = 12
 DEFAULT_FORCED_EVENTS = CROWD_BENCHMARK_DEFAULTS["forced_events"]
-LEGACY_FORCED_HIDDEN_SPEED = 0.6
+FIXED_FORCED_HIDDEN_SPEED = 0.6
 DEFAULT_FORCED_HIDDEN_SPEED = CROWD_BENCHMARK_DEFAULTS["forced_hidden_speed"]
 DEFAULT_FORCED_OCCLUDER_RADIUS_MIN = CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_min"]
 DEFAULT_FORCED_OCCLUDER_RADIUS_MAX = CROWD_BENCHMARK_DEFAULTS["forced_occluder_radius_max"]
-LEGACY_ROUTE_DYN_SPEED_MAX = 0.45
+FIXED_ROUTE_DYN_SPEED = 0.45
 SMALL_DYN_SPEED_MIN = 0.3
 SMALL_DYN_SPEED_MAX = 1.0
 
@@ -399,8 +399,8 @@ def _resolve_forced_hidden_speed(forced_hidden_speed, rand_obs_setting):
     if forced_hidden_speed is not None:
         return float(forced_hidden_speed)
     setting = crowd_narrow._normalize_rand_obs_setting(rand_obs_setting)
-    if setting == crowd_narrow.LEGACY_RAND_OBS_SETTING:
-        return float(LEGACY_FORCED_HIDDEN_SPEED)
+    if setting == crowd_narrow.FIXED_SPEED_RAND_OBS_SETTING:
+        return float(FIXED_FORCED_HIDDEN_SPEED)
     return float(DEFAULT_FORCED_HIDDEN_SPEED)
 
 
@@ -414,7 +414,7 @@ def _build_route_random_scenario(*, case_seed, n_rand, rand_obs, static_occluder
     v_obs_max, v_obs_min = crowd_narrow._rand_obs_speed_window(
         static_occluders=static_occluders,
         rand_obs_setting=rand_obs_setting,
-        legacy_speed_max=LEGACY_ROUTE_DYN_SPEED_MAX,
+        fixed_speed=FIXED_ROUTE_DYN_SPEED,
     )
     while len(rows) < int(n_rand):
         extra_rows, extra_meta = crowd_narrow.LocalTrackingControllerDyn_OCC.make_random_obstacles7(
@@ -726,7 +726,7 @@ def _build_route_forced_emergence_scenario(
         bg_v_obs_max, bg_v_obs_min = crowd_narrow._rand_obs_speed_window(
             static_occluders=static_occluders,
             rand_obs_setting=rand_obs_setting,
-            legacy_speed_max=LEGACY_ROUTE_DYN_SPEED_MAX,
+            fixed_speed=FIXED_ROUTE_DYN_SPEED,
         )
         keep_rows = []
         keep_meta = []
@@ -1008,11 +1008,13 @@ def main(argv=None):
         "--rand-obs-setting",
         type=str,
         default=crowd_narrow.DEFAULT_RAND_OBS_SETTING,
-        choices=[crowd_narrow.LEGACY_RAND_OBS_SETTING, crowd_narrow.CURRENT_RAND_OBS_SETTING],
+        choices=[
+            crowd_narrow.FIXED_SPEED_RAND_OBS_SETTING,
+            crowd_narrow.DISTRIBUTED_SPEED_RAND_OBS_SETTING,
+        ],
         help=(
-            "Random-obstacle generator preset. "
-            "`v1` reproduces the last committed fixed-speed route generator; "
-            "`v2` uses the current distributed-speed generator."
+            "Random-obstacle generator preset. Use `fixed_speed` for a "
+            "constant speed or `distributed_speed` to sample a speed range."
         ),
     )
     parser.add_argument(
