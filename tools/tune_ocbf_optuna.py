@@ -3,10 +3,11 @@
 
 Each completed trial runs the exact inclusive crowd case range requested by the
 CLI. Cases are evaluated in deterministic batches so the median pruner compares
-the same prefixes across trials. The scalar objective is strictly ordered:
+the same prefixes across trials. The scalar objective is strictly ordered for
+the canonical 100-case study:
 
-1. minimize collision count;
-2. maximize success count;
+1. maximize success count;
+2. minimize collision count;
 3. minimize mean controller compute time.
 
 The paper-fixed settings (full-circle obstacle selection, unexpanded backup
@@ -49,7 +50,7 @@ os.environ.setdefault(
 
 import numpy as np
 import optuna
-from optuna.pruners import BasePruner, MedianPruner, NopPruner
+from optuna.pruners import BasePruner, NopPruner
 from optuna.samplers import GridSampler, TPESampler
 
 from examples._baseline_defs import CROWD_BENCHMARK_DEFAULTS, CROWD_BASELINE_MAP
@@ -57,16 +58,20 @@ from position_control.ocbf.defaults import (
     OCBF_CROWD_QP_FAILURE_FALLBACK_MODE,
     OCBF_CROWD_VREF_SCENARIO_WEIGHT_MODE,
     apply_crowd_ocbf_defaults,
+    load_ocbf_best_parameters,
     load_shared_robot_parameters,
 )
 from tools.benchmark_crowd_trials import _run_one_idx_job
 
 
 WANDB_PROJECT_DEFAULT = "occlusion-cbf-tuning"
-COLLISION_WEIGHT = 1_000_000.0
-FAILURE_WEIGHT = 1_000.0
+NON_SUCCESS_WEIGHT = 1_000_000.0
+COLLISION_WEIGHT = 1_000.0
 COMPUTE_TIME_CAP_MS = 999.999
-ACTIVE_OCCLUSION_CHOICES = [0, 3, 5, 10]  # 0 means all occlusions.
+ACTIVE_OCCLUSION_CHOICES = {
+    "di": [3, 5, 10, 15, 20, 0],
+    "uni": [3, 5, 8, 10, 0],
+}  # 0 means all occlusions.
 COMPATIBILITY_CONFIG_KEYS = (
     "scenario",
     "baseline",
@@ -74,6 +79,7 @@ COMPATIBILITY_CONFIG_KEYS = (
     "model_name",
     "seed",
     "indices",
+    "trials",
     "n_rand",
     "tf",
     "workers",
@@ -89,6 +95,7 @@ COMPATIBILITY_CONFIG_KEYS = (
     "source_commit",
     "source_fingerprint",
     "tuning_mode",
+    "incumbent_parameters",
 )
 TUNING_MODES = ("controller", "terminal_relax")
 TERMINAL_RELAX_GRID = {
@@ -96,123 +103,124 @@ TERMINAL_RELAX_GRID = {
     "terminal_slack_max": [0.25, 0.5, 1.0, 2.0],
 }
 
-MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
-    "di": {
-        "display_name": "DoubleIntegrator2D",
-        "n_rand": 50,
-        "incumbents": [
-            {
-                "T_horizon": 0.5,
-                "max_active_occlusions": 0,
-                "vref_scenario_softmax_kappa": 10,
-                "k_p_occ_di": 1.0,
-                "k_d_occ_di": 1.0,
-            },
-            {
-                "T_horizon": 0.5,
-                "max_active_occlusions": 3,
-                "vref_scenario_softmax_kappa": 40,
-                "k_p_occ_di": 1.0,
-                "k_d_occ_di": 1.0,
-            },
-        ],
-    },
-    "uni": {
-        "display_name": "Unicycle2D",
-        "n_rand": 30,
-        "incumbents": [
-            {
-                "T_horizon": 0.5,
-                "max_active_occlusions": 0,
-                "vref_scenario_softmax_kappa": 1,
-                "k_theta_occ_uni_p": 2.5,
-                "k_theta_occ_uni_d": 0.4,
-                "k_v_occ_uni_p": 1.0,
-                "k_v_occ_uni_d": 0.2,
-                "k_turn_boost_occ_uni": 1.0,
-                "turn_boost_angle_occ_uni": float(np.pi / 6.0),
-            },
-            {
-                "T_horizon": 1.5,
-                "max_active_occlusions": 3,
-                "vref_scenario_softmax_kappa": 40,
-                "k_theta_occ_uni_p": 2.5,
-                "k_theta_occ_uni_d": 0.4,
-                "k_v_occ_uni_p": 1.0,
-                "k_v_occ_uni_d": 0.2,
-                "k_turn_boost_occ_uni": 1.0,
-                "turn_boost_angle_occ_uni": float(np.pi / 6.0),
-            },
-        ],
-    },
-}
-
 SEARCH_SPACE: dict[str, dict[str, Any]] = {
     "di": {
-        "T_horizon": {"type": "categorical", "choices": [0.25, 0.5, 0.75, 1.0]},
+        "T_horizon": {
+            "type": "categorical",
+            "choices": [0.10, 0.15, 0.20, 0.25, 0.35, 0.50],
+        },
         "max_active_occlusions": {
             "type": "categorical",
-            "choices": ACTIVE_OCCLUSION_CHOICES,
+            "choices": ACTIVE_OCCLUSION_CHOICES["di"],
         },
         "vref_scenario_softmax_kappa": {
             "type": "categorical",
-            "choices": [0, 5, 10, 20, 40, 60],
+            "choices": [5, 10, 15, 20, 30, 40],
         },
-        "k_p_occ_di": {"type": "float", "low": 0.5, "high": 3.0, "log": True},
-        "k_d_occ_di": {"type": "float", "low": 0.1, "high": 3.0, "log": True},
+        "k_p_occ_di": {
+            "type": "float",
+            "low": 1.0,
+            "high": 6.0,
+            "log": True,
+        },
+        "k_d_occ_di": {
+            "type": "float",
+            "low": 0.35,
+            "high": 2.5,
+            "log": True,
+        },
     },
     "uni": {
         "T_horizon": {
             "type": "categorical",
-            "choices": [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
+            "choices": [1.0, 1.5, 2.0, 2.5, 3.0],
         },
         "max_active_occlusions": {
             "type": "categorical",
-            "choices": ACTIVE_OCCLUSION_CHOICES,
+            "choices": ACTIVE_OCCLUSION_CHOICES["uni"],
         },
         "vref_scenario_softmax_kappa": {
             "type": "categorical",
-            "choices": [0, 1, 5, 10, 20, 40, 60],
+            "choices": [0, 1, 2, 5, 10, 20],
         },
         "k_theta_occ_uni_p": {
             "type": "float",
-            "low": 0.75,
-            "high": 5.0,
+            "low": 0.25,
+            "high": 2.5,
             "log": True,
         },
         "k_theta_occ_uni_d": {
             "type": "float",
             "low": 0.0,
-            "high": 1.0,
-            "step": 0.05,
+            "high": 0.5,
+            "step": 0.025,
         },
         "k_v_occ_uni_p": {
             "type": "float",
-            "low": 0.5,
-            "high": 1.5,
+            "low": 0.8,
+            "high": 2.5,
             "step": 0.05,
         },
         "k_v_occ_uni_d": {
             "type": "float",
-            "low": 0.0,
+            "low": 0.1,
             "high": 0.4,
             "step": 0.02,
         },
         "k_turn_boost_occ_uni": {
             "type": "float",
-            "low": 0.0,
-            "high": 3.0,
+            "low": 0.3,
+            "high": 1.8,
             "step": 0.1,
         },
         "turn_boost_angle_occ_uni": {
             "type": "float",
-            "low": float(np.pi / 12.0),
-            "high": float(np.pi / 2.0),
+            "low": float(np.pi / 36.0),
+            "high": float(np.pi / 3.0),
         },
     },
 }
 
+
+def selected_profile_parameters(model: str) -> dict[str, Any]:
+    """Return the committed profile fields sampled by ``model``'s study.
+
+    The YAML profile is the single source of truth for the incumbent.  This
+    keeps subsequent tuning runs synchronized with a selected study without
+    embedding a second, self-modified copy of its floating-point parameters in
+    this module.
+    """
+    if model not in SEARCH_SPACE:
+        raise ValueError(f"Unsupported model: {model}")
+    profile = load_ocbf_best_parameters(model)
+    if profile is None:  # pragma: no cover - guarded by the supported models.
+        raise RuntimeError(f"Missing committed OCBF profile for {model}")
+    backup = profile["backup_cbf"]
+    missing = set(SEARCH_SPACE[model]) - set(backup)
+    if missing:
+        raise RuntimeError(
+            f"Committed {model} OCBF profile lacks tuned fields: "
+            f"{sorted(missing)}"
+        )
+    return {name: backup[name] for name in SEARCH_SPACE[model]}
+
+
+MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "di": {
+        "display_name": "DoubleIntegrator2D",
+        "n_rand": 50,
+        "incumbents": [selected_profile_parameters("di")],
+    },
+    "uni": {
+        "display_name": "Unicycle2D",
+        "n_rand": 30,
+        "incumbents": [selected_profile_parameters("uni")],
+    },
+}
+
 FIXED_OCBF_CONFIG: dict[str, Any] = {
+    "osqp_cache_update_guard": "checked_rebuild_on_rejection",
+    "qp_solution_certificate": "current_cbf_slack_input_post_clip",
     "obstacle_selection_angle_rad": float(2.0 * np.pi),
     "vref_scenario_weight_mode": OCBF_CROWD_VREF_SCENARIO_WEIGHT_MODE,
     "qp_failure_fallback_mode": OCBF_CROWD_QP_FAILURE_FALLBACK_MODE,
@@ -326,6 +334,24 @@ class LatestStepMedianPruner(BasePruner):
         return float(current) < median
 
 
+def build_study_pruner(
+    *,
+    disable_pruning: bool,
+    startup_trials: int,
+    warmup_cases: int,
+    interval_cases: int,
+) -> BasePruner:
+    """Build the equal-prefix pruner used by every tuning mode."""
+    if disable_pruning:
+        return NopPruner()
+    return LatestStepMedianPruner(
+        n_startup_trials=int(startup_trials),
+        n_warmup_steps=int(warmup_cases),
+        interval_steps=int(interval_cases),
+        n_min_trials=4,
+    )
+
+
 def compatibility_fingerprint(config: dict[str, Any]) -> str:
     """Hash every setting that can affect trial values or artifact identity."""
     payload = {
@@ -364,7 +390,11 @@ def sample_hyperparameters(
     model: str,
     tuning_mode: str = "controller",
 ) -> dict[str, Any]:
-    """Sample the model-specific, paper-safe search space."""
+    """Sample the model-specific, paper-safe search space.
+
+    ``SEARCH_SPACE`` is the sole controller-space definition so the sampled
+    distributions and the compatibility metadata cannot drift apart.
+    """
     if tuning_mode == "terminal_relax":
         if model != "di":
             raise ValueError("Terminal-relax tuning is defined only for DI.")
@@ -372,61 +402,32 @@ def sample_hyperparameters(
             name: trial.suggest_categorical(name, choices)
             for name, choices in TERMINAL_RELAX_GRID.items()
         }
-    if model == "di":
-        max_active = trial.suggest_categorical(
-            "max_active_occlusions", ACTIVE_OCCLUSION_CHOICES
-        )
-        sampled = {
-            "T_horizon": trial.suggest_categorical(
-                "T_horizon", [0.25, 0.5, 0.75, 1.0]
-            ),
-            "max_active_occlusions": max_active,
-            "k_p_occ_di": trial.suggest_float(
-                "k_p_occ_di", 0.5, 3.0, log=True
-            ),
-            "k_d_occ_di": trial.suggest_float(
-                "k_d_occ_di", 0.1, 3.0, log=True
-            ),
-            "vref_scenario_softmax_kappa": trial.suggest_categorical(
-                "vref_scenario_softmax_kappa", [0, 5, 10, 20, 40, 60]
-            ),
-        }
-        return sampled
-    if model == "uni":
-        max_active = trial.suggest_categorical(
-            "max_active_occlusions", ACTIVE_OCCLUSION_CHOICES
-        )
-        sampled = {
-            "T_horizon": trial.suggest_categorical(
-                "T_horizon", [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-            ),
-            "max_active_occlusions": max_active,
-            "k_theta_occ_uni_p": trial.suggest_float(
-                "k_theta_occ_uni_p", 0.75, 5.0, log=True
-            ),
-            "k_theta_occ_uni_d": trial.suggest_float(
-                "k_theta_occ_uni_d", 0.0, 1.0, step=0.05
-            ),
-            "k_v_occ_uni_p": trial.suggest_float(
-                "k_v_occ_uni_p", 0.5, 1.5, step=0.05
-            ),
-            "k_v_occ_uni_d": trial.suggest_float(
-                "k_v_occ_uni_d", 0.0, 0.4, step=0.02
-            ),
-            "k_turn_boost_occ_uni": trial.suggest_float(
-                "k_turn_boost_occ_uni", 0.0, 3.0, step=0.1
-            ),
-            "turn_boost_angle_occ_uni": trial.suggest_float(
-                "turn_boost_angle_occ_uni",
-                float(np.pi / 12.0),
-                float(np.pi / 2.0),
-            ),
-            "vref_scenario_softmax_kappa": trial.suggest_categorical(
-                "vref_scenario_softmax_kappa", [0, 1, 5, 10, 20, 40, 60]
-            ),
-        }
-        return sampled
-    raise ValueError(f"Unsupported model: {model}")
+    if model not in SEARCH_SPACE:
+        raise ValueError(f"Unsupported model: {model}")
+
+    sampled: dict[str, Any] = {}
+    for name, spec in SEARCH_SPACE[model].items():
+        parameter_type = spec["type"]
+        if parameter_type == "categorical":
+            sampled[name] = trial.suggest_categorical(name, spec["choices"])
+        elif parameter_type == "float":
+            options = {
+                key: spec[key]
+                for key in ("log", "step")
+                if key in spec
+            }
+            sampled[name] = trial.suggest_float(
+                name,
+                float(spec["low"]),
+                float(spec["high"]),
+                **options,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported search-space type for {model}.{name}: "
+                f"{parameter_type!r}"
+            )
+    return sampled
 
 
 def build_controller_overrides(
@@ -516,7 +517,7 @@ def lexicographic_score(
     evaluated_count: int,
     avg_compute_time_ms: float | None,
 ) -> float:
-    """Return collision-first, success-second, compute-time-third score."""
+    """Return success-first, collision-second, compute-time-third score."""
     if evaluated_count <= 0:
         raise ValueError("evaluated_count must be positive")
     if collision_count < 0 or success_count < 0:
@@ -524,14 +525,14 @@ def lexicographic_score(
     if collision_count + success_count > evaluated_count:
         raise ValueError("outcome counts exceed evaluated_count")
 
-    failure_count = evaluated_count - success_count
+    non_success_count = evaluated_count - success_count
     if avg_compute_time_ms is None or not math.isfinite(avg_compute_time_ms):
         time_term = COMPUTE_TIME_CAP_MS
     else:
         time_term = min(max(float(avg_compute_time_ms), 0.0), COMPUTE_TIME_CAP_MS)
     return (
-        float(collision_count) * COLLISION_WEIGHT
-        + float(failure_count) * FAILURE_WEIGHT
+        float(non_success_count) * NON_SUCCESS_WEIGHT
+        + float(collision_count) * COLLISION_WEIGHT
         + time_term
     )
 
@@ -1213,13 +1214,13 @@ def main(argv: list[str] | None = None) -> int:
         "trials": int(args.trials),
         "timeout_s": args.timeout,
         "objective_priority": [
-            "collision_count:minimize",
             "success_count:maximize",
+            "collision_count:minimize",
             "avg_compute_time_ms:minimize",
         ],
         "objective_weights": {
+            "non_success": NON_SUCCESS_WEIGHT,
             "collision": COLLISION_WEIGHT,
-            "non_success": FAILURE_WEIGHT,
             "compute_time_cap_ms": COMPUTE_TIME_CAP_MS,
         },
         "benchmark_protocol": {
@@ -1260,11 +1261,7 @@ def main(argv: list[str] | None = None) -> int:
             "name": (
                 "NopPruner"
                 if args.disable_pruning
-                else (
-                    "LatestStepMedianPruner"
-                    if args.tuning_mode == "terminal_relax"
-                    else "MedianPruner"
-                )
+                else "LatestStepMedianPruner"
             ),
             "startup_trials": int(args.pruner_startup_trials),
             "warmup_cases": int(args.pruner_warmup_cases),
@@ -1274,6 +1271,11 @@ def main(argv: list[str] | None = None) -> int:
         "source_commit": source_commit,
         "source_fingerprint": source_fingerprint,
         "tuning_mode": args.tuning_mode,
+        "incumbent_parameters": (
+            [dict(params) for params in model_cfg["incumbents"]]
+            if args.tuning_mode == "controller"
+            else []
+        ),
         "source_dir": os.environ.get("OCBF_SOURCE_DIR", str(Path.cwd())),
         "command": sys.argv,
     }
@@ -1299,22 +1301,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         sampler = TPESampler(seed=int(args.sampler_seed))
-    if args.disable_pruning:
-        pruner = NopPruner()
-    elif args.tuning_mode == "terminal_relax":
-        pruner = LatestStepMedianPruner(
-            n_startup_trials=int(args.pruner_startup_trials),
-            n_warmup_steps=int(args.pruner_warmup_cases),
-            interval_steps=int(args.pruner_interval_cases),
-            n_min_trials=4,
-        )
-    else:
-        pruner = MedianPruner(
-            n_startup_trials=int(args.pruner_startup_trials),
-            n_warmup_steps=int(args.pruner_warmup_cases),
-            interval_steps=int(args.pruner_interval_cases),
-            n_min_trials=4,
-        )
+    pruner = build_study_pruner(
+        disable_pruning=bool(args.disable_pruning),
+        startup_trials=int(args.pruner_startup_trials),
+        warmup_cases=int(args.pruner_warmup_cases),
+        interval_cases=int(args.pruner_interval_cases),
+    )
 
     storage_path = output_dir / "study.db"
     storage = optuna.storages.RDBStorage(

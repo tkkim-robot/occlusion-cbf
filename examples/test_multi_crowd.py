@@ -880,7 +880,10 @@ def main(argv=None):
         "--rand-obs-setting",
         type=str,
         default=crowd_narrow.DEFAULT_RAND_OBS_SETTING,
-        choices=[crowd_narrow.LEGACY_RAND_OBS_SETTING, crowd_narrow.CURRENT_RAND_OBS_SETTING],
+        choices=[
+            crowd_narrow.FIXED_SPEED_RAND_OBS_SETTING,
+            crowd_narrow.DISTRIBUTED_SPEED_RAND_OBS_SETTING,
+        ],
     )
     parser.add_argument("--disable-plot", action="store_true", help="Disable interactive plotting.")
     parser.add_argument(

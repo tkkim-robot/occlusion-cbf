@@ -261,7 +261,7 @@ class ScenarioContractTests(unittest.TestCase):
         self.assertEqual(kwargs["n_rand"], 10)
         self.assertEqual(kwargs["tf"], 500.0)
         self.assertEqual(kwargs["crowd_mode"], "forced_emergence")
-        self.assertEqual(kwargs["rand_obs_setting"], "v2")
+        self.assertEqual(kwargs["rand_obs_setting"], "distributed_speed")
         self.assertEqual(kwargs["forced_events"], 6)
         self.assertEqual(kwargs["forced_hidden_speed"], 1.0)
         self.assertEqual(kwargs["forced_occluder_radius_min"], 0.8)

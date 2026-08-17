@@ -25,9 +25,9 @@ class Plotting:
         plt.pause(1.0)
         plt.close()
 
-    def animation_connect(self, V1, V2, path, name):
+    def animation_connect(self, vertices_a, vertices_b, path, name):
         self.plot_grid(name)
-        self.plot_visited_connect(V1, V2)
+        self.plot_visited_connect(vertices_a, vertices_b)
         self.plot_path(path)
 
     def plot_grid(self, name, with_right_subplot=False):
@@ -119,16 +119,24 @@ class Plotting:
                     plt.plot([node.parent.x, node.x], [node.parent.y, node.y], "-g")
 
     @staticmethod
-    def plot_visited_connect(V1, V2):
-        len1, len2 = len(V1), len(V2)
+    def plot_visited_connect(vertices_a, vertices_b):
+        len1, len2 = len(vertices_a), len(vertices_b)
 
         for k in range(max(len1, len2)):
             if k < len1:
-                if V1[k].parent:
-                    plt.plot([V1[k].x, V1[k].parent.x], [V1[k].y, V1[k].parent.y], "-g")
+                if vertices_a[k].parent:
+                    plt.plot(
+                        [vertices_a[k].x, vertices_a[k].parent.x],
+                        [vertices_a[k].y, vertices_a[k].parent.y],
+                        "-g",
+                    )
             if k < len2:
-                if V2[k].parent:
-                    plt.plot([V2[k].x, V2[k].parent.x], [V2[k].y, V2[k].parent.y], "-g")
+                if vertices_b[k].parent:
+                    plt.plot(
+                        [vertices_b[k].x, vertices_b[k].parent.x],
+                        [vertices_b[k].y, vertices_b[k].parent.y],
+                        "-g",
+                    )
 
             plt.gcf().canvas.mpl_connect('key_release_event',
                                          lambda event: [exit(0) if event.key == 'escape' else None])

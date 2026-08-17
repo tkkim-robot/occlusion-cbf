@@ -1128,7 +1128,7 @@ def main() -> int:
             "Internal default is `los`; `default` keeps the fixed polygon normal."
         ),
     )
-    p.add_argument("--out-dir", type=str, default="debug_logs")
+    p.add_argument("--out-dir", type=str, default="output/crowd_benchmarks")
     p.add_argument(
         "--backup-cbf-json",
         type=str,

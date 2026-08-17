@@ -48,10 +48,10 @@ from base_control.utils import env, plotting
 
 SMALL_DYN_SPEED_MIN = 0.3
 SMALL_DYN_SPEED_MAX = 1.0
-LEGACY_SMALL_DYN_SPEED_MAX = 0.5
-LEGACY_RAND_OBS_SETTING = "v1"
-CURRENT_RAND_OBS_SETTING = "v2"
-DEFAULT_RAND_OBS_SETTING = CURRENT_RAND_OBS_SETTING
+FIXED_SMALL_DYN_SPEED = 0.5
+FIXED_SPEED_RAND_OBS_SETTING = "fixed_speed"
+DISTRIBUTED_SPEED_RAND_OBS_SETTING = "distributed_speed"
+DEFAULT_RAND_OBS_SETTING = DISTRIBUTED_SPEED_RAND_OBS_SETTING
 
 
 def _sample_small_dyn_speed(rng, speed_max=SMALL_DYN_SPEED_MAX, speed_min=SMALL_DYN_SPEED_MIN):
@@ -64,20 +64,24 @@ def _sample_small_dyn_speed(rng, speed_max=SMALL_DYN_SPEED_MAX, speed_min=SMALL_
 
 def _normalize_rand_obs_setting(rand_obs_setting):
     setting = str(rand_obs_setting).strip().lower()
-    if setting not in {LEGACY_RAND_OBS_SETTING, CURRENT_RAND_OBS_SETTING}:
+    if setting not in {
+        FIXED_SPEED_RAND_OBS_SETTING,
+        DISTRIBUTED_SPEED_RAND_OBS_SETTING,
+    }:
         raise ValueError(
             f"Unsupported rand_obs_setting `{rand_obs_setting}`. "
-            f"Use `{LEGACY_RAND_OBS_SETTING}` or `{CURRENT_RAND_OBS_SETTING}`."
+            f"Use `{FIXED_SPEED_RAND_OBS_SETTING}` or "
+            f"`{DISTRIBUTED_SPEED_RAND_OBS_SETTING}`."
         )
     return setting
 
 
-def _rand_obs_speed_window(*, static_occluders, rand_obs_setting, legacy_speed_max):
+def _rand_obs_speed_window(*, static_occluders, rand_obs_setting, fixed_speed):
     setting = _normalize_rand_obs_setting(rand_obs_setting)
     if bool(static_occluders):
         return 0.0, 0.0
-    if setting == LEGACY_RAND_OBS_SETTING:
-        vmax = float(max(0.0, legacy_speed_max))
+    if setting == FIXED_SPEED_RAND_OBS_SETTING:
+        vmax = float(max(0.0, fixed_speed))
         return vmax, vmax
     return float(SMALL_DYN_SPEED_MAX), float(SMALL_DYN_SPEED_MIN)
 
@@ -92,7 +96,7 @@ def _sample_hidden_speed_for_setting(
 ):
     setting = _normalize_rand_obs_setting(rand_obs_setting)
     speed_nominal = float(max(0.0, forced_hidden_speed))
-    if setting == LEGACY_RAND_OBS_SETTING:
+    if setting == FIXED_SPEED_RAND_OBS_SETTING:
         return speed_nominal * float(rng.uniform(legacy_low, legacy_high))
     return _sample_small_dyn_speed(
         rng,
@@ -473,7 +477,7 @@ def _build_random_crowd_scenario(*, case_seed, n_rand, rand_obs, static_occluder
     v_obs_max, v_obs_min = _rand_obs_speed_window(
         static_occluders=static_occluders,
         rand_obs_setting=rand_obs_setting,
-        legacy_speed_max=LEGACY_SMALL_DYN_SPEED_MAX,
+        fixed_speed=FIXED_SMALL_DYN_SPEED,
     )
 
     rand_rows, rand_meta = LocalTrackingControllerDyn_OCC.make_random_obstacles7(
@@ -892,7 +896,7 @@ def _build_forced_emergence_crowd_scenario(
         bg_v_obs_max, bg_v_obs_min = _rand_obs_speed_window(
             static_occluders=static_occluders,
             rand_obs_setting=rand_obs_setting,
-            legacy_speed_max=LEGACY_SMALL_DYN_SPEED_MAX,
+            fixed_speed=FIXED_SMALL_DYN_SPEED,
         )
         keep_rows = []
         keep_meta = []
@@ -1249,7 +1253,7 @@ def _prepare_crowd_runtime(
     if crowd_mode == "forced_emergence":
         robot_spec["v_adv_max_occ"] = 1.0
         dyn_cfg = robot_spec.setdefault("crowd_dyn_obs", {})
-        dyn_cfg["occluded_speed_boost_enable"] = True
+        dyn_cfg.setdefault("occluded_speed_boost_enable", False)
         dyn_cfg["occluded_speed_boost_vmax"] = float(robot_spec.get("v_obs_max", robot_spec["v_adv_max_occ"]))
         dyn_cfg["occluded_speed_boost_exact"] = True
         dyn_cfg["occluded_speed_boost_fov_only"] = True
@@ -1921,11 +1925,10 @@ def main(argv=None):
         "--rand-obs-setting",
         type=str,
         default=DEFAULT_RAND_OBS_SETTING,
-        choices=[LEGACY_RAND_OBS_SETTING, CURRENT_RAND_OBS_SETTING],
+        choices=[FIXED_SPEED_RAND_OBS_SETTING, DISTRIBUTED_SPEED_RAND_OBS_SETTING],
         help=(
-            "Random-obstacle generator preset. "
-            "`v1` reproduces the last committed fixed-speed crowd generator; "
-            "`v2` uses the current distributed-speed generator."
+            "Random-obstacle generator preset. Use `fixed_speed` for a "
+            "constant speed or `distributed_speed` to sample a speed range."
         ),
     )
     parser.add_argument(

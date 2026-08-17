@@ -1,7 +1,9 @@
 import time
+import types
 
 import cvxpy as cp
 import numpy as np
+from scipy import sparse
 
 from position_control.backup_controller import OcclusionController
 from position_control.ocbf.defaults import (
@@ -27,6 +29,155 @@ from position_control.ocbf.jax_constraints import (
 from utils.occlusion import OcclusionUtils
 
 _JAX_OCC_WARNED_MISSING = False
+
+
+class OSQPCacheUpdateError(RuntimeError):
+    """A cached OSQP update was rejected before stale data could be solved."""
+
+
+def _install_checked_osqp_update(solver):
+    """Make one cached OSQP instance surface rejected incremental updates.
+
+    OSQP 1.1.3's Python ``update`` wrapper discards nonzero return codes from
+    the C vector/matrix update APIs. CVXPY may then solve the previously
+    accepted problem data and report an apparently successful status. The
+    guard is installed only on OSQP instances cached by this controller; a
+    rejection raises into the existing clean-rebuild solver fallback.
+    """
+    if solver is None or getattr(solver, "_ocbf_checked_update", False):
+        return
+
+    cache = getattr(solver, "_derivative_cache", {})
+    required = ("q", "l", "u", "P", "A")
+    if any(name not in cache for name in required):
+        return
+
+    infinity = float(solver.constant("OSQP_INFTY"))
+    solver._ocbf_guard_q = np.asarray(cache["q"], dtype=float).copy()
+    solver._ocbf_guard_l = np.maximum(
+        np.asarray(cache["l"], dtype=float), -infinity
+    ).copy()
+    solver._ocbf_guard_u = np.minimum(
+        np.asarray(cache["u"], dtype=float), infinity
+    ).copy()
+    solver._ocbf_guard_P_nnz = int(cache["P"].nnz)
+    solver._ocbf_guard_A_nnz = int(cache["A"].nnz)
+
+    def checked_update(self, **kwargs):
+        q = kwargs.get("q")
+        lower = kwargs.get("l")
+        upper = kwargs.get("u")
+        if q is not None:
+            q = np.asarray(q, dtype=float)
+        if lower is not None:
+            lower = np.maximum(np.asarray(lower, dtype=float), -infinity)
+        if upper is not None:
+            upper = np.minimum(np.asarray(upper, dtype=float), infinity)
+
+        if q is not None or lower is not None or upper is not None:
+            next_q = self._ocbf_guard_q if q is None else q
+            next_l = self._ocbf_guard_l if lower is None else lower
+            next_u = self._ocbf_guard_u if upper is None else upper
+            if (
+                next_q.shape != self._ocbf_guard_q.shape
+                or next_l.shape != self._ocbf_guard_l.shape
+                or next_u.shape != self._ocbf_guard_u.shape
+            ):
+                raise OSQPCacheUpdateError("OSQP vector update dimension mismatch")
+            if not (
+                np.all(np.isfinite(next_q))
+                and np.all(np.isfinite(next_l))
+                and np.all(np.isfinite(next_u))
+            ):
+                raise OSQPCacheUpdateError("OSQP vector update contains non-finite data")
+            invalid = np.flatnonzero(next_l > next_u)
+            if invalid.size:
+                idx = int(invalid[0])
+                raise OSQPCacheUpdateError(
+                    "OSQP cached bounds are invalid at index "
+                    f"{idx}: l={next_l[idx]:.17g} > u={next_u[idx]:.17g}"
+                )
+
+            bounds_requested = lower is not None or upper is not None
+            return_code = self._solver.update_data_vec(
+                q=q,
+                l=next_l if bounds_requested else None,
+                u=next_u if bounds_requested else None,
+            )
+            if return_code:
+                raise OSQPCacheUpdateError(
+                    f"OSQP update_data_vec return_code={return_code}"
+                )
+            if q is not None:
+                self._ocbf_guard_q = q.copy()
+            if bounds_requested:
+                self._ocbf_guard_l = next_l.copy()
+                self._ocbf_guard_u = next_u.copy()
+
+        matrix_requested = any(
+            name in kwargs for name in ("Px", "Px_idx", "Ax", "Ax_idx")
+        )
+        if matrix_requested:
+            p_values, p_indices = kwargs.get("Px"), kwargs.get("Px_idx")
+            a_values, a_indices = kwargs.get("Ax"), kwargs.get("Ax_idx")
+            for name, values, indices, nnz in (
+                ("P", p_values, p_indices, self._ocbf_guard_P_nnz),
+                ("A", a_values, a_indices, self._ocbf_guard_A_nnz),
+            ):
+                if values is None:
+                    continue
+                values_array = np.asarray(values)
+                if not np.all(np.isfinite(values_array)):
+                    raise OSQPCacheUpdateError(
+                        f"OSQP {name} update contains non-finite data"
+                    )
+                if indices is None and values_array.size > nnz:
+                    raise OSQPCacheUpdateError(f"OSQP {name} update is oversized")
+                if indices is not None:
+                    indices_array = np.asarray(indices)
+                    if (
+                        indices_array.size != values_array.size
+                        or np.any(indices_array < 0)
+                        or np.any(indices_array >= nnz)
+                    ):
+                        raise OSQPCacheUpdateError(
+                            f"OSQP {name} update indices are invalid"
+                        )
+
+            return_code = self._solver.update_data_mat(
+                P_x=p_values,
+                P_i=p_indices,
+                A_x=a_values,
+                A_i=a_indices,
+            )
+            if return_code:
+                raise OSQPCacheUpdateError(
+                    f"OSQP update_data_mat return_code={return_code}"
+                )
+
+        # Match OSQP's public wrapper bookkeeping without retaining aliases to
+        # CVXPY's mutable parameter workspace.
+        if q is not None:
+            self._derivative_cache["q"] = q.copy()
+        if lower is not None or upper is not None:
+            self._derivative_cache["l"] = self._ocbf_guard_l.copy()
+            self._derivative_cache["u"] = self._ocbf_guard_u.copy()
+        for variable in ("P", "A"):
+            values_key = f"{variable}x"
+            values = kwargs.get(values_key)
+            if values is None:
+                continue
+            indices = kwargs.get(f"{values_key}_idx")
+            if indices is None:
+                self._derivative_cache[variable].data = np.asarray(values).copy()
+            else:
+                self._derivative_cache[variable].data[indices] = values
+        self._derivative_cache.pop("results", None)
+        self._derivative_cache.pop("solver", None)
+        self._derivative_cache.pop("M", None)
+
+    solver.update = types.MethodType(checked_update, solver)
+    solver._ocbf_checked_update = True
 
 class OcclusionCBFQP:
     """Backup-CBF QP with time-expanded occlusion constraints.
@@ -643,6 +794,162 @@ class OcclusionCBFQP:
                 violation = violation - slack_val
         return violation
 
+    def _detach_cached_osqp_data(self):
+        """Detach CVXPY's cached comparison data from mutable parameters."""
+        solver_cache = getattr(self.cbf_controller, "_solver_cache", None)
+        if not isinstance(solver_cache, dict):
+            return
+        cached = solver_cache.get("OSQP")
+        if not isinstance(cached, tuple) or len(cached) != 3:
+            return
+        solver, old_data, results = cached
+        _install_checked_osqp_update(solver)
+        if not isinstance(old_data, dict):
+            return
+        detached = dict(old_data)
+        for key, value in old_data.items():
+            if isinstance(value, np.ndarray) or sparse.issparse(value):
+                detached[key] = value.copy()
+        solver_cache["OSQP"] = (solver, detached, results)
+
+    def _input_max_violation(self, u_cmd):
+        """Return the maximum numeric violation of configured input bounds."""
+        try:
+            u = np.asarray(u_cmd, dtype=float).reshape(-1)
+        except Exception:
+            return np.inf
+        if u.size < 2 or not np.all(np.isfinite(u)):
+            return np.inf
+
+        model_name = str(self.robot_spec.get("model", "")).strip()
+        if model_name == "Unicycle2D":
+            v_max = float(self.robot_spec.get("v_max", 1.0))
+            v_min = float(self.robot_spec.get("v_min", 0.0))
+            if not np.isfinite(v_min):
+                v_min = 0.0
+            if v_min > v_max:
+                v_min = v_max
+            w_max = float(self.robot_spec.get("w_max", 0.5))
+            return float(max(v_min - u[0], u[0] - v_max, abs(u[1]) - w_max))
+        if model_name == "DynamicUnicycle2D":
+            a_max = float(self.robot_spec.get("a_max", 1.0))
+            w_max = float(self.robot_spec.get("w_max", 0.5))
+            return float(max(abs(u[0]) - a_max, abs(u[1]) - w_max))
+        if u.size == 2 and "a_max" in self.robot_spec:
+            a_max = float(self.robot_spec["a_max"])
+            return float(np.max(np.abs(u) - a_max))
+        return 0.0
+
+    def _qp_solution_certificate(
+        self,
+        A_cbf_val,
+        b_cbf_val,
+        num_constraints,
+        terminal_slack_ub_val=None,
+        *,
+        u_cmd=None,
+        slack_val=None,
+    ):
+        """Certify the candidate against current rows, slack, and input bounds."""
+        certificate = {
+            "certified": False,
+            "max_cbf_violation": np.inf,
+            "max_input_violation": np.inf,
+            "max_slack_violation": 0.0,
+            "error": None,
+        }
+        try:
+            if u_cmd is None:
+                u_cmd = self.u.value
+            if u_cmd is None:
+                certificate["error"] = "missing control candidate"
+                return certificate
+            u_raw = np.asarray(u_cmd, dtype=float).reshape(-1, 1)
+            if not np.all(np.isfinite(u_raw)):
+                certificate["error"] = "non-finite control candidate"
+                return certificate
+
+            slack_raw = None
+            max_slack_violation = 0.0
+            if self._terminal_slack_enabled:
+                if slack_val is None:
+                    if self.terminal_slack is None:
+                        certificate["error"] = "missing terminal-slack variable"
+                        return certificate
+                    slack_val = self.terminal_slack.value
+                if slack_val is None:
+                    certificate["error"] = "missing terminal-slack candidate"
+                    return certificate
+                slack_raw = np.asarray(slack_val, dtype=float).reshape(-1, 1)
+                if slack_raw.shape[0] < num_constraints:
+                    certificate["error"] = "terminal-slack candidate is undersized"
+                    return certificate
+                slack_raw = slack_raw[:num_constraints, :]
+                if not np.all(np.isfinite(slack_raw)):
+                    certificate["error"] = "non-finite terminal-slack candidate"
+                    return certificate
+                if slack_raw.size:
+                    max_slack_violation = float(
+                        max(0.0, -float(np.min(slack_raw)))
+                    )
+                if terminal_slack_ub_val is not None:
+                    slack_ub = np.asarray(
+                        terminal_slack_ub_val, dtype=float
+                    ).reshape(-1, 1)
+                    if slack_ub.shape[0] < num_constraints:
+                        certificate["error"] = "terminal-slack bound is undersized"
+                        return certificate
+                    slack_ub = slack_ub[:num_constraints, :]
+                    if not np.all(np.isfinite(slack_ub)):
+                        certificate["error"] = "non-finite terminal-slack bound"
+                        return certificate
+                    if slack_raw.size:
+                        max_slack_violation = max(
+                            max_slack_violation,
+                            float(np.max(slack_raw - slack_ub)),
+                        )
+
+            A_current = np.asarray(A_cbf_val, dtype=float)
+            b_current = np.asarray(b_cbf_val, dtype=float).reshape(-1, 1)
+            if A_current.ndim != 2 or A_current.shape[0] != b_current.shape[0]:
+                certificate["error"] = "malformed current CBF data"
+                return certificate
+            if A_current.shape[0] != int(num_constraints):
+                certificate["error"] = "current CBF row count mismatch"
+                return certificate
+            residual = self._effective_constraint_violation(
+                A_current,
+                b_current,
+                u_raw,
+                slack_val=slack_raw,
+            ).reshape(-1)
+            if not np.all(np.isfinite(residual)):
+                certificate["error"] = "non-finite current CBF residual"
+                return certificate
+            max_cbf_violation = (
+                float(np.max(residual)) if residual.size else -np.inf
+            )
+            max_input_violation = self._input_max_violation(u_raw)
+            tolerance = float(self.robot_spec.get("cbf_feas_tol", 1e-4))
+            if not np.isfinite(tolerance) or tolerance < 0.0:
+                certificate["error"] = "invalid CBF feasibility tolerance"
+                return certificate
+            certificate.update(
+                {
+                    "certified": bool(
+                        max_cbf_violation <= tolerance
+                        and max_input_violation <= tolerance
+                        and max_slack_violation <= tolerance
+                    ),
+                    "max_cbf_violation": max_cbf_violation,
+                    "max_input_violation": max_input_violation,
+                    "max_slack_violation": max_slack_violation,
+                }
+            )
+        except Exception as exc:
+            certificate["error"] = f"{type(exc).__name__}: {exc}"
+        return certificate
+
     def _solve_qp_with_fallbacks(self, A_cbf_val, b_cbf_val, num_constraints, timings, terminal_slack_ub_val=None):
         solve_exception = None
         solver_attempts = []
@@ -650,16 +957,7 @@ class OcclusionCBFQP:
         def _status_bad(status, exc):
             if exc is not None:
                 return True
-            if status is None:
-                return True
-            return status in {
-                "infeasible",
-                "infeasible_inaccurate",
-                "infeasible_or_unbounded",
-                "unbounded",
-                "unbounded_inaccurate",
-                "solver_error",
-            }
+            return status not in {"optimal", "optimal_inaccurate", "user_limit"}
 
         def _run_attempt(solver, solver_name, *, rebuild=False, warm_start=False, extra_kwargs=None):
             nonlocal solve_exception
@@ -685,6 +983,25 @@ class OcclusionCBFQP:
             solve_exception = exc
             stats = getattr(self.cbf_controller, "solver_stats", None)
             status = getattr(self.cbf_controller, "status", None)
+            certificate = None
+            if (
+                exc is None
+                and status in {"optimal", "optimal_inaccurate", "user_limit"}
+            ):
+                certificate = self._qp_solution_certificate(
+                    A_cbf_val,
+                    b_cbf_val,
+                    num_constraints,
+                    terminal_slack_ub_val=terminal_slack_ub_val,
+                )
+                if not certificate["certified"]:
+                    exc = RuntimeError(
+                        "QP candidate failed current-data certification: "
+                        f"cbf={certificate['max_cbf_violation']:.17g}, "
+                        f"input={certificate['max_input_violation']:.17g}, "
+                        f"slack={certificate['max_slack_violation']:.17g}"
+                    )
+                    solve_exception = exc
             solver_attempts.append(
                 {
                     "solver": solver_name,
@@ -694,6 +1011,7 @@ class OcclusionCBFQP:
                     "solve_time_s": None if stats is None else getattr(stats, "solve_time", None),
                     "setup_time_s": None if stats is None else getattr(stats, "setup_time", None),
                     "wall_ms": (time.perf_counter() - t_attempt0) * 1000.0,
+                    "certificate": certificate,
                 }
             )
             return status, exc
@@ -705,6 +1023,8 @@ class OcclusionCBFQP:
         )
         if needs_rebuild:
             self._rebuild_qp_problem(num_constraints)
+        else:
+            self._detach_cached_osqp_data()
         t_assign0 = time.perf_counter()
         self._assign_qp_data(A_cbf_val, b_cbf_val, terminal_slack_ub_val=terminal_slack_ub_val)
         timings["param_assign_ms"] = (time.perf_counter() - t_assign0) * 1000.0
@@ -1733,18 +2053,21 @@ class OcclusionCBFQP:
                 a_max = float(self.robot_spec.get("a_max", np.inf))
                 input_ok = bool(np.all(np.abs(u_flat) <= a_max + tol))
 
-        if max_violation <= tol and input_ok:
+        u_ref_out = self._clip_du_input_for_speed(robot_state, self.u_ref.value)
+        clipped_ref_violation = float(
+            np.max((A_cbf_val @ u_ref_out - b_cbf_val).reshape(-1))
+        )
+        if max_violation <= tol and input_ok and clipped_ref_violation <= tol:
             self.status = "optimal"
             self.last_num_constraints = num_constraints
             self.last_qp_solve_time_ms = 0.0
             self.last_solver_solve_time_ms = 0.0
             self.last_total_compute_time_ms = (time.perf_counter() - t_all0) * 1000.0
             self.last_intervention = "u_ref"
-            u_out = self._clip_du_input_for_speed(robot_state, self.u_ref.value)
-            self.last_u = u_out
+            self.last_u = u_ref_out
             # if self.debug:
                 # print(f"[OcclusionCBFQP] u_ref feasible (max_violation={max_violation:.3e}) -> use u_ref")
-            return u_out
+            return u_ref_out
 
         solve_exception = self._solve_qp_with_fallbacks(
             A_cbf_val,
@@ -1778,23 +2101,47 @@ class OcclusionCBFQP:
         qp_ok = False
         u_raw = None
         slack_raw = None
-        if solve_exception is None and self.u.value is not None:
+        solution_certificate = None
+        if (
+            solve_exception is None
+            and qp_status in {"optimal", "optimal_inaccurate", "user_limit"}
+            and self.u.value is not None
+        ):
             u_raw = np.array(self.u.value, dtype=float).reshape(-1, 1)
             if self._terminal_slack_enabled and self.terminal_slack is not None and self.terminal_slack.value is not None:
                 slack_raw = np.array(self.terminal_slack.value, dtype=float).reshape(-1, 1)[:num_constraints, :]
-            tol_feas = float(self.robot_spec.get("cbf_feas_tol", 1e-4))
-            raw_violation = self._effective_constraint_violation(
-                A_cbf_val, b_cbf_val, u_raw, slack_val=slack_raw
-            ).flatten()
-            max_raw_violation = float(np.max(raw_violation)) if raw_violation.size > 0 else -np.inf
-            if qp_status == "optimal":
-                qp_ok = True
-            elif qp_status in {"optimal_inaccurate", "user_limit"} and max_raw_violation <= tol_feas:
-                qp_ok = True
+            solution_certificate = self._qp_solution_certificate(
+                A_cbf_val,
+                b_cbf_val,
+                num_constraints,
+                terminal_slack_ub_val=terminal_slack_ub_val,
+            )
+            qp_ok = bool(solution_certificate["certified"])
+        timings["accepted_solution_certificate"] = solution_certificate
 
         if qp_ok:
             u_safe = np.array(u_raw, dtype=float).reshape(-1, 1)
             u_safe = self._clip_du_input_for_speed(robot_state, u_safe)
+            returned_certificate = self._qp_solution_certificate(
+                A_cbf_val,
+                b_cbf_val,
+                num_constraints,
+                terminal_slack_ub_val=terminal_slack_ub_val,
+                u_cmd=u_safe,
+                slack_val=slack_raw,
+            )
+            timings["returned_solution_certificate"] = returned_certificate
+            qp_ok = bool(returned_certificate["certified"])
+            if not qp_ok:
+                self.last_qp_exception = (
+                    "QP command failed post-clip current-data certification: "
+                    f"cbf={returned_certificate['max_cbf_violation']:.17g}, "
+                    f"input={returned_certificate['max_input_violation']:.17g}, "
+                    f"slack={returned_certificate['max_slack_violation']:.17g}, "
+                    f"error={returned_certificate['error']}"
+                )
+
+        if qp_ok:
             self.last_u = u_safe
             if slack_raw is not None:
                 self.last_terminal_slack_val = np.array(slack_raw, dtype=float, copy=True)

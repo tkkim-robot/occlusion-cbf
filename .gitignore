@@ -2,6 +2,7 @@
 **/__pycache__/
 __pycache__/
 .venv/
+.pytest_cache/
 
 # Ignore misc. files
 *.csv
@@ -10,7 +11,7 @@ __pycache__/
 build/
 dist/
 
-# Ignore directories and files with "images" in their name
+# Keep generated runs and media out of the source tree.
 output/
 
 venv/
