@@ -1,9 +1,30 @@
-# Occlusion-CBF
+# OcclusionCBF: Safe Robot Navigation with Occluded Dynamic Obstacles
 
-Research code for Occlusion Control Barrier Functions with double-integrator,
-dynamic-unicycle, and unicycle robot models. The repository includes the
-Occlusion-CBF controller, comparison controllers, deterministic crowd
-benchmarks, interactive scenarios, and Optuna tuning utilities.
+This repository implements **OcclusionCBF**, a safety filter for robot navigation with potentially hidden dynamic obstacles. OcclusionCBF propagates occluded regions into collision-inflated, time-indexed reachable occupancy and certifies a prescribed backup rollout against every occupancy component and a verified time-varying terminal set. Differentiating these prediction-indexed margins through the backup flow yields constraints affine in the current input for minimally invasive quadratic-program filtering. Under the conditions stated in the paper, the filter is recursively feasible on its certified recoverable set and avoids every hidden-obstacle motion covered by the predictor. Please see our [project page](https://www.taekyung.me/occlusion-cbf) for more details.
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/083a1d86-ab8d-4e66-93a2-674b9eb9d568" alt="Occlusion-agnostic CBF-QP reacts after detection" height="300px" />
+  <img src="https://github.com/user-attachments/assets/8537ae49-91c4-478e-aafa-c2fc742e17d9" alt="OcclusionCBF intervenes before detection" height="300px" />
+</div>
+
+<div align="center">
+
+[[Project Page]](https://www.taekyung.me/occlusion-cbf)
+[[Paper]](REPLACE_WITH_PAPER_URL)
+[[Video]](REPLACE_WITH_VIDEO_URL)
+[[Web Demo]](https://occlusion-cbf.taekyung.me/)
+[[Research Group]](https://dasc-lab.github.io/)
+
+</div>
+
+## Features
+
+- **Planner-agnostic safety filtering** that minimally modifies commands from a planner, tracker, or learned policy through the OCBF-QP.
+- **Reachable-occupancy prediction** that propagates potentially hidden dynamic obstacles from current occluded regions over the backup horizon.
+- **Backup-rollout certification** against every time-indexed occupancy component and a verified terminal set while accounting for robot dynamics and input constraints.
+- **Multiple robot models**, including double-integrator, dynamic-unicycle, and unicycle systems.
+- **Five comparison controllers**: CBF-QP, OA-MPC, Control-Tree MPC, Single-Risk MPC, and OACP.
+- **Reproducible evaluation tools** for deterministic scenarios, paired randomized benchmarks, visualization, regression tests, and Optuna-based tuning.
 
 ## Installation
 
@@ -23,7 +44,7 @@ separate and should be completed before running those scenarios or benchmarks.
 ## Repository layout
 
 - `base_control/`: robot models, tracking, and the visible-obstacle CBF-QP.
-- `position_control/`: Occlusion-CBF and MPC comparison controllers.
+- `position_control/`: OcclusionCBF and MPC comparison controllers.
 - `dynamic_env/`: dynamic environments and robot simulation support.
 - `examples/`: scenario definitions and the unified scenario launcher.
 - `tools/`: benchmark, Optuna, and plotting commands.
@@ -43,9 +64,6 @@ uv run python -m examples.run_scenario --scenario crowd -- \
   --model di \
   --baseline occlusion_cbf \
   --n-rand 50 \
-  --seed 42 \
-  --idx 1 \
-  --disable-plot
 ```
 
 Run the corresponding unicycle setup with 30 moving obstacles:
@@ -55,9 +73,6 @@ uv run python -m examples.run_scenario --scenario crowd -- \
   --model uni \
   --baseline occlusion_cbf \
   --n-rand 30 \
-  --seed 42 \
-  --idx 1 \
-  --disable-plot
 ```
 
 Omit `--disable-plot` for the interactive animation. To inspect all
@@ -74,101 +89,19 @@ uv run python -m examples.run_scenario --scenario crosswalk -- \
   --model di \
   --baseline occlusion_cbf \
   --bus 1 \
-  --idx 1 \
-  --disable-plot
 ```
 
-## Tuned Occlusion-CBF defaults
 
-Crowd single runs and benchmark sweeps automatically load the committed
-model-specific profiles:
+## Citing
 
-- `position_control/ocbf/config/occlusion_cbf_di_params.yaml`
-- `position_control/ocbf/config/occlusion_cbf_unicycle_params.yaml`
+If you find this repository useful, please consider citing our paper:
 
-Explicit command-line or programmatic values take precedence over the tuned
-profile. Dynamic Unicycle retains its model defaults because it has no tuned
-profile.
-
-## Benchmarking
-
-Run the 100-case Occlusion-CBF crowd sweep for the double integrator:
-
-```bash
-uv run python -m tools.benchmark_crowd_trials \
-  --scenario crowd \
-  --baseline occlusion_cbf \
-  --model di \
-  --n-rand 50 \
-  --seed 42 \
-  --idx-start 1 \
-  --idx-end 100 \
-  --tf 500 \
-  --out-dir output/crowd_di_50
 ```
-
-The benchmark selects a conservative worker count automatically. Pass
-`--workers N` to choose the number of case processes explicitly. To run the
-five comparison controllers sequentially with the same case set, replace the
-single baseline with the suite:
-
-```bash
-uv run python -m tools.benchmark_crowd_trials \
-  --scenario crowd \
-  --baseline-suite non_occlusion_5 \
-  --model di \
-  --n-rand 50 \
-  --seed 42 \
-  --idx-start 1 \
-  --idx-end 100 \
-  --tf 500 \
-  --out-dir output/crowd_di_50_comparisons
-```
-
-Repeat with `--model uni` and the desired obstacle count for unicycle runs.
-Generated CSV and JSON files should remain under the ignored `output/`
-directory.
-
-## Optuna tuning
-
-The launcher runs the DI-50 and Unicycle-30 studies sequentially from an
-immutable snapshot, supervised by a detached background process:
-
-```bash
-uv run python -m tools.launch_ocbf_optuna --dry-run
-uv run python -m tools.launch_ocbf_optuna
-```
-
-It requires a clean Git worktree and defaults to 32 case workers. On a smaller
-machine, pass matching `--workers` and `--batch-size` values that fit the
-available CPUs. The lower-level tuner exposes single-study and
-terminal-relaxation options:
-
-```bash
-uv run python -m tools.launch_ocbf_optuna --help
-uv run python -m tools.tune_ocbf_optuna --help
-```
-
-Study databases, logs, and manifests are written below `output/` and are not
-tracked.
-
-## Plotting
-
-Render the bundled benchmark outcome chart as SVG, with an optional PNG
-preview:
-
-```bash
-uv run python tools/plot_crowd_benchmark_results.py \
-  --output output/crowd_benchmark_results.svg \
-  --preview-png output/crowd_benchmark_results.png
-```
-
-Both generated files remain in the ignored `output/` directory.
-
-## Tests
-
-Run the regression suite with:
-
-```bash
-uv run python -m unittest discover -s tests -v
+@inproceedings{kim2026occlusioncbf,
+  author  = {Kim, Taekyung and Park, Hun Kuk and Wada, Renya and Atanasov, Nikolay and Koga, Shumon and Panagou, Dimitra},
+  title   = {OcclusionCBF: Safe Robot Navigation with Occluded Dynamic Obstacles},
+  booktitle = {arXiv preprint },
+  shorttitle = {OcclusionCBF},
+  year    = {2026}
+}
 ```
